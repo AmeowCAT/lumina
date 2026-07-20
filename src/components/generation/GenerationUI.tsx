@@ -72,6 +72,8 @@ export function GenerationUI() {
   const [submitting, setSubmitting] = useState(false);
   const [lightboxItem, setLightboxItem] = useState<LightboxItem | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<"results" | "history">("results");
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [showNegative, setShowNegative] = useState(false);
 
   const openLightbox = (src: string, type: "image" | "video") =>
     setLightboxItem({ type, src });
@@ -462,6 +464,8 @@ export function GenerationUI() {
   if (!caps || !params) return null;
   const sp = params.sample_params;
   const hsp = params.high_noise_sample_params;
+  const negativeVisible =
+    showNegative || !!(params.negative_prompt && params.negative_prompt.trim());
 
   return (
     <>
@@ -502,52 +506,6 @@ export function GenerationUI() {
       <div className="main">
         <aside className="sidebar">
           <div className="sidebar-scroll">
-            <Panel title="提示词">
-              <div className="form-row">
-                <label className="form-label" htmlFor="positive-prompt">正向提示词</label>
-                <textarea
-                  id="positive-prompt"
-                  value={params.prompt || ""}
-                  onChange={(e) => update("prompt", e.target.value)}
-                  placeholder="描述你想生成的内容..."
-                  rows={9}
-                />
-                {family === "lingbot-video" && (
-                  <div className="prompt-tools">
-                    <button
-                      type="button"
-                      className="size-preset"
-                      onClick={() => {
-                        const current = params.prompt?.trim();
-                        if (
-                          current &&
-                          !window.confirm("当前提示词将被 LingBot JSON 模板替换，是否继续？")
-                        ) {
-                          return;
-                        }
-                        update("prompt", LINGBOT_PROMPT_TEMPLATE);
-                      }}
-                    >
-                      插入 LingBot JSON 模板
-                    </button>
-                    <span className="field-hint">
-                      也可继续使用普通文本；以 JSON 开头时会在提交前校验格式
-                    </span>
-                  </div>
-                )}
-              </div>
-              <div className="form-row">
-                <label className="form-label" htmlFor="negative-prompt">反向提示词</label>
-                <textarea
-                  id="negative-prompt"
-                  value={params.negative_prompt || ""}
-                  onChange={(e) => update("negative_prompt", e.target.value)}
-                  placeholder="描述你想排除的内容..."
-                  rows={6}
-                />
-              </div>
-            </Panel>
-
             {features.init_image && (
               <Panel title="图片输入" collapsed={!features.init_image}>
                 {features.init_image && (
@@ -1241,54 +1199,36 @@ export function GenerationUI() {
               )}
             </Panel>
           </div>
-          <div className="sidebar-footer">
-            <button
-                className={`seed-btn${seedRandom ? " active" : ""}`}
-              style={{ width: 42, height: 42, borderRadius: "var(--radius)" }}
-                onClick={randomSeed}
-                aria-label="切换每次生成使用随机种子"
-                aria-pressed={seedRandom}
-            >
-              {IC.dice}
-            </button>
-            <button
-              className="btn btn-primary generate-btn"
-              onClick={handleGenerate}
-              disabled={submitting || activeJobs >= maxQueue}
-            >
-              {submitting ? (
-                <>
-                  <span className="spinner" /> 提交中...
-                </>
-              ) : currentGen ? (
-                <>
-                  <span className="spinner" /> 生成中...
-                </>
-              ) : (
-                <>
-                  {IC.play} 生成
-                </>
-              )}
-            </button>
-          </div>
         </aside>
         <div className="output-area">
-          <div className="output-tabs" role="tablist" aria-label="工作区视图">
+          <div className="canvas-toolbar" role="tablist" aria-label="工作区视图">
+            <div className="mode-tabs">
+              <button
+                role="tab"
+                aria-selected={workspaceTab === "results"}
+                className={`mode-tab${workspaceTab === "results" ? " active" : ""}`}
+                onClick={() => setWorkspaceTab("results")}
+              >
+                当前结果
+              </button>
+              <button
+                role="tab"
+                aria-selected={workspaceTab === "history"}
+                className={`mode-tab${workspaceTab === "history" ? " active" : ""}`}
+                onClick={() => setWorkspaceTab("history")}
+              >
+                历史画廊
+              </button>
+            </div>
+            <div className="header-spacer" />
             <button
-              role="tab"
-              aria-selected={workspaceTab === "results"}
-              className={`mode-tab${workspaceTab === "results" ? " active" : ""}`}
-              onClick={() => setWorkspaceTab("results")}
+              className={`btn btn-sm queue-toggle${queueOpen ? " active" : ""}`}
+              onClick={() => setQueueOpen((v) => !v)}
+              aria-expanded={queueOpen}
+              aria-label="切换任务队列面板"
             >
-              当前结果
-            </button>
-            <button
-              role="tab"
-              aria-selected={workspaceTab === "history"}
-              className={`mode-tab${workspaceTab === "history" ? " active" : ""}`}
-              onClick={() => setWorkspaceTab("history")}
-            >
-              历史画廊
+              任务队列
+              {activeJobs > 0 && <span className="queue-badge">{activeJobs}</span>}
             </button>
           </div>
           <div className="output-main">
@@ -1314,18 +1254,116 @@ export function GenerationUI() {
               </div>
             )}
           </div>
-          <JobQueue
-            jobs={jobs}
-            activeJobs={activeJobs}
-            maxQueue={maxQueue}
-            mode={mode}
-            caps={caps}
-            onApplyConfig={applyConfig}
-            onCancel={cancelJob}
-            onRemove={removeJob}
-            onClear={clearJobs}
-            onDownload={download}
-          />
+          <div className="prompt-dock">
+            {negativeVisible && (
+              <textarea
+                id="negative-prompt"
+                className="dock-negative"
+                value={params.negative_prompt || ""}
+                onChange={(e) => update("negative_prompt", e.target.value)}
+                placeholder="反向提示词：描述你想排除的内容…"
+                rows={2}
+                aria-label="反向提示词"
+              />
+            )}
+            <div className="prompt-dock-row">
+              <textarea
+                id="positive-prompt"
+                className="dock-prompt"
+                value={params.prompt || ""}
+                onChange={(e) => update("prompt", e.target.value)}
+                placeholder="描述你想生成的画面…（Ctrl + Enter 生成）"
+                rows={3}
+                aria-label="正向提示词"
+              />
+              <div className="prompt-dock-actions">
+                <button
+                  type="button"
+                  className={`seed-btn${negativeVisible ? " active" : ""}`}
+                  onClick={() => setShowNegative((v) => !v)}
+                  aria-pressed={negativeVisible}
+                  aria-label="切换反向提示词输入"
+                  title="反向提示词"
+                >
+                  反
+                </button>
+                <button
+                  className={`seed-btn${seedRandom ? " active" : ""}`}
+                  onClick={randomSeed}
+                  aria-label="切换每次生成使用随机种子"
+                  aria-pressed={seedRandom}
+                  title="随机种子"
+                >
+                  {IC.dice}
+                </button>
+                <button
+                  className="btn btn-primary generate-btn"
+                  onClick={handleGenerate}
+                  disabled={submitting || activeJobs >= maxQueue}
+                >
+                  {submitting ? (
+                    <>
+                      <span className="spinner" /> 提交中
+                    </>
+                  ) : currentGen ? (
+                    <>
+                      <span className="spinner" /> 生成中
+                    </>
+                  ) : (
+                    <>
+                      {IC.play} 生成
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+            {family === "lingbot-video" && (
+              <div className="prompt-tools">
+                <button
+                  type="button"
+                  className="size-preset"
+                  onClick={() => {
+                    const current = params.prompt?.trim();
+                    if (
+                      current &&
+                      !window.confirm("当前提示词将被 LingBot JSON 模板替换，是否继续？")
+                    ) {
+                      return;
+                    }
+                    update("prompt", LINGBOT_PROMPT_TEMPLATE);
+                  }}
+                >
+                  插入 LingBot JSON 模板
+                </button>
+                <span className="field-hint">
+                  也可继续使用普通文本；以 JSON 开头时会在提交前校验格式
+                </span>
+              </div>
+            )}
+          </div>
+          {queueOpen && (
+            <>
+              <div
+                className="queue-backdrop"
+                onClick={() => setQueueOpen(false)}
+                aria-hidden="true"
+              />
+              <div className="queue-overlay">
+                <JobQueue
+                  jobs={jobs}
+                  activeJobs={activeJobs}
+                  maxQueue={maxQueue}
+                  mode={mode}
+                  caps={caps}
+                  onApplyConfig={applyConfig}
+                  onCancel={cancelJob}
+                  onRemove={removeJob}
+                  onClear={clearJobs}
+                  onDownload={download}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
       <Lightbox item={lightboxItem} onClose={closeLightbox} />
