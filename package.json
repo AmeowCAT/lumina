@@ -1,0 +1,35 @@
+{
+  "name": "lumina",
+  "private": true,
+  "version": "0.3.9",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.3",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.6.3",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  }
+}

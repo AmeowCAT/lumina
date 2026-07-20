@@ -1,0 +1,30 @@
+<svg width="248" height="64" viewBox="0 0 248 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logo-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1a1e28"/>
+      <stop offset="1" stop-color="#0d0f14"/>
+    </linearGradient>
+    <linearGradient id="logo-flow" x1="12" y1="54" x2="52" y2="12" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2dd4bf"/>
+      <stop offset="0.5" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+    <radialGradient id="logo-spark" cx="0.5" cy="0.5" r="0.5">
+      <stop stop-color="#ffffff"/>
+      <stop offset="0.45" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#14b8a6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#logo-bg)"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+  <g fill="none" stroke-linecap="round">
+    <path d="M15 47 C 22 33, 31 27, 49 17" stroke="#14b8a6" stroke-opacity="0.22" stroke-width="11"/>
+    <path d="M15 47 C 22 33, 31 27, 49 17" stroke="url(#logo-flow)" stroke-width="6"/>
+    <path d="M17 53 C 27 43, 37 36, 51 29" stroke="url(#logo-flow)" stroke-width="3.5" stroke-opacity="0.85"/>
+    <path d="M22 55 C 32 50, 41 45, 53 39" stroke="url(#logo-flow)" stroke-width="2" stroke-opacity="0.5"/>
+  </g>
+  <circle cx="49" cy="17" r="7" fill="url(#logo-spark)"/>
+  <circle cx="49" cy="17" r="2.6" fill="#ffffff"/>
+  <text x="84" y="36" font-family="system-ui,'Segoe UI',Roboto,sans-serif" font-size="27" font-weight="600" fill="#e2e4e9" letter-spacing="1">流光</text>
+  <text x="85" y="53" font-family="system-ui,'Segoe UI',Roboto,sans-serif" font-size="12" font-weight="500" letter-spacing="4" fill="#6b7080">LUMINA</text>
+</svg>
