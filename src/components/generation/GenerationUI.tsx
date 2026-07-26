@@ -6,6 +6,7 @@ import {
   CACHE_MODES,
   DISTILL_FAMILIES,
   FAMILY_CONFIG,
+  VIDEO_FRAME_PRESETS,
   SAMPLER_NAMES,
   SCHEDULER_NAMES,
   SIZE_PRESETS,
@@ -18,6 +19,7 @@ import {
   LINGBOT_PROMPT_TEMPLATE,
   validateLingbotPrompt,
 } from "../../lib/utils";
+import { familyDefaults, missingRequiredInputs } from "../../lib/launchConfig";
 import type { GenImages, GenMode, GenParams, Job, JobConfig } from "../../types";
 import { Panel } from "../ui/Panel";
 import { Slider } from "../ui/Slider";
@@ -38,6 +40,15 @@ import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 // 引擎 seed 是 int64；取 JS 安全整数上限 2^53-1，覆盖完整的 64 位种子空间。
 const MAX_SEED = Number.MAX_SAFE_INTEGER;
 const randSeed = () => Math.floor(Math.random() * MAX_SEED);
+const normalizeModelPath = (path: string) => path.replace(/\\/g, "/").toLowerCase();
+
+function modelSelectionMatches(reportedPath: string, selectedPath: string): boolean {
+  if (!reportedPath || !selectedPath) return false;
+  const reported = normalizeModelPath(reportedPath);
+  const selected = normalizeModelPath(selectedPath);
+  const selectedName = selected.split("/").pop() || selected;
+  return reported === selected || reported.endsWith("/" + selectedName);
+}
 
 interface LightboxItem {
   type: "image" | "video";
@@ -67,6 +78,8 @@ export function GenerationUI() {
   const clearProgress = useStore((s) => s.clearProgress);
   const toast = useStore((s) => s.toast);
   const settings = useStore((s) => s.settings);
+  const mainModel = useStore((s) => s.mainModel);
+  const familyOverride = useStore((s) => s.familyOverride);
   const setDashboardOpen = useStore((s) => s.setDashboardOpen);
 
   const [submitting, setSubmitting] = useState(false);
@@ -104,24 +117,32 @@ export function GenerationUI() {
   // forever → blank screen. The null guard lives just before the JSX return.
   const features = caps?.features_by_mode?.[mode] || {};
   // 家族检测走 Rust detect_family（唯一实现）；异步就位前先按 custom 渲染。
-  const [family, setFamily] = useState("custom");
+  const activeFamilyOverride =
+    familyOverride &&
+    FAMILY_CONFIG[familyOverride] &&
+    modelSelectionMatches(caps?.model?.path || "", mainModel)
+      ? familyOverride
+      : "";
+  const [detectedFamily, setDetectedFamily] = useState("custom");
+  const family = activeFamilyOverride || detectedFamily;
   useEffect(() => {
+    if (activeFamilyOverride) return;
     const p = caps?.model?.path || caps?.model?.name || "";
     if (!p) {
-      setFamily("custom");
+      setDetectedFamily("custom");
       return;
     }
     let alive = true;
     api
       .detectFamily(p)
       .then((f) => {
-        if (alive) setFamily(f);
+        if (alive) setDetectedFamily(f);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [caps?.model?.path, caps?.model?.name]);
+  }, [caps?.model?.path, caps?.model?.name, activeFamilyOverride]);
   const activeJobs = jobs.filter(
     (j) =>
       j.status === "queued" || j.status === "generating" || j.status === "unknown"
@@ -199,6 +220,17 @@ export function GenerationUI() {
       toast("队列已满", true);
       return;
     }
+    const missingInputs = missingRequiredInputs(FAMILY_CONFIG[family], mode, {
+      initImage,
+      maskImage,
+      controlImage,
+      endImage,
+      refImages,
+    });
+    if (missingInputs.length > 0) {
+      toast("请先提供: " + missingInputs.join("、"), true);
+      return;
+    }
     setSubmitting(true);
     try {
       let activeParams = params;
@@ -256,13 +288,14 @@ export function GenerationUI() {
     if (!caps || !params) return;
     const base = deepClone(caps.defaults_by_mode[mode]);
     const cfg = FAMILY_CONFIG[family];
-    const merged = cfg?.genDefaults
-      ? deepMerge(base, deepClone(cfg.genDefaults))
+    const recommended = cfg ? familyDefaults(cfg, mode) : undefined;
+    const merged = recommended
+      ? deepMerge(base, deepClone(recommended))
       : base;
     merged.prompt = params.prompt || "";
     merged.negative_prompt = params.negative_prompt || "";
     setParams(merged);
-    const gd = cfg?.genDefaults as { seed?: number } | undefined;
+    const gd = recommended as { seed?: number } | undefined;
     if (gd?.seed != null && gd.seed < 0) setSeedRandom(true);
     toast("已重置为推荐值");
   };
@@ -586,9 +619,27 @@ export function GenerationUI() {
                       />
                     </>
                   )}
+                {features.init_image && mode === "vid_gen" && (
+                  <Slider
+                    label="图生视频强度"
+                    value={params.strength ?? 0.75}
+                    onChange={(v) => update("strength", v)}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    hint="数值越高，偏离初始图的幅度越大；越低则越稳定"
+                  />
+                )}
                 {features.ref_images && mode === "img_gen" && (
                   <div className="form-row">
-                    <div className="form-label">参考图片</div>
+                    <div className="form-label">
+                      参考图片
+                      {FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes(
+                        "ref_images"
+                      )
+                        ? "（必需）"
+                        : ""}
+                    </div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {refImages.map((img, i) => (
                         <div
@@ -770,11 +821,14 @@ export function GenerationUI() {
                     value={params.video_frames || 33}
                     onChange={(v) => update("video_frames", v)}
                     min={1}
-                    max={121}
+                    max={family === "sd" ? 32 : 121}
                   />
-                  {family === "lingbot-video" && (
-                    <div className="frame-presets" aria-label="LingBot 帧数快捷项">
-                      {[33, 49, 81].map((frames) => (
+                  {VIDEO_FRAME_PRESETS[family] && (
+                    <div
+                      className="frame-presets"
+                      aria-label={`${FAMILY_CONFIG[family]?.name || "视频"} 帧数快捷项`}
+                    >
+                      {VIDEO_FRAME_PRESETS[family].map((frames) => (
                         <button
                           type="button"
                           key={frames}

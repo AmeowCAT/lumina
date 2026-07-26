@@ -94,7 +94,7 @@ impl ScanContext {
 }
 
 fn allowed_ext(ext: &str) -> bool {
-    matches!(ext, "safetensors" | "gguf" | "ckpt" | "pt" | "pth")
+    matches!(ext, "safetensors" | "sft" | "gguf" | "ckpt" | "pt" | "pth")
 }
 
 fn is_safetensors_index(name: &str) -> bool {
@@ -584,6 +584,18 @@ mod tests {
             result.families.get(&index.path).unwrap(),
             "qwen-image-layered"
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_includes_sft_files_used_by_common_vaes() {
+        let dir = test_dir("sft-extension");
+        fs::write(dir.join("ae.sft"), b"vae").unwrap();
+
+        let result = scan_models(dir.to_str().unwrap()).unwrap();
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.files[0].name, "ae.sft");
+        assert_eq!(result.files[0].category, "vae");
         fs::remove_dir_all(dir).unwrap();
     }
 

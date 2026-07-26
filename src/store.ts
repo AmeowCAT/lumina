@@ -104,7 +104,19 @@ export const useStore = create<StoreState>((set, get) => ({
   dismissToast: (id) =>
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
-  settings: { exeDir: "", modelDir: "", outputDir: "", backend: "", refImagePreset: "", extraArgs: "", offloadCpu: false, quantType: "", maxQueueSize: 4, modelSnapshots: {} },
+  settings: {
+    exeDir: "",
+    modelDir: "",
+    outputDir: "",
+    backend: "",
+    refImagePreset: "",
+    vaeFormat: "",
+    extraArgs: "",
+    offloadCpu: false,
+    quantType: "",
+    maxQueueSize: 4,
+    modelSnapshots: {},
+  },
   setSettings: (updater) => set((s) => ({ settings: updater(s.settings) })),
   serverStatus: null,
   setServerStatus: (s) => set({ serverStatus: s }),

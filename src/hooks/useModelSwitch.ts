@@ -9,6 +9,11 @@ import type {
   ServerArgs,
 } from "../types";
 import { formatError } from "../lib/utils";
+import {
+  buildLaunchConfig as buildLaunchArgs,
+  inferPidVaeFormat,
+  persistFamilyDefaults,
+} from "../lib/launchConfig";
 
 type SwitchPhase = "idle" | "preflight" | "stopping" | "starting" | "loading" | "rollback";
 
@@ -50,50 +55,32 @@ export function useModelSwitch() {
 
   const buildLaunchConfig = async (
     modelPath: string,
-    snapshot?: ModelConfigSnapshot
+    snapshot?: ModelConfigSnapshot,
+    inferLegacyPidFormat = false
   ): Promise<LaunchConfig> => {
     const family = snapshot?.familyOverride || (await api.detectFamily(modelPath));
     const familyConfig = FAMILY_CONFIG[family];
     if (!familyConfig) throw new Error("无法识别模型类型");
-
-    const args: ServerArgs = { ...familyConfig.fixedArgs };
-    const modelField = familyConfig.fields.find(
-      (field) =>
-        field.arg === "diffusion-model" || field.arg === "model" || field.cat === "model"
-    );
-    if (!modelField) throw new Error("模型家族没有定义主模型参数");
-    args[modelField.arg] = modelPath;
-
-    const configuredComponents = snapshot?.components || components;
-    const missing: string[] = [];
-    familyConfig.fields.forEach((field) => {
-      if (field.key === modelField.key) return;
-      const value = configuredComponents[field.key];
-      if (value) args[field.arg] = value;
-      else if (family !== "custom" && field.required) missing.push(field.label);
+    let runtime = snapshot || settings;
+    if (inferLegacyPidFormat && family === "pid" && !runtime.vaeFormat) {
+      runtime = { ...runtime, vaeFormat: inferPidVaeFormat(modelPath) };
+    }
+    const built = buildLaunchArgs({
+      family,
+      modelPath,
+      components: snapshot?.components || components,
+      runtime,
+      modelDir: settings.modelDir,
     });
-    if (missing.length > 0) {
-      throw new Error("缺少必需组件：" + missing.join("、"));
+    if (built.missing.length > 0) {
+      throw new Error("缺少必需配置：" + built.missing.join("、"));
     }
-
-    if (settings.modelDir) {
-      args["lora-model-dir"] = settings.modelDir;
-      args["embd-dir"] = settings.modelDir;
-      args["hires-upscalers-dir"] = settings.modelDir;
-    }
-    const runtime = snapshot || settings;
-    if (runtime.backend) args.backend = runtime.backend;
-    if (runtime.refImagePreset)
-      args["ref-image-args"] = `preset=${runtime.refImagePreset}`;
-    if (runtime.offloadCpu) args["offload-to-cpu"] = true;
-    if (runtime.quantType) args.type = runtime.quantType;
-    if (runtime.extraArgs) args.extra_args = runtime.extraArgs;
 
     return {
       family,
       familyConfig,
-      args,
-      mode: familyConfig.mode === "vid" ? "vid_gen" : null,
+      args: built.args,
+      mode: built.mode,
       modelPath,
     };
   };
@@ -131,28 +118,6 @@ export function useModelSwitch() {
     return waitUntilReady(config.modelPath);
   };
 
-  const persistDefaults = (config: LaunchConfig) => {
-    const defaults = config.familyConfig.genDefaults;
-    if (!defaults) return;
-    const modeKey = config.familyConfig.mode === "vid" ? "vid_gen" : "img_gen";
-    try {
-      const previous = JSON.parse(
-        localStorage.getItem("sdcpp:params:" + modeKey) || "{}"
-      );
-      localStorage.setItem(
-        "sdcpp:params:" + modeKey,
-        JSON.stringify({
-          ...defaults,
-          prompt: typeof previous.prompt === "string" ? previous.prompt : "",
-          negative_prompt:
-            typeof previous.negative_prompt === "string" ? previous.negative_prompt : "",
-        })
-      );
-    } catch {
-      // Parameter persistence is best-effort; the server switch itself succeeded.
-    }
-  };
-
   const switchModel = async (modelPath: string) => {
     if (!modelPath || switching) return undefined;
     const previousPath = caps?.model?.path || "";
@@ -166,6 +131,7 @@ export function useModelSwitch() {
         components,
         backend: settings.backend,
         refImagePreset: settings.refImagePreset,
+        vaeFormat: settings.vaeFormat,
         extraArgs: settings.extraArgs,
         offloadCpu: settings.offloadCpu,
         quantType: settings.quantType,
@@ -175,7 +141,8 @@ export function useModelSwitch() {
         try {
           previousConfig = await buildLaunchConfig(
             previousPath,
-            snapshots[previousPath]
+            snapshots[previousPath],
+            true
           );
         } catch {
           previousConfig = null;
@@ -188,7 +155,7 @@ export function useModelSwitch() {
       const nextCaps = await startAndWait(nextConfig);
       setCaps(nextCaps);
       if (nextCaps.current_mode) setMode(nextCaps.current_mode);
-      persistDefaults(nextConfig);
+      persistFamilyDefaults(nextConfig.familyConfig);
       toast("已切换到 " + nextConfig.familyConfig.name);
       return nextConfig.family;
     } catch (error) {

@@ -177,6 +177,22 @@ describe("buildRequestBody", () => {
     expect(body.batch_count).toBeUndefined();
   });
 
+  it("keeps AnimateDiff strength and init image in vid_gen requests", () => {
+    const body = buildRequestBody(
+      "vid_gen",
+      { ...baseParams, strength: 0.75, video_frames: 16 },
+      {
+        initImage: "data:image/png;base64,init",
+        maskImage: null,
+        controlImage: null,
+        endImage: null,
+        refImages: [],
+      }
+    );
+    expect(body.strength).toBe(0.75);
+    expect(body.init_image).toBe("data:image/png;base64,init");
+  });
+
   it("omits clip_skip when -1", () => {
     const p: GenParams = { ...baseParams, clip_skip: -1 };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
@@ -215,6 +231,24 @@ describe("buildRequestBody", () => {
     const p: GenParams = { ...baseParams, hires: { enabled: true, upscaler: "Latent", steps: 20 } };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
     expect(body.hires).toEqual({ enabled: true, upscaler: "Latent", steps: 20 });
+  });
+
+  it("preserves complete Hunyuan VAE tiling parameters when enabled", () => {
+    const p: GenParams = {
+      ...baseParams,
+      vae_tiling_params: {
+        enabled: true,
+        temporal_tiling: true,
+        tile_size_x: 256,
+        tile_size_y: 256,
+        target_overlap: 0.5,
+        rel_size_x: 0,
+        rel_size_y: 0,
+        extra_tiling_args: "",
+      },
+    };
+    const body = buildRequestBody("vid_gen", p, {} as GenImages);
+    expect(body.vae_tiling_params).toEqual(p.vae_tiling_params);
   });
 
   it("includes high_noise_sample_params for vid_gen", () => {

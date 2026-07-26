@@ -23,6 +23,7 @@ const settings: Settings = {
   outputDir: "",
   backend: "",
   refImagePreset: "",
+  vaeFormat: "",
   extraArgs: "",
   offloadCpu: false,
   quantType: "",
@@ -163,6 +164,139 @@ describe("Dashboard onboarding validation", () => {
           model: "/models/main.safetensors",
           "motion-module": "/models/mm_sd15_v3.safetensors",
           "ref-image-args": "preset=flux_kontext",
+        })
+      )
+    );
+  });
+
+  it("requires and passes the PiD VAE format", async () => {
+    const scan = scanFor("pid");
+    scan.files[0] = {
+      ...scan.files[0],
+      name: "pid_flux1_512_to_2048.safetensors",
+      stem: "pid_flux1_512_to_2048",
+      path: "/models/pid_flux1_512_to_2048.safetensors",
+    };
+    scan.families = { [scan.files[0].path]: "pid" };
+    scan.files.push(
+      {
+        name: "ae.sft",
+        stem: "ae",
+        path: "/models/ae.sft",
+        relPath: "ae.sft",
+        sizeMb: 160,
+        dir: "/models",
+        ext: "sft",
+        category: "vae",
+      },
+      {
+        name: "gemma_2_2b.safetensors",
+        stem: "gemma_2_2b",
+        path: "/models/gemma_2_2b.safetensors",
+        relPath: "gemma_2_2b.safetensors",
+        sizeMb: 900,
+        dir: "/models",
+        ext: "safetensors",
+        category: "llm",
+      }
+    );
+    scan.count = scan.files.length;
+    mocks.scanModels.mockResolvedValue(scan);
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    fireEvent.change(await screen.findByLabelText("主模型"), {
+      target: { value: "/models/pid_flux1_512_to_2048.safetensors" },
+    });
+
+    const format = await screen.findByLabelText("VAE 格式");
+    expect(format).toHaveValue("flux");
+    fireEvent.change(format, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
+
+    fireEvent.change(format, { target: { value: "flux" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "PiD / PiD 1.5",
+        null,
+        expect.objectContaining({
+          "diffusion-model": "/models/pid_flux1_512_to_2048.safetensors",
+          vae: "/models/ae.sft",
+          llm: "/models/gemma_2_2b.safetensors",
+          "vae-format": "flux",
+        })
+      )
+    );
+  });
+
+  it("passes HunyuanVideo's split components and video launch mode", async () => {
+    const scan = scanFor("hunyuan-video");
+    scan.files[0] = {
+      ...scan.files[0],
+      name: "hunyuanvideo1.5_720p_t2v.safetensors",
+      stem: "hunyuanvideo1.5_720p_t2v",
+      path: "/models/hunyuanvideo1.5_720p_t2v.safetensors",
+    };
+    scan.families = { [scan.files[0].path]: "hunyuan-video" };
+    scan.files.push(
+      {
+        name: "hunyuanvideo15_vae.safetensors",
+        stem: "hunyuanvideo15_vae",
+        path: "/models/hunyuanvideo15_vae.safetensors",
+        relPath: "hunyuanvideo15_vae.safetensors",
+        sizeMb: 900,
+        dir: "/models",
+        ext: "safetensors",
+        category: "vae",
+      },
+      {
+        name: "qwen_2.5_vl_7b.safetensors",
+        stem: "qwen_2.5_vl_7b",
+        path: "/models/qwen_2.5_vl_7b.safetensors",
+        relPath: "qwen_2.5_vl_7b.safetensors",
+        sizeMb: 900,
+        dir: "/models",
+        ext: "safetensors",
+        category: "llm",
+      },
+      {
+        name: "byt5_small_glyphxl_fp16.safetensors",
+        stem: "byt5_small_glyphxl_fp16",
+        path: "/models/byt5_small_glyphxl_fp16.safetensors",
+        relPath: "byt5_small_glyphxl_fp16.safetensors",
+        sizeMb: 800,
+        dir: "/models",
+        ext: "safetensors",
+        category: "t5xxl",
+      }
+    );
+    scan.count = scan.files.length;
+    mocks.scanModels.mockResolvedValue(scan);
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    fireEvent.change(await screen.findByLabelText("主模型"), {
+      target: { value: "/models/hunyuanvideo1.5_720p_t2v.safetensors" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "HunyuanVideo 1.5",
+        "vid_gen",
+        expect.objectContaining({
+          "diffusion-model": "/models/hunyuanvideo1.5_720p_t2v.safetensors",
+          vae: "/models/hunyuanvideo15_vae.safetensors",
+          llm: "/models/qwen_2.5_vl_7b.safetensors",
+          t5xxl: "/models/byt5_small_glyphxl_fp16.safetensors",
+          "diffusion-fa": true,
         })
       )
     );

@@ -9,6 +9,8 @@ export interface ModelConfigSnapshot {
   components: Record<string, string>;
   backend: string;
   refImagePreset: string;
+  /** PiD VAE latent layout override (flux / sd3 / flux2 / wan). */
+  vaeFormat?: string;
   extraArgs: string;
   offloadCpu: boolean;
   quantType: string;
@@ -21,6 +23,8 @@ export interface Settings {
   outputDir: string;
   backend: string;
   refImagePreset: string;
+  /** PiD VAE latent layout override (flux / sd3 / flux2 / wan). */
+  vaeFormat?: string;
   extraArgs: string;
   offloadCpu: boolean;
   quantType: string;
@@ -149,6 +153,13 @@ export interface HiresParams {
 
 export interface VaeTilingParams {
   enabled?: boolean;
+  temporal_tiling?: boolean;
+  tile_size_x?: number;
+  tile_size_y?: number;
+  target_overlap?: number;
+  rel_size_x?: number;
+  rel_size_y?: number;
+  extra_tiling_args?: string;
 }
 
 /** Generation parameters — mirrors sd-server defaults + everything the UI edits. */

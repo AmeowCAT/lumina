@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../../store";
 
@@ -36,6 +36,46 @@ const CAPS = {
   limits: { max_queue_size: 4 },
 };
 
+const VIDEO_CAPS = {
+  ...CAPS,
+  model: { name: "sd15.safetensors", path: "D:/models/sd15.safetensors" },
+  supported_modes: ["img_gen", "vid_gen"],
+  current_mode: "vid_gen",
+  defaults_by_mode: {
+    img_gen: CAPS.defaults_by_mode.img_gen,
+    vid_gen: {
+      prompt: "",
+      negative_prompt: "",
+      width: 512,
+      height: 512,
+      seed: -1,
+      strength: 0.75,
+      video_frames: 16,
+      fps: 8,
+      sample_params: {
+        sample_method: "euler",
+        scheduler: "discrete",
+        sample_steps: 20,
+        guidance: { txt_cfg: 8 },
+      },
+    },
+  },
+  features_by_mode: {
+    img_gen: {},
+    vid_gen: { init_image: true, end_image: true },
+  },
+  samplers: ["euler"],
+  schedulers: ["discrete"],
+};
+
+const PID_CAPS = {
+  ...CAPS,
+  model: { name: "pid_custom.safetensors", path: "D:/models/pid_custom.safetensors" },
+  features_by_mode: {
+    img_gen: { init_image: true, ref_images: true },
+  },
+};
+
 describe("GenerationUI 结构（暗房重构版）", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -45,6 +85,10 @@ describe("GenerationUI 结构（暗房重构版）", () => {
       params: null,
       jobs: [],
       results: [],
+      mainModel: "",
+      familyOverride: "",
+      refImages: [],
+      toasts: [],
       seedRandom: true,
     });
   });
@@ -72,5 +116,43 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     await waitFor(() => expect(document.querySelector(".queue-overlay")).toBeTruthy());
     screen.getByLabelText("切换任务队列面板").click();
     await waitFor(() => expect(document.querySelector(".queue-overlay")).toBeNull());
+  });
+
+  it("shows AnimateDiff video defaults, strength, and frame shortcuts", async () => {
+    useStore.setState({
+      caps: VIDEO_CAPS as never,
+      mode: "vid_gen",
+      params: null,
+      mainModel: "D:/models/sd15.safetensors",
+      familyOverride: "sd",
+    });
+    render(<GenerationUI />);
+
+    expect(await screen.findByRole("slider", { name: /图生视频强度/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "8 帧" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "16 帧" })).toBeTruthy();
+    expect((screen.getByLabelText("帧数") as HTMLInputElement).value).toBe("16");
+  });
+
+  it("marks PiD reference images as required and blocks an empty submission", async () => {
+    useStore.setState({
+      caps: PID_CAPS as never,
+      mode: "img_gen",
+      params: null,
+      mainModel: "D:/models/pid_custom.safetensors",
+      familyOverride: "pid",
+      refImages: [],
+      toasts: [],
+    });
+    render(<GenerationUI />);
+
+    expect(await screen.findByText("参考图片（必需）")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "生成" }));
+
+    await waitFor(() =>
+      expect(useStore.getState().toasts[useStore.getState().toasts.length - 1]?.msg).toContain(
+        "参考图片"
+      )
+    );
   });
 });

@@ -21,6 +21,8 @@ pub struct Settings {
     #[serde(default)]
     pub ref_image_preset: String,
     #[serde(default)]
+    pub vae_format: String,
+    #[serde(default)]
     pub extra_args: String,
     #[serde(default)]
     pub offload_cpu: bool,
@@ -43,6 +45,8 @@ pub struct ModelConfigSnapshot {
     pub backend: String,
     #[serde(default)]
     pub ref_image_preset: String,
+    #[serde(default)]
+    pub vae_format: String,
     #[serde(default)]
     pub extra_args: String,
     #[serde(default)]
@@ -397,5 +401,20 @@ mod tests {
         assert!(settings.model_snapshots.is_empty());
         assert_eq!(settings.backend, "cuda0");
         assert!(settings.ref_image_preset.is_empty());
+        assert!(settings.vae_format.is_empty());
+    }
+
+    #[test]
+    fn older_model_snapshots_without_vae_format_remain_compatible() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"modelSnapshots":{"models/pid.safetensors":{"familyOverride":"pid","components":{}}}}"#,
+        )
+        .unwrap();
+        let snapshot = settings
+            .model_snapshots
+            .get("models/pid.safetensors")
+            .unwrap();
+        assert_eq!(snapshot.family_override, "pid");
+        assert!(snapshot.vae_format.is_empty());
     }
 }

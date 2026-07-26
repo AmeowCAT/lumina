@@ -10,9 +10,9 @@
 
 ### 控制台（Dashboard）
 - **路径配置**：`sd-server.exe` 所在目录、模型根目录、输出目录，均支持手动输入或原生文件夹选择对话框。
-- **模型扫描**：递归扫描模型目录（最多 3 层），识别 `.safetensors` / `*.safetensors.index.json` / `.gguf` / `.ckpt`，自动归类为 model / vae / clip_l / clip_g / t5xxl / clip_vision / llm / lora / motion_module 等组件；分片索引引用的 shard 会从可选模型中隐藏，避免误选不完整权重。
+- **模型扫描**：递归扫描模型目录（最多 3 层），识别 `.safetensors` / `.sft` / `*.safetensors.index.json` / `.gguf` / `.ckpt`，自动归类为 model / vae / clip_l / clip_g / t5xxl / clip_vision / llm / lora / motion_module 等组件；分片索引引用的 shard 会从可选模型中隐藏，避免误选不完整权重。
 - **ComfyUI 目录结构支持**：自动识别 `diffusion_models`、`vaes`/`vae`、`text_encoders`/`llms`、`loras`/`lora` 等专用子目录，未命中时回退到通用递归扫描。
-- **模型家族自动识别**：根据文件名/路径推断模型家族（Flux、SDXL、SD3、Wan、Qwen-Image、Z-Image、Chroma、LTX 等 30+ 类），自动给出所需组件清单与推荐生成参数；识别结果可手动覆盖。
+- **模型家族自动识别**：根据文件名/路径推断模型家族（Flux、SDXL、SD3、Wan、Qwen-Image、Z-Image、Chroma、LTX、HunyuanVideo 1.5、PiD/PiD 1.5 等 30+ 类），自动给出所需组件清单与推荐生成参数；识别结果可手动覆盖。
 - **运行后端选择**：预设 `自动` / `首个可用 GPU` / `CUDA` / `ROCm/HIP` / `Vulkan` / `仅 CPU`，并支持组件级自定义 `--backend`（例如 `clip=cpu,vae=cuda0,diffusion=vulkan0`）。
 - **参考图处理预设**：可在模型启动时选择 Kontext、Qwen、Flux 2、Krea2、Anima 等参考图处理模式，默认由模型架构自动检测。
 - **服务器控制**：一键启动/停止；可检测并接管在同端口运行的**外部 sd-server** 进程。
@@ -21,7 +21,8 @@
 - **图片 / 视频两种模式**（`img_gen` / `vid_gen`），随模型能力动态显示。
 - **提示词**：正向 / 反向提示词。
 - **LingBot 辅助**：提供结构化 JSON 提示词模板、提交前 JSON 校验和 33/49/81 帧快捷项。
-- **图像输入**：初始图片、蒙版、Control 图片、参考图片、视频结束帧——按模型支持的能力动态显示；上传初始图片时自动按其像素尺寸对齐到 64 并填充宽高。
+- **图像输入**：初始图片、蒙版、Control 图片、参考图片、视频结束帧——按模型支持的能力动态显示；上传初始图片时自动按其像素尺寸对齐到 64 并填充宽高。PiD 的参考图片会在提交前强制校验。
+- **视频与图生视频**：HunyuanVideo 1.5 提供 1280×720 / 33 帧 / 24 FPS 推荐值；SD 1.5 + AnimateDiff 支持初始图 img2video、强度滑块以及 8/16/24/32 帧快捷项。
 - **尺寸与种子**：按比例分组的尺寸预设（1:1、4:3、16:9、9:16、21:9 等）、手动宽高、随机/固定种子、批量数量、视频帧数与 FPS。
 - **采样设置**：采样器、调度器、步数、文本 CFG、蒸馏 CFG（Flux 等蒸馏模型）、Eta、Flow Shift、SLG Scale、VAE 分块、采样缓存（EasyCache / UCache / DBCache / TaylorSeer / Cache-DiT / Spectrum）、CLIP Skip。
 - **LoRA**：多条 LoRA 叠加，每条独立强度滑块。
@@ -47,7 +48,7 @@
 | 桌面框架 | Tauri 2 |
 | 前端 | React 18 + TypeScript 5 |
 | 状态管理 | Zustand 5 |
-| 构建工具 | Vite 5 |
+| 构建工具 | Vite 8 |
 | 后端语言 | Rust（Edition 2021） |
 | HTTP 客户端 | reqwest（连接 sd-server `/sdcpp/v1`） |
 | 异步运行时 | Tokio |
@@ -72,7 +73,8 @@ gui/
 │   ├── config/
 │   │   └── families.ts        # 模型家族元数据、尺寸预设、采样器/调度器显示名
 │   ├── lib/
-│   │   └── utils.ts           # 请求体构造、base64/blob、深拷贝/合并等工具
+│   │   ├── utils.ts           # 请求体构造、base64/blob、深拷贝/合并等工具
+│   │   └── launchConfig.ts    # 统一启动参数、家族默认值与必需输入校验
 │   └── components/
 │       ├── dashboard/Dashboard.tsx       # 控制台
 │       ├── generation/GenerationUI.tsx   # 生成界面
@@ -136,13 +138,19 @@ npm run build      # tsc 类型检查 + Vite 生产构建到 dist/
 
 1. 按[构建说明](../docs/build.md)编译 `sd-server`，或从项目 Release 获取与当前源码兼容的构建。
 2. 先在终端运行一次 `sd-server --help`，确认可执行文件和运行库可用。
-3. 准备一个模型目录。完整 checkpoint 可以是单个 `.safetensors`、`.ckpt` 或 `.gguf`；Flux、SD3、Wan、Qwen 等拆分模型通常还需要 VAE、CLIP/T5/LLM 等组件。
+3. 准备一个模型目录。完整 checkpoint 可以是单个 `.safetensors`、`.sft`、`.ckpt` 或 `.gguf`；Flux、SD3、Wan、Qwen、HunyuanVideo 和 PiD 等拆分模型通常还需要 VAE、CLIP/T5/LLM 等组件。
 4. 在 `gui/` 中执行 `npm install` 和 `npm run tauri dev`。
 5. 在控制台选择 `sd-server` 可执行文件、模型根目录和输出目录。`sd-server` 已加入 PATH 时，可执行文件一栏可以留空。
 6. 等待扫描完成，选择主模型。必需组件会标为必填；只有一个合适候选时 Lumina 会自动选择。
 7. 初次使用建议保持“自动”后端。显存不足时打开“CPU 卸载”，并参考[性能指南](../docs/performance.md)与[后端选择指南](../docs/backend.md)。
 8. 点击“启动服务器”，等待状态从“正在加载模型”变为“就绪”，再提交一张小尺寸测试图。
 9. 如果配置了输出目录，请在首张结果卡片上确认“已保存”，并检查目标目录中确实生成了文件。
+
+### 新模型家族提示
+
+- **HunyuanVideo 1.5**：选择 diffusion model、HunyuanVideo VAE、Qwen2.5-VL 7B 和 ByT5 Small GlyphXL。生成界面默认进入视频模式，并默认打开 VAE tiling；显存不足时建议同时打开 CPU 卸载。
+- **PiD / PiD 1.5**：选择 PiD diffusion model、Gemma 2 2B 和匹配的 VAE，然后在控制台选择 `--vae-format`（`flux`、`sd3`、`flux2` 或 `wan`）。PiD 的“参考图片”是必填输入，且格式必须与 checkpoint 的 backbone 匹配；界面会按文件名给出提示，但仍应以模型卡为准。
+- **AnimateDiff img2video**：为 SD 1.5 选择 Motion Module，服务器就绪后切换到视频模式并上传“初始图片”；“图生视频强度”越高，允许偏离初始图的幅度越大。推荐先从 8 或 16 帧开始。
 
 ### 模型目录示例
 
@@ -179,7 +187,7 @@ Lumina 也支持不采用上述目录名的普通文件夹，但自动分类准�
   - Windows：`%APPDATA%\lumina\settings.json`
   - Linux：`~/.config/lumina/settings.json`
   - macOS：`~/Library/Application Support/lumina/settings.json`
-  - 持久化字段：`exeDir`、`modelDir`、`outputDir`、`backend`、`refImagePreset` 等启动配置。
+  - 持久化字段：`exeDir`、`modelDir`、`outputDir`、`backend`、`refImagePreset`、`vaeFormat` 等启动配置；`vaeFormat` 也会按模型快照保存，切换模型时自动恢复。
   - 旧版本使用 `sdcpp-gui/` 目录；首次运行新版本时会自动读取并迁移到 `lumina/`（旧文件保留）。
 - **生成参数**：按模式分别缓存在浏览器 `localStorage`（键 `sdcpp:params:img_gen` / `sdcpp:params:vid_gen`），随机种子开关存于 `sdcpp:seedRandom`。
 - **sd-server 端口**：固定为 **1234**（`--listen-port 1234 --listen-ip 127.0.0.1`），与 webui 默认一致。Lumina 会探测该端口以接管外部已启动的 sd-server。
@@ -208,7 +216,7 @@ React 前端  ──(Tauri invoke)──▶  Rust 后端  ──(HTTP /sdcpp/v1)
 
 控制台会针对以下家族给出专属的组件清单与推荐参数（步数 / CFG / flow_shift 等）：
 
-Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x、SD3/3.5、Wan T2V/I2V/TI2V、LingBot Video、Z-Image（含 Turbo）、Qwen-Image（含 Edit/Layered）、Chroma（含 Radiance）、LTX-Video、Ideogram4、HiDream-O1、ERNIE-Image、Anima、Krea2（含 Turbo/Ostris Edit）、Lens、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、Distilled SD（SSD-1B/SDXS）、以及"自定义"（手动配置全部组件）。
+Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V/I2V/TI2V、LingBot Video、HunyuanVideo 1.5、Z-Image（含 Turbo）、Qwen-Image（含 Edit/Layered）、Chroma（含 Radiance）、LTX-Video、Ideogram4、HiDream-O1、ERNIE-Image、Anima、Krea2（含 Turbo/Ostris Edit）、Lens、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、Distilled SD（SSD-1B/SDXS）、以及“自定义”（手动配置全部组件）。
 
 ---
 
@@ -218,6 +226,8 @@ Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x�
 - 生成结果仅保留在内存中（刷新或重启后丢失）；如需归档请配置输出目录或手动下载。
 - 界面文案目前仅有简体中文。
 - LoRA 提示词标签（`<lora:...>`）不被支持——这是 sd-server 服务端 API 的限制（仅 CLI 支持），并非 GUI 缺失。
+- PiD 的 `--vae-format` 无法从权重内容可靠推断；文件名推断只用于初始建议，必须与 checkpoint 的实际 VAE latent 布局匹配，否则可能加载失败或产生错误结果。
+- AnimateDiff 的运动模块有 32 帧位置编码上下文；超过 32 帧时服务端会截断，界面会将该家族的帧数上限限制为 32。
 
 ---
 
@@ -234,7 +244,7 @@ Lumina 固定使用 `127.0.0.1:1234`。如果该端口上是兼容的外部 `sd-
 ### 扫描不到模型
 
 - 确认路径存在且当前用户有读取权限。
-- 支持的模型文件包括 `.safetensors`、`*.safetensors.index.json`、`.gguf`、`.ckpt`、`.pt` 和 `.pth`。
+- 支持的模型文件包括 `.safetensors`、`.sft`、`*.safetensors.index.json`、`.gguf`、`.ckpt`、`.pt` 和 `.pth`。
 - 查看扫描警告；目录过深、权限错误或损坏的目录项会被明确列出。
 - Diffusers 模型应选择包含模型配置文件的上层目录。
 - 文件名过于通用时可能被归入“自定义”，可以手动覆盖模型家族。

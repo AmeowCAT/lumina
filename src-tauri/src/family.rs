@@ -11,6 +11,53 @@ fn has_any(s: &str, patterns: &[&str]) -> bool {
 /// Map a model file path to one of the supported family ids.
 pub fn detect_family(path: &str) -> &'static str {
     let t = path.to_lowercase();
+    // PiD checkpoints often include their backbone name (for example
+    // `pid_flux1_...`), so detect them before the generic Flux rules below.
+    if has_any(
+        &t,
+        &[
+            "pid_flux",
+            "pid-flux",
+            "pid-sd3",
+            "pid_sd3",
+            "pid_flux2",
+            "pid_flux_2",
+            "pid-flux2",
+            "pid-flux-2",
+            "pid_qwen",
+            "pid_qwen_image",
+            "pid-qwen",
+            "pid-qwen-image",
+            "pid_zimage",
+            "pid-zimage",
+            "pixeldit",
+            "pixel-dit",
+            "pixel_dit",
+        ],
+    ) {
+        return "pid";
+    }
+    if has_any(
+        &t,
+        &[
+            "hunyuanvideo",
+            "hunyuan-video",
+            "hunyuan_video",
+            "hunyuan video",
+        ],
+    ) {
+        return "hunyuan-video";
+    }
+    if has_any(&t, &["mage-flow", "mage_flow", "mageflow"]) {
+        let is_edit = t.contains("edit");
+        let is_turbo = t.contains("turbo");
+        return match (is_edit, is_turbo) {
+            (true, true) => "mage-flow-edit-turbo",
+            (true, false) => "mage-flow-edit",
+            (false, true) => "mage-flow-turbo",
+            (false, false) => "mage-flow",
+        };
+    }
     if has_any(&t, &["kontext"]) {
         return "kontext";
     }
@@ -239,6 +286,30 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "ssd-1b",
             "bk-sdm",
             "sdxs",
+            "pid_flux",
+            "pid-flux",
+            "pid-sd3",
+            "pid_sd3",
+            "pid_flux2",
+            "pid_flux_2",
+            "pid-flux2",
+            "pid-flux-2",
+            "pid_qwen",
+            "pid_qwen_image",
+            "pid-qwen",
+            "pid-qwen-image",
+            "pid_zimage",
+            "pid-zimage",
+            "pixeldit",
+            "pixel-dit",
+            "pixel_dit",
+            "hunyuanvideo",
+            "hunyuan-video",
+            "hunyuan_video",
+            "hunyuan video",
+            "mage-flow",
+            "mage_flow",
+            "mageflow",
             "boogu",
             "krea",
             "sefi",
@@ -285,11 +356,12 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     if has_any(&test, &["clip_g", "clip-g", "vit_big"]) {
         return "clip_g";
     }
-    // T5-XXL (incl UMT5, flan-t5 for MiniT2I)
+    // T5-XXL (incl UMT5, flan-t5 for MiniT2I, and HunyuanVideo's ByT5)
     if has_any(
         &test,
         &[
-            "t5xxl", "t5_xx", "t5-xxl", "umt5", "t5_xxl", "umt5-xxl", "flan-t5", "flan_t5",
+            "t5xxl", "t5_xx", "t5-xxl", "umt5", "t5_xxl", "umt5-xxl", "flan-t5", "flan_t5", "byt5",
+            "glyphxl",
         ],
     ) {
         return "t5xxl";
@@ -416,6 +488,82 @@ mod tests {
         assert_eq!(
             classify_file("mm_sd15_v3.safetensors", "mm_sd15_v3", "animatediff", 836.0,),
             "motion_module"
+        );
+    }
+
+    #[test]
+    fn detects_pid_before_backbone_name() {
+        assert_eq!(
+            detect_family("pid_flux1_512_to_2048_4step_bf16.safetensors"),
+            "pid"
+        );
+    }
+
+    #[test]
+    fn detects_hunyuan_video() {
+        assert_eq!(
+            detect_family("hunyuanvideo1.5_720p_t2v_fp16.safetensors"),
+            "hunyuan-video"
+        );
+    }
+
+    #[test]
+    fn detects_mage_flow_variants() {
+        assert_eq!(detect_family("Mage-Flow-4B-Base.safetensors"), "mage-flow");
+        assert_eq!(
+            detect_family("Mage-Flow-4B-Turbo.safetensors"),
+            "mage-flow-turbo"
+        );
+        assert_eq!(
+            detect_family("Mage-Flow-Edit-4B.safetensors"),
+            "mage-flow-edit"
+        );
+        assert_eq!(
+            detect_family("mage_flow_edit_turbo_bf16.safetensors"),
+            "mage-flow-edit-turbo"
+        );
+    }
+
+    #[test]
+    fn classifies_mage_flow_as_model_even_when_small() {
+        assert_eq!(
+            classify_file("mage-flow-4b.safetensors", "mage-flow-4b", "", 12.0),
+            "model"
+        );
+    }
+
+    #[test]
+    fn classifies_hunyuan_byt5_as_t5() {
+        assert_eq!(
+            classify_file(
+                "byt5_small_glyphxl_fp16.safetensors",
+                "byt5_small_glyphxl_fp16",
+                "text_encoders",
+                800.0,
+            ),
+            "t5xxl"
+        );
+    }
+
+    #[test]
+    fn classifies_pid_and_hunyuan_names_as_models_even_when_small() {
+        assert_eq!(
+            classify_file(
+                "pid_qwen_image_checkpoint.safetensors",
+                "pid_qwen_image_checkpoint",
+                "",
+                12.0
+            ),
+            "model"
+        );
+        assert_eq!(
+            classify_file(
+                "hunyuan video 1.5.safetensors",
+                "hunyuan video 1.5",
+                "",
+                12.0
+            ),
+            "model"
         );
     }
 }
