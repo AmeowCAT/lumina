@@ -1,10 +1,10 @@
 import { useId } from "react";
 
 /**
- * 流光 Lumina 品牌图标（内联 SVG）。三道 teal→cyan→靛 的流光弧 + 发光节点，
- * 深色圆角底，呼应"流光"与应用的青绿（teal）强调色主题。
+ * 流光 Lumina 品牌图标（内联 SVG)。三道淡金→金→赭的流光弧 + 发光节点,
+ * 深色圆角底,呼应"暗房金光"主题的安全灯琥珀色。
  *
- * 用 `useId` 给渐变分配唯一 id，避免同页多实例时 `url(#...)` 撞车。
+ * 用 `useId` 给渐变分配唯一 id,避免同页多实例时 `url(#...)` 撞车。
  */
 export function Logo({ size = 28 }: { size?: number }) {
   const uid = useId().replace(/:/g, "");
@@ -23,18 +23,18 @@ export function Logo({ size = 28 }: { size?: number }) {
     >
       <defs>
         <linearGradient id={bg} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#1a1e28" />
-          <stop offset="1" stopColor="#0d0f14" />
+          <stop stopColor="#221c12" />
+          <stop offset="1" stopColor="#100d09" />
         </linearGradient>
         <linearGradient id={flow} x1="12" y1="54" x2="52" y2="12" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#2dd4bf" />
-          <stop offset="0.5" stopColor="#22d3ee" />
-          <stop offset="1" stopColor="#818cf8" />
+          <stop stopColor="#f5d78e" />
+          <stop offset="0.5" stopColor="#d9a441" />
+          <stop offset="1" stopColor="#b56a35" />
         </linearGradient>
         <radialGradient id={spark} cx="0.5" cy="0.5" r="0.5">
-          <stop stopColor="#ffffff" />
-          <stop offset="0.45" stopColor="#5eead4" />
-          <stop offset="1" stopColor="#14b8a6" stopOpacity="0" />
+          <stop stopColor="#fff8e6" />
+          <stop offset="0.45" stopColor="#f5d78e" />
+          <stop offset="1" stopColor="#d9a441" stopOpacity="0" />
         </radialGradient>
       </defs>
       <rect width="64" height="64" rx="15" fill={`url(#${bg})`} />
@@ -51,7 +51,7 @@ export function Logo({ size = 28 }: { size?: number }) {
       <g fill="none" strokeLinecap="round">
         <path
           d="M15 47 C 22 33, 31 27, 49 17"
-          stroke="#14b8a6"
+          stroke="#d9a441"
           strokeOpacity="0.22"
           strokeWidth="11"
         />
@@ -70,7 +70,7 @@ export function Logo({ size = 28 }: { size?: number }) {
         />
       </g>
       <circle cx="49" cy="17" r="7" fill={`url(#${spark})`} />
-      <circle cx="49" cy="17" r="2.6" fill="#ffffff" />
+      <circle cx="49" cy="17" r="2.6" fill="#fff8e6" />
     </svg>
   );
 }

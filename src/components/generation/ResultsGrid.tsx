@@ -1,7 +1,9 @@
 import { memo } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import type { ResultEntry } from "../../store";
 import type { JobConfig } from "../../types";
 import { IC } from "../ui/Icons";
+import { TwoTapButton } from "../ui/TwoTapButton";
 
 interface Props {
   results: ResultEntry[];
@@ -67,6 +69,20 @@ function saveLabel(entry: ResultEntry): { text: string; className: string; title
   }
 }
 
+// 显影(The Develop):结果落画布时从模糊灰度显影为清晰全彩,
+// 一张一次,像拍立得在暗房灯下成形。这是本设计的签名时刻。
+const cardMotion = {
+  layout: true,
+  initial: { opacity: 0, scale: 1.05, filter: "blur(20px) saturate(0.55)" },
+  animate: { opacity: 1, scale: 1, filter: "blur(0px) saturate(1)" },
+  exit: {
+    opacity: 0,
+    scale: 0.96,
+    filter: "blur(8px)",
+    transition: { duration: 0.16 },
+  },
+} as const;
+
 export const ResultsGrid = memo(function ResultsGrid({
   results,
   onLightbox,
@@ -81,7 +97,7 @@ export const ResultsGrid = memo(function ResultsGrid({
   if (results.length === 0) {
     return (
       <div className="empty-state">
-        <p style={{ fontSize: 13, color: "var(--fg-secondary)", marginBottom: 4 }}>
+        <p className="mb-1 text-[13px] text-fg2">
           准备就绪
         </p>
         <p>
@@ -94,29 +110,129 @@ export const ResultsGrid = memo(function ResultsGrid({
 
   return (
     <div className="result-grid">
-      {results.map((r, ri) => {
-        if (r.result?.images)
-          return r.result.images.map((img, ii) => {
-            const fmt = r.result.output_format || "png";
-            const src = getImageUrl(img.b64_json, fmt);
-            const seedInfo = seedLabel(r.config, img.index ?? ii);
-            const dimInfo = dimensionLabel(r.config);
-            const timeInfo = elapsedLabel(r.created, r.completedAt);
+      <AnimatePresence initial={false}>
+        {results.map((r, ri) => {
+          if (r.result?.images)
+            return r.result.images.map((img, ii) => {
+              const fmt = r.result.output_format || "png";
+              const src = getImageUrl(img.b64_json, fmt);
+              const seedInfo = seedLabel(r.config, img.index ?? ii);
+              const dimInfo = dimensionLabel(r.config);
+              const timeInfo = elapsedLabel(r.created, r.completedAt);
+              const savedInfo = saveLabel(r);
+              return (
+                <motion.div
+                  key={`${r.jobId}-${img.index ?? ii}`}
+                  {...cardMotion}
+                  transition={{
+                    duration: 1.05,
+                    ease: [0.16, 1, 0.3, 1],
+                    delay: Math.min(ii * 0.08, 0.32),
+                  }}
+                  className="result-card"
+                >
+                  <button
+                    type="button"
+                    className="result-preview-button"
+                    aria-label={`查看生成结果${seedInfo ? `，${seedInfo}` : ""}`}
+                    onClick={() => onLightbox(src, "image")}
+                  >
+                    <img src={src} alt="" />
+                  </button>
+                  <div className="result-meta">
+                    {seedInfo && <span className="meta-seed">{seedInfo}</span>}
+                    {dimInfo && <span className="meta-dim">{dimInfo}</span>}
+                    {timeInfo && <span className="meta-time">{timeInfo}</span>}
+                    {savedInfo && (
+                      <span
+                        className={`meta-save ${savedInfo.className}`}
+                        title={savedInfo.title}
+                        role={r.saveStatus === "failed" ? "alert" : "status"}
+                      >
+                        {savedInfo.text}
+                      </span>
+                    )}
+                    {(r.saveStatus === "failed" || r.saveStatus === "partial") &&
+                      onRetrySave && (
+                        <button
+                          type="button"
+                          className="result-save-retry"
+                          onClick={() => onRetrySave(r.jobId)}
+                        >
+                          重试保存
+                        </button>
+                      )}
+                  </div>
+                  <div className="result-card-actions">
+                    <button
+                      className="btn btn-sm"
+                      title="用作初始图片（发送到 img2img）"
+                      aria-label="用作初始图片"
+                      onClick={() => onUseAsInit(src)}
+                    >
+                      {IC.image}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      title={
+                        r.config && r.config.params.seed >= 0
+                          ? `应用此配置（种子 ${
+                              r.config.params.seed + (img.index ?? ii)
+                            }）`
+                          : "应用此配置"
+                      }
+                      aria-label="应用此图片的生成配置"
+                      onClick={() => onApplyConfig(r.config, img.index ?? ii)}
+                    >
+                      {IC.refresh}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      aria-label="下载图片"
+                      onClick={() =>
+                        onDownload(
+                          img.b64_json,
+                          fmt,
+                          undefined,
+                          r.config?.params?.seed != null && r.config.params.seed >= 0
+                            ? r.config.params.seed + (img.index ?? ii)
+                            : undefined
+                        )
+                      }
+                    >
+                      {IC.dl}
+                    </button>
+                    <TwoTapButton
+                      className="btn btn-sm btn-danger"
+                      label="删除此图片"
+                      armedLabel="确认删除（尚未保存）"
+                      armedTitle="尚未保存，再次点击确认删除"
+                      needsConfirm={r.saveStatus !== "saved"}
+                      onConfirm={() => onRemove(r.jobId, img.index ?? ii)}
+                      idle={IC.x}
+                      armed={"确认?"}
+                    />
+                  </div>
+                </motion.div>
+              );
+            });
+          if (r.result?.b64_json) {
+            const b64 = r.result.b64_json;
+            const mime = r.result.mime_type || "video/webm";
+            const url = getVideoUrl(r.jobId, b64, mime);
             const savedInfo = saveLabel(r);
             return (
-              <div key={`${ri}-${ii}`} className="result-card">
-                <button
-                  type="button"
-                  className="result-preview-button"
-                  aria-label={`查看生成结果${seedInfo ? `，${seedInfo}` : ""}`}
-                  onClick={() => onLightbox(src, "image")}
-                >
-                  <img src={src} alt="" />
-                </button>
+              <motion.div
+                key={r.jobId || ri}
+                {...cardMotion}
+                transition={{ duration: 1.05, ease: [0.16, 1, 0.3, 1] }}
+                className="result-card"
+              >
+                <video src={url} controls style={{ maxWidth: 640 }} />
                 <div className="result-meta">
-                  {seedInfo && <span className="meta-seed">{seedInfo}</span>}
-                  {dimInfo && <span className="meta-dim">{dimInfo}</span>}
-                  {timeInfo && <span className="meta-time">{timeInfo}</span>}
+                  <span>{r.result.fps} FPS</span>
+                  <span>{r.result.frame_count} 帧</span>
+                  <span>{(r.result.output_format || "webm").toUpperCase()}</span>
                   {savedInfo && (
                     <span
                       className={`meta-save ${savedInfo.className}`}
@@ -140,116 +256,36 @@ export const ResultsGrid = memo(function ResultsGrid({
                 <div className="result-card-actions">
                   <button
                     className="btn btn-sm"
-                    title="用作初始图片（发送到 img2img）"
-                    aria-label="用作初始图片"
-                    onClick={() => onUseAsInit(src)}
-                  >
-                    {IC.image}
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    title={
-                      r.config && r.config.params.seed >= 0
-                        ? `应用此配置（种子 ${
-                            r.config.params.seed + (img.index ?? ii)
-                          }）`
-                        : "应用此配置"
-                    }
-                    aria-label="应用此图片的生成配置"
-                    onClick={() => onApplyConfig(r.config, img.index ?? ii)}
+                    title="应用此配置"
+                    aria-label="应用此视频的生成配置"
+                    onClick={() => onApplyConfig(r.config)}
                   >
                     {IC.refresh}
                   </button>
                   <button
                     className="btn btn-sm"
-                    aria-label="下载图片"
-                    onClick={() =>
-                      onDownload(
-                        img.b64_json,
-                        fmt,
-                        undefined,
-                        r.config?.params?.seed != null && r.config.params.seed >= 0
-                          ? r.config.params.seed + (img.index ?? ii)
-                          : undefined
-                      )
-                    }
+                    aria-label="下载视频"
+                    onClick={() => onDownload(b64, r.result!.output_format, mime)}
                   >
-                    {IC.dl}
+                    {IC.dl} 下载
                   </button>
-                  <button
+                  <TwoTapButton
                     className="btn btn-sm btn-danger"
-                    aria-label="删除此图片"
-                    title="删除此图片"
-                    onClick={() => onRemove(r.jobId, img.index ?? ii)}
-                  >
-                    {IC.x}
-                  </button>
+                    label="删除此视频"
+                    armedLabel="确认删除（尚未保存）"
+                    armedTitle="尚未保存，再次点击确认删除"
+                    needsConfirm={r.saveStatus !== "saved"}
+                    onConfirm={() => onRemove(r.jobId)}
+                    idle={IC.x}
+                    armed={"确认?"}
+                  />
                 </div>
-              </div>
+              </motion.div>
             );
-          });
-        if (r.result?.b64_json) {
-          const b64 = r.result.b64_json;
-          const mime = r.result.mime_type || "video/webm";
-          const url = getVideoUrl(r.jobId, b64, mime);
-          const savedInfo = saveLabel(r);
-          return (
-            <div key={ri} className="result-card">
-              <video src={url} controls style={{ maxWidth: 640 }} />
-              <div className="result-meta">
-                <span>{r.result.fps} FPS</span>
-                <span>{r.result.frame_count} 帧</span>
-                <span>{(r.result.output_format || "webm").toUpperCase()}</span>
-                {savedInfo && (
-                  <span
-                    className={`meta-save ${savedInfo.className}`}
-                    title={savedInfo.title}
-                    role={r.saveStatus === "failed" ? "alert" : "status"}
-                  >
-                    {savedInfo.text}
-                  </span>
-                )}
-                {(r.saveStatus === "failed" || r.saveStatus === "partial") &&
-                  onRetrySave && (
-                    <button
-                      type="button"
-                      className="result-save-retry"
-                      onClick={() => onRetrySave(r.jobId)}
-                    >
-                      重试保存
-                    </button>
-                  )}
-              </div>
-              <div className="result-card-actions">
-                <button
-                  className="btn btn-sm"
-                  title="应用此配置"
-                  aria-label="应用此视频的生成配置"
-                  onClick={() => onApplyConfig(r.config)}
-                >
-                  {IC.refresh}
-                </button>
-                <button
-                  className="btn btn-sm"
-                  aria-label="下载视频"
-                  onClick={() => onDownload(b64, r.result!.output_format, mime)}
-                >
-                  {IC.dl} 下载
-                </button>
-                <button
-                  className="btn btn-sm btn-danger"
-                  aria-label="删除此视频"
-                  title="删除此视频"
-                  onClick={() => onRemove(r.jobId)}
-                >
-                  {IC.x}
-                </button>
-              </div>
-            </div>
-          );
-        }
-        return null;
-      })}
+          }
+          return null;
+        })}
+      </AnimatePresence>
     </div>
   );
 });

@@ -1,4 +1,6 @@
 import { type ReactNode, useId } from "react";
+import { Slider as RxSlider } from "radix-ui";
+import { cn } from "./cn";
 
 export function Slider({
   label,
@@ -17,7 +19,6 @@ export function Slider({
   step?: number;
   hint?: ReactNode;
 }) {
-  const inputId = useId();
   const labelId = useId();
   const hintId = useId();
   const isSet = typeof value === "number" && !Number.isNaN(value);
@@ -30,29 +31,35 @@ export function Slider({
   return (
     <div className="form-row">
       {label ? (
-        <label id={labelId} className="form-label" htmlFor={inputId}>
+        <span id={labelId} className="form-label">
           {label}
           {hint ? (
             <span id={hintId} className="form-sublabel">
               {hint}
             </span>
           ) : null}
-        </label>
+        </span>
       ) : null}
-      <div className={`slider-row${isSet ? "" : " slider-unset"}`}>
-        <input
-          id={inputId}
-          type="range"
-          value={numVal}
-          onChange={(e) => onChange(parseFloat(e.target.value))}
+      <div className={cn("slider-row", !isSet && "slider-unset")}>
+        <RxSlider.Root
+          className="slider-root"
+          value={[numVal]}
+          onValueChange={(v) => onChange(v[0])}
           min={min}
           max={max}
           step={step || 1}
-          aria-label={label ? undefined : "参数值"}
-          aria-labelledby={label ? labelId : undefined}
-          aria-describedby={hint ? hintId : undefined}
-          aria-valuetext={isSet ? String(d) : "未设置"}
-        />
+        >
+          <RxSlider.Track className="slider-track">
+            <RxSlider.Range className="slider-range" />
+          </RxSlider.Track>
+          <RxSlider.Thumb
+            className="slider-thumb"
+            aria-label={label ? undefined : "参数值"}
+            aria-labelledby={label ? labelId : undefined}
+            aria-describedby={hint ? hintId : undefined}
+            aria-valuetext={isSet ? String(d) : "未设置"}
+          />
+        </RxSlider.Root>
         <span className="slider-val">{d}</span>
       </div>
     </div>

@@ -141,14 +141,14 @@ export default function App() {
   if (phase === "checking") {
     return (
       <div className="app">
-        <div className="dashboard">
+        <div className="dashboard dashboard-single">
           <div className="dashboard-card" style={{ textAlign: "center" }}>
             <span
               className="spinner"
               style={{ width: 32, height: 32, borderWidth: 3 }}
             />
             <h2 style={{ marginTop: 16 }}>连接中...</h2>
-            <p style={{ color: "var(--muted)", fontSize: 13 }}>
+            <p style={{ color: "var(--color-muted)", fontSize: 13 }}>
               正在检查启动器和服务器状态
             </p>
           </div>

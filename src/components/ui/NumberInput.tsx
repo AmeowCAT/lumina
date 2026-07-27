@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type CSSProperties } from "react";
+import { cn } from "./cn";
 
 interface NumberInputProps {
   value: number;
@@ -52,7 +53,7 @@ export function NumberInput({
     <input
       id={inputId}
       type="number"
-      className={className}
+      className={cn("input", className)}
       value={draft}
       min={min}
       max={max}

@@ -12,6 +12,7 @@ function etaStr(step: number, total: number, startedAt: number): string {
   return `${m} 分 ${s} 秒`;
 }
 
+/** 画布顶部的发丝光束:生成进度以一道虹紫光带扫过画布上缘。 */
 export function ProgressBar() {
   const step = useStore((s) => s.progressStep);
   const total = useStore((s) => s.progressTotal);
@@ -23,7 +24,7 @@ export function ProgressBar() {
   const eta = etaStr(step, total, startedAt);
 
   return (
-    <div className="progress-bar-wrap">
+    <div className="dream-beam">
       <div
         className="progress-bar-track"
         role="progressbar"
@@ -35,15 +36,8 @@ export function ProgressBar() {
           eta ? `，预计剩余 ${eta}` : ""
         }`}
       >
-        <div
-          className="progress-bar-fill"
-          style={{ width: `${pct}%` }}
-        />
+        <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
       </div>
-      <span className="progress-bar-text" aria-hidden="true">
-        步骤 {step}/{total}（{pct}%）
-        {eta ? ` · 剩余 ${eta}` : ""}
-      </span>
     </div>
   );
 }

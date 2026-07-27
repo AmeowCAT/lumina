@@ -1,14 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { SlidersHorizontal } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import {
-  BUILTIN_UPSCALERS,
-  CACHE_MODES,
   DISTILL_FAMILIES,
   FAMILY_CONFIG,
   VIDEO_FRAME_PRESETS,
-  SAMPLER_NAMES,
-  SCHEDULER_NAMES,
   SIZE_PRESETS,
 } from "../../config/families";
 import {
@@ -21,18 +18,24 @@ import {
 } from "../../lib/utils";
 import { familyDefaults, missingRequiredInputs } from "../../lib/launchConfig";
 import type { GenImages, GenMode, GenParams, Job, JobConfig } from "../../types";
-import { Panel } from "../ui/Panel";
-import { Slider } from "../ui/Slider";
-import { Toggle } from "../ui/Toggle";
-import { ImageUpload } from "../ui/ImageUpload";
-import { IC } from "../ui/Icons";
-import { Logo } from "../ui/Logo";
 import { Lightbox } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
-import { NumberInput } from "../ui/NumberInput";
+import { cn } from "../ui/cn";
 import { ResultsGrid } from "./ResultsGrid";
 import { JobQueue } from "./JobQueue";
 import { HistoryGallery } from "./HistoryGallery";
+import { HeaderBar } from "./HeaderBar";
+import { PromptDock } from "./PromptDock";
+import { QueueDrawer } from "./QueueDrawer";
+import { ParamsSheet } from "./ParamsSheet";
+import { ImageInputsPanel } from "./panels/ImageInputsPanel";
+import { SizeSeedPanel } from "./panels/SizeSeedPanel";
+import { SamplingPanel } from "./panels/SamplingPanel";
+import { AdvancedSamplingPanel } from "./panels/AdvancedSamplingPanel";
+import { HighNoisePanel } from "./panels/HighNoisePanel";
+import { LoraPanel } from "./panels/LoraPanel";
+import { HiresPanel } from "./panels/HiresPanel";
+import { OutputPanel } from "./panels/OutputPanel";
 import { useBlobUrlCache } from "../../hooks/useBlobUrlCache";
 import { useJobPolling } from "../../hooks/useJobPolling";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
@@ -87,13 +90,40 @@ export function GenerationUI() {
   const [workspaceTab, setWorkspaceTab] = useState<"results" | "history">("results");
   const [queueOpen, setQueueOpen] = useState(false);
   const [showNegative, setShowNegative] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetTarget, setSheetTarget] = useState<"size" | "sampling" | null>(null);
+  const progressStep = useStore((s) => s.progressStep);
+  const progressTotal = useStore((s) => s.progressTotal);
 
-  const openLightbox = (src: string, type: "image" | "video") =>
-    setLightboxItem({ type, src });
-  const closeLightbox = () => setLightboxItem(null);
+  const openLightbox = useCallback(
+    (src: string, type: "image" | "video") => setLightboxItem({ type, src }),
+    []
+  );
+  const closeLightbox = useCallback(() => setLightboxItem(null), []);
 
-  const { getVideoUrl, revokeVideoUrl, getImageUrl, revokeImageUrl } = useBlobUrlCache();
-  const { processedJobs, retrySave } = useJobPolling();
+  const blobCache = useBlobUrlCache();
+  const polling = useJobPolling();
+  // hooks 返回的函数身份随每次渲染变化，直接传给 memo 子组件会让 memo 失效
+  // （这是旧版整树重渲染的根源之一）。用 ref 转发包出身份稳定的回调,
+  // 调用时仍指向最新闭包,行为完全等价。
+  const blobRef = useRef(blobCache);
+  blobRef.current = blobCache;
+  const pollingRef = useRef(polling);
+  pollingRef.current = polling;
+  const getVideoUrl = useCallback(
+    (jobId: string, b64: string, mime: string) =>
+      blobRef.current.getVideoUrl(jobId, b64, mime),
+    []
+  );
+  const getImageUrl = useCallback(
+    (b64: string, fmt: string) => blobRef.current.getImageUrl(b64, fmt),
+    []
+  );
+  const retrySave = useCallback(
+    (jobId: string) => pollingRef.current.retrySave(jobId),
+    []
+  );
+  const processedJobs = polling.processedJobs;
   const imageSnapshots = useRef<Record<GenMode, GenImages>>({
     img_gen: {
       initImage: null,
@@ -188,25 +218,38 @@ export function GenerationUI() {
     return () => clearTimeout(t);
   }, [params, mode]);
 
-  const switchMode = (m: GenMode) => {
-    if (m === mode) return;
-    imageSnapshots.current[mode] = {
+  const switchMode = useCallback(
+    (m: GenMode) => {
+      if (m === mode) return;
+      imageSnapshots.current[mode] = {
+        initImage,
+        maskImage,
+        controlImage,
+        endImage,
+        refImages: [...refImages],
+      };
+      const next = imageSnapshots.current[m];
+      setImage("initImage", next.initImage);
+      setImage("maskImage", next.maskImage);
+      setImage("controlImage", next.controlImage);
+      setImage("endImage", next.endImage);
+      setRefImages(() => [...next.refImages]);
+      setMode(m);
+    },
+    [
+      mode,
       initImage,
       maskImage,
       controlImage,
       endImage,
-      refImages: [...refImages],
-    };
-    const next = imageSnapshots.current[m];
-    setImage("initImage", next.initImage);
-    setImage("maskImage", next.maskImage);
-    setImage("controlImage", next.controlImage);
-    setImage("endImage", next.endImage);
-    setRefImages(() => [...next.refImages]);
-    setMode(m);
-  };
+      refImages,
+      setImage,
+      setRefImages,
+      setMode,
+    ]
+  );
 
-  const handleGenerate = async () => {
+  const handleGenerate = useCallback(async () => {
     if (!caps || !params) return;
     if (submitting) return;
     if (family === "lingbot-video") {
@@ -262,6 +305,8 @@ export function GenerationUI() {
           },
           ...j,
         ]);
+        // 提交成功即收起参数 Sheet,把画布让给显影过程。
+        setSheetOpen(false);
       } else if (status === 429) {
         toast("队列已满", true);
       } else {
@@ -275,16 +320,33 @@ export function GenerationUI() {
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [
+    caps,
+    params,
+    submitting,
+    family,
+    activeJobs,
+    maxQueue,
+    mode,
+    initImage,
+    maskImage,
+    controlImage,
+    endImage,
+    refImages,
+    seedRandom,
+    update,
+    setJobs,
+    toast,
+  ]);
 
-  const randomSeed = () => {
+  const randomSeed = useCallback(() => {
     if (!params) return;
     const next = !seedRandom;
     setSeedRandom(next);
     if (!next && params.seed < 0) update("seed", randSeed());
-  };
+  }, [params, seedRandom, setSeedRandom, update]);
 
-  const resetToDefaults = () => {
+  const resetToDefaults = useCallback(() => {
     if (!caps || !params) return;
     const base = deepClone(caps.defaults_by_mode[mode]);
     const cfg = FAMILY_CONFIG[family];
@@ -298,58 +360,64 @@ export function GenerationUI() {
     const gd = recommended as { seed?: number } | undefined;
     if (gd?.seed != null && gd.seed < 0) setSeedRandom(true);
     toast("已重置为推荐值");
-  };
+  }, [caps, params, family, mode, setParams, setSeedRandom, toast]);
 
-  const cancelJob = async (id: string) => {
-    try {
-      const { status } = await api.sdcppCancel(id);
-      if (status === 200) {
-        setJobs((j) =>
-          j.map((x) => (x.id === id ? { ...x, status: "cancelled" } : x))
-        );
-      } else if (status === 409) {
-        // sd-server 不支持中断生成中的任务（capabilities.cancel_generating=false）
-        toast("任务正在生成，暂不支持中断", true);
-      } else {
+  const cancelJob = useCallback(
+    async (id: string) => {
+      try {
+        const { status } = await api.sdcppCancel(id);
+        if (status === 200) {
+          setJobs((j) =>
+            j.map((x) => (x.id === id ? { ...x, status: "cancelled" } : x))
+          );
+        } else if (status === 409) {
+          // sd-server 不支持中断生成中的任务（capabilities.cancel_generating=false）
+          toast("任务正在生成，暂不支持中断", true);
+        } else {
+          toast("取消失败", true);
+        }
+      } catch {
         toast("取消失败", true);
       }
-    } catch {
-      toast("取消失败", true);
-    }
-  };
+    },
+    [setJobs, toast]
+  );
 
   // 从列表移除单个任务（排队中的先取消，释放服务器队列槽位）。
-  const removeJob = async (id: string) => {
-    const job = useStore.getState().jobs.find((j) => j.id === id);
-    if (job?.status === "queued") {
-      try {
-        const cancelled = await api.sdcppCancel(id);
-        if (cancelled.status !== 200) {
-          toast("取消排队任务失败，已保留任务记录", true);
+  const removeJob = useCallback(
+    async (id: string) => {
+      const job = useStore.getState().jobs.find((j) => j.id === id);
+      if (job?.status === "queued") {
+        try {
+          const cancelled = await api.sdcppCancel(id);
+          if (cancelled.status !== 200) {
+            toast("取消排队任务失败，已保留任务记录", true);
+            return;
+          }
+        } catch (e) {
+          toast("取消排队任务失败: " + formatError(e), true);
           return;
         }
-      } catch (e) {
-        toast("取消排队任务失败: " + formatError(e), true);
-        return;
       }
-    }
-    if (job?.status === "generating") {
-      toast("已从列表移除；该任务正在生成，无法中断，将在后台跑完");
-    }
-    revokeVideoUrl(id);
-    processedJobs.current.delete(id);
-    setJobs((j) => j.filter((x) => x.id !== id));
-    setResults((r) => {
-      const removed = r.find((x) => x.jobId === id);
-      removed?.result?.images?.forEach((img) => {
-        if (img.b64_json) revokeImageUrl(img.b64_json);
+      if (job?.status === "generating") {
+        toast("已从列表移除；该任务正在生成，无法中断，将在后台跑完");
+      }
+      blobRef.current.revokeVideoUrl(id);
+      processedJobs.current.delete(id);
+      setJobs((j) => j.filter((x) => x.id !== id));
+      setResults((r) => {
+        const removed = r.find((x) => x.jobId === id);
+        removed?.result?.images?.forEach((img) => {
+          if (img.b64_json) blobRef.current.revokeImageUrl(img.b64_json);
+        });
+        return r.filter((x) => x.jobId !== id);
       });
-      return r.filter((x) => x.jobId !== id);
-    });
-  };
+    },
+    [processedJobs, setJobs, setResults, toast]
+  );
 
   // 清空整个队列（取消所有可取消的任务）。
-  const clearJobs = async () => {
+  const clearJobs = useCallback(async () => {
     const terminal = useStore
       .getState()
       .jobs.filter(
@@ -365,133 +433,205 @@ export function GenerationUI() {
     const ids = new Set(terminal.map((job) => job.id));
     setJobs((current) => current.filter((job) => !ids.has(job.id)));
     toast(`已清理 ${terminal.length} 条任务记录；生成结果仍保留`);
-  };
+  }, [setJobs, toast]);
 
-  // 删除单个结果，联动删除对应任务。
-  const removeResult = async (jobId: string, imageIndex?: number) => {
-    const resultEntry = useStore.getState().results.find((entry) => entry.jobId === jobId);
-    if (
-      resultEntry &&
-      resultEntry.saveStatus !== "saved" &&
-      !window.confirm(
-        imageIndex == null
-          ? "该结果尚未确认保存。删除后可能无法恢复，是否继续？"
-          : "该图片尚未确认保存。删除后可能无法恢复，是否继续？"
-      )
-    ) {
-      return;
-    }
-    const job = useStore.getState().jobs.find((j) => j.id === jobId);
-    if (job && (job.status === "queued" || job.status === "generating")) {
-      await api.sdcppCancel(jobId).catch(() => {});
-    }
-    let removedWholeEntry = imageIndex == null;
-    setResults((entries) =>
-      entries.flatMap((entry) => {
-        if (entry.jobId !== jobId) return [entry];
-        if (imageIndex == null || !entry.result.images) {
-          entry.result.images?.forEach((image) => revokeImageUrl(image.b64_json));
-          removedWholeEntry = true;
-          return [];
-        }
-        const remaining = entry.result.images.filter(
-          (image, index) => (image.index ?? index) !== imageIndex
-        );
-        const removed = entry.result.images.find(
-          (image, index) => (image.index ?? index) === imageIndex
-        );
-        if (removed) revokeImageUrl(removed.b64_json);
-        if (remaining.length === 0) {
-          removedWholeEntry = true;
-          return [];
-        }
-        return [{ ...entry, result: { ...entry.result, images: remaining } }];
-      })
-    );
-    if (removedWholeEntry) {
-      revokeVideoUrl(jobId);
-      processedJobs.current.delete(jobId);
-      setJobs((current) => current.filter((entry) => entry.id !== jobId));
-    }
-  };
+  // 删除单个结果，联动删除对应任务。未保存结果的确认由 DeleteButton 两段式承担。
+  const removeResult = useCallback(
+    async (jobId: string, imageIndex?: number) => {
+      const job = useStore.getState().jobs.find((j) => j.id === jobId);
+      if (job && (job.status === "queued" || job.status === "generating")) {
+        await api.sdcppCancel(jobId).catch(() => {});
+      }
+      let removedWholeEntry = imageIndex == null;
+      setResults((entries) =>
+        entries.flatMap((entry) => {
+          if (entry.jobId !== jobId) return [entry];
+          if (imageIndex == null || !entry.result.images) {
+            entry.result.images?.forEach((image) =>
+              blobRef.current.revokeImageUrl(image.b64_json)
+            );
+            removedWholeEntry = true;
+            return [];
+          }
+          const remaining = entry.result.images.filter(
+            (image, index) => (image.index ?? index) !== imageIndex
+          );
+          const removed = entry.result.images.find(
+            (image, index) => (image.index ?? index) === imageIndex
+          );
+          if (removed) blobRef.current.revokeImageUrl(removed.b64_json);
+          if (remaining.length === 0) {
+            removedWholeEntry = true;
+            return [];
+          }
+          return [{ ...entry, result: { ...entry.result, images: remaining } }];
+        })
+      );
+      if (removedWholeEntry) {
+        blobRef.current.revokeVideoUrl(jobId);
+        processedJobs.current.delete(jobId);
+        setJobs((current) => current.filter((entry) => entry.id !== jobId));
+      }
+    },
+    [processedJobs, setJobs, setResults]
+  );
 
-  // 恢复某任务/结果记录的生成配置：写入 localStorage 后切 mode，
-  // 由 GenerationUI 的 params init effect 读取并应用。
+  // 从某任务/结果记录恢复生成配置：写入 localStorage 后切 mode，
+  // 由 params init effect 读取并应用。
   // seedOffset：批量生成时第 k 张的实际种子是 seed+k（引擎按 seed+b 递增），
   // 从单张结果恢复时传入其 index 以复现该张。
-  const applyConfig = (config?: JobConfig, seedOffset = 0) => {
-    if (!config) return;
-    const p = deepClone(config.params);
-    if (seedOffset > 0 && p.seed >= 0) p.seed = p.seed + seedOffset;
-    // 直接写入 params（同 mode 时 mode 不变，init effect 不会重跑，必须手动 set）。
-    setParams(p);
-    // 恢复提交时的图片输入；无快照的旧记录清空，保证界面状态与该任务一致。
-    const img = config.images;
-    setImage("initImage", img?.initImage ?? null);
-    setImage("maskImage", img?.maskImage ?? null);
-    setImage("controlImage", img?.controlImage ?? null);
-    setImage("endImage", img?.endImage ?? null);
-    setRefImages(() => img?.refImages ?? []);
-    // 恢复配置的意图是复现：种子已是提交时的具体值，关闭随机开关。
-    if (p.seed >= 0) setSeedRandom(false);
-    // 跨 mode 时还要写入 localStorage，供 mode 切换后的 init effect 读取。
-    try {
-      localStorage.setItem("sdcpp:params:" + config.mode, JSON.stringify(p));
-    } catch {
-      /* ignore */
-    }
-    setMode(config.mode);
-    toast(seedOffset > 0 ? `已恢复该张的配置（种子 ${p.seed}）` : "已恢复该任务的配置");
-  };
+  const applyConfig = useCallback(
+    (config?: JobConfig, seedOffset = 0) => {
+      if (!config) return;
+      const p = deepClone(config.params);
+      if (seedOffset > 0 && p.seed >= 0) p.seed = p.seed + seedOffset;
+      // 直接写入 params（同 mode 时 mode 不变，init effect 不会重跑，必须手动 set）。
+      setParams(p);
+      // 恢复提交时的图片输入；无快照的旧记录清空，保证界面状态与该任务一致。
+      const img = config.images;
+      setImage("initImage", img?.initImage ?? null);
+      setImage("maskImage", img?.maskImage ?? null);
+      setImage("controlImage", img?.controlImage ?? null);
+      setImage("endImage", img?.endImage ?? null);
+      setRefImages(() => img?.refImages ?? []);
+      // 恢复配置的意图是复现：种子已是提交时的具体值，关闭随机开关。
+      if (p.seed >= 0) setSeedRandom(false);
+      // 跨 mode 时还要写入 localStorage，供 mode 切换后的 init effect 读取。
+      try {
+        localStorage.setItem("sdcpp:params:" + config.mode, JSON.stringify(p));
+      } catch {
+        /* ignore */
+      }
+      setMode(config.mode);
+      toast(seedOffset > 0 ? `已恢复该张的配置（种子 ${p.seed}）` : "已恢复该任务的配置");
+    },
+    [setParams, setImage, setRefImages, setSeedRandom, setMode, toast]
+  );
 
-  const download = async (b64: string, fmt?: string, _mime?: string, seed?: number) => {
-    if (!b64) return;
-    try {
-      const dt = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
-      const name = seed != null && seed >= 0 ? `seed_${seed}_${dt}` : `lumina_${dt}`;
-      const r = await api.saveAs(b64, fmt || "png", name);
-      if (r.saved) toast("已保存：" + r.path);
-    } catch (e) {
-      toast("保存失败: " + formatError(e), true);
-    }
-  };
+  const download = useCallback(
+    async (b64: string, fmt?: string, _mime?: string, seed?: number) => {
+      if (!b64) return;
+      try {
+        const dt = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
+        const name = seed != null && seed >= 0 ? `seed_${seed}_${dt}` : `lumina_${dt}`;
+        const r = await api.saveAs(b64, fmt || "png", name);
+        if (r.saved) toast("已保存：" + r.path);
+      } catch (e) {
+        toast("保存失败: " + formatError(e), true);
+      }
+    },
+    [toast]
+  );
 
   // 结果图用作 img2img 初始图片。
-  const useAsInit = (src: string) => {
-    setImage("initImage", src);
-    if (mode !== "img_gen") setMode("img_gen");
-    toast("已设为初始图片，可在「图片输入」面板中调整");
-  };
+  const useAsInit = useCallback(
+    (src: string) => {
+      setImage("initImage", src);
+      if (mode !== "img_gen") setMode("img_gen");
+      toast("已设为初始图片，可在「图片输入」面板中调整");
+    },
+    [mode, setImage, setMode, toast]
+  );
 
   // 从 PNG Info 恢复参数（历史画廊）。
-  const restoreFromMetadata = (metadata: Record<string, unknown>, _imageSrc: string) => {
-    try {
-      if (!params) return;
-      // 元数据的字段结构与 GenParams 兼容（server 写入的 JSON 即为请求体格式）。
-      const merged = { ...deepClone(params), ...metadata } as Partial<GenParams>;
-      setParams({
-        width: (merged.width as number) || params.width,
-        height: (merged.height as number) || params.height,
-        seed: merged.seed as number,
-        prompt: (merged.prompt as string) || params.prompt,
-        negative_prompt: (merged.negative_prompt as string) || params.negative_prompt,
-        sample_params: (merged.sample_params as GenParams["sample_params"]) || params.sample_params,
-        batch_count: merged.batch_count as number,
-        video_frames: merged.video_frames as number,
-        ...merged,
-      });
-      if ((merged.seed as number) >= 0) setSeedRandom(false);
-      toast("已从历史图片恢复参数");
-    } catch {
-      toast("参数恢复失败", true);
-    }
-  };
+  const restoreFromMetadata = useCallback(
+    (metadata: Record<string, unknown>, _imageSrc: string) => {
+      try {
+        if (!params) return;
+        // 元数据的字段结构与 GenParams 兼容（server 写入的 JSON 即为请求体格式）。
+        const merged = { ...deepClone(params), ...metadata } as Partial<GenParams>;
+        setParams({
+          width: (merged.width as number) || params.width,
+          height: (merged.height as number) || params.height,
+          seed: merged.seed as number,
+          prompt: (merged.prompt as string) || params.prompt,
+          negative_prompt: (merged.negative_prompt as string) || params.negative_prompt,
+          sample_params: (merged.sample_params as GenParams["sample_params"]) || params.sample_params,
+          batch_count: merged.batch_count as number,
+          video_frames: merged.video_frames as number,
+          ...merged,
+        });
+        if ((merged.seed as number) >= 0) setSeedRandom(false);
+        toast("已从历史图片恢复参数");
+      } catch {
+        toast("参数恢复失败", true);
+      }
+    },
+    [params, setParams, setSeedRandom, toast]
+  );
+
+  // 初始图片尺寸自动填充：对齐到 64 并 clamp 到 limits。
+  const handleInitSize = useCallback(
+    (w: number, h: number) => {
+      const minW = caps?.limits?.min_width || 64;
+      const maxW = caps?.limits?.max_width || 4096;
+      const minH = caps?.limits?.min_height || 64;
+      const maxH = caps?.limits?.max_height || 4096;
+      const align = (n: number, min: number, max: number) => {
+        const v = Math.round(n / 64) * 64;
+        return Math.min(max, Math.max(min, v));
+      };
+      const aw = align(w, minW, maxW);
+      const ah = align(h, minH, maxH);
+      update("width", aw);
+      update("height", ah);
+      toast(`已应用图片尺寸 ${aw}×${ah}`);
+    },
+    [caps?.limits, update, toast]
+  );
+
+  const handleSeedEdit = useCallback(
+    (raw: string) => {
+      setSeedRandom(false);
+      update("seed", raw === "" ? 0 : parseInt(raw) || 0);
+    },
+    [setSeedRandom, update]
+  );
+
+  const handleInsertLingbot = useCallback(() => {
+    update("prompt", LINGBOT_PROMPT_TEMPLATE);
+  }, [update]);
+
+  const openDashboard = useCallback(
+    () => setDashboardOpen(true),
+    [setDashboardOpen]
+  );
+  const toggleNegative = useCallback(() => setShowNegative((v) => !v), []);
+  const toggleQueue = useCallback(() => setQueueOpen((v) => !v), []);
+  const closeQueue = useCallback(() => setQueueOpen(false), []);
+  const openSheet = useCallback((target?: "size" | "sampling") => {
+    setSheetTarget(target ?? null);
+    setSheetOpen(true);
+  }, []);
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
+  const toggleSheet = useCallback(() => {
+    setSheetTarget(null);
+    setSheetOpen((v) => !v);
+  }, []);
+
+  // ⌘, 呼唤参数 Sheet（独立于 useKeyboardShortcuts,仅监听这一个组合键）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === ",") {
+        e.preventDefault();
+        toggleSheet();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSheet]);
+
+  const handleEscape = useCallback(() => {
+    if (lightboxItem) closeLightbox();
+    else if (sheetOpen) closeSheet();
+    else if (queueOpen) closeQueue();
+  }, [lightboxItem, sheetOpen, queueOpen, closeLightbox, closeSheet, closeQueue]);
 
   useKeyboardShortcuts({
     onGenerate: handleGenerate,
     onRandomSeed: randomSeed,
-    onEscape: () => setLightboxItem(null),
-    escapeActive: !!lightboxItem,
+    onEscape: handleEscape,
+    escapeActive: !!(lightboxItem || sheetOpen || queueOpen),
   });
 
   if (!caps || !params) return null;
@@ -499,768 +639,40 @@ export function GenerationUI() {
   const hsp = params.high_noise_sample_params;
   const negativeVisible =
     showNegative || !!(params.negative_prompt && params.negative_prompt.trim());
+  const showDistilled = DISTILL_FAMILIES.includes(family);
+  const dreamText = currentGen
+    ? progressTotal > 0
+      ? `显影中 ${progressStep}/${progressTotal}`
+      : "显影中…"
+    : "";
 
   return (
     <>
-      <header className="header">
-        <div className="header-logo">
-          <Logo size={26} />
-          <span className="brand-zh">流光</span>
-          <span className="brand-en">Lumina</span>
-        </div>
-        <div className="header-model">
-          <span title={caps.model?.path || caps.model?.name || "当前模型"}>
-            {caps.model?.name || caps.model?.path?.split(/[\\/]/).pop() || "当前模型"}
-          </span>
-        </div>
-        <div className="header-spacer" />
-        <button
-          className="btn btn-sm"
-          onClick={() => setDashboardOpen(true)}
-          aria-label="前往控制台更换模型或修改设置"
-        >
-          更换模型 / 设置
-        </button>
-        <div className="mode-tabs">
-          {caps.supported_modes?.map((m) => (
-            <button
-              key={m}
-              role="tab"
-              aria-selected={mode === m}
-              className={`mode-tab${mode === m ? " active" : ""}`}
-              onClick={() => switchMode(m)}
-            >
-              {m === "img_gen" ? "图片" : "视频"}
-            </button>
-          ))}
-        </div>
-      </header>
-      <ProgressBar />
+      <HeaderBar
+        modelLabel={
+          caps.model?.name || caps.model?.path?.split(/[\\/]/).pop() || "当前模型"
+        }
+        modelTitle={caps.model?.path || caps.model?.name || "当前模型"}
+        mode={mode}
+        supportedModes={caps.supported_modes || []}
+        dreamText={dreamText}
+        onSwitchMode={switchMode}
+        onOpenDashboard={openDashboard}
+      />
       <div className="main">
-        <aside className="sidebar">
-          <div className="sidebar-scroll">
-            {features.init_image && (
-              <Panel title="图片输入" collapsed={!features.init_image}>
-                {features.init_image && (
-                  <ImageUpload
-                    label="初始图片"
-                    value={initImage}
-                    onChange={(v) => setImage("initImage", v)}
-                    onSizeDetected={(w, h) => {
-                      // 按初始图片尺寸自动填充宽高：对齐到 64 并 clamp 到 limits。
-                      const minW = caps?.limits?.min_width || 64;
-                      const maxW = caps?.limits?.max_width || 4096;
-                      const minH = caps?.limits?.min_height || 64;
-                      const maxH = caps?.limits?.max_height || 4096;
-                      const align = (n: number, min: number, max: number) => {
-                        const v = Math.round(n / 64) * 64;
-                        return Math.min(max, Math.max(min, v));
-                      };
-                      const aw = align(w, minW, maxW);
-                      const ah = align(h, minH, maxH);
-                      update("width", aw);
-                      update("height", ah);
-                      toast(`已应用图片尺寸 ${aw}×${ah}`);
-                    }}
-                  />
-                )}
-                {features.mask_image && mode === "img_gen" && (
-                  <ImageUpload
-                    label="蒙版"
-                    value={maskImage}
-                    onChange={(v) => setImage("maskImage", v)}
-                  />
-                )}
-                {features.control_image && mode === "img_gen" && (
-                  <ImageUpload
-                    label="Control 图片"
-                    value={controlImage}
-                    onChange={(v) => setImage("controlImage", v)}
-                  />
-                )}
-                {features.end_image && mode === "vid_gen" && (
-                  <ImageUpload
-                    label="结束帧"
-                    value={endImage}
-                    onChange={(v) => setImage("endImage", v)}
-                  />
-                )}
-                {(features.init_image || features.control_image) &&
-                  mode === "img_gen" && (
-                    <>
-                      <Slider
-                        label="重绘强度"
-                        value={params.strength ?? 0.75}
-                        onChange={(v) => update("strength", v)}
-                        min={0}
-                        max={1}
-                        step={0.05}
-                      />
-                      <Slider
-                        label="Control 强度"
-                        value={params.control_strength ?? 0.9}
-                        onChange={(v) => update("control_strength", v)}
-                        min={0}
-                        max={1}
-                        step={0.05}
-                      />
-                      <Slider
-                        label="CFG (图像)"
-                        value={sp?.guidance?.img_cfg}
-                        onChange={(v) => update("sample_params.guidance.img_cfg", v)}
-                        min={0}
-                        max={30}
-                        step={0.5}
-                        hint={
-                          sp?.guidance?.img_cfg != null
-                            ? undefined
-                            : `未设置，跟随文本 CFG (${sp?.guidance?.txt_cfg ?? 0})`
-                        }
-                      />
-                    </>
-                  )}
-                {features.init_image && mode === "vid_gen" && (
-                  <Slider
-                    label="图生视频强度"
-                    value={params.strength ?? 0.75}
-                    onChange={(v) => update("strength", v)}
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    hint="数值越高，偏离初始图的幅度越大；越低则越稳定"
-                  />
-                )}
-                {features.ref_images && mode === "img_gen" && (
-                  <div className="form-row">
-                    <div className="form-label">
-                      参考图片
-                      {FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes(
-                        "ref_images"
-                      )
-                        ? "（必需）"
-                        : ""}
-                    </div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {refImages.map((img, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            width: 56,
-                            height: 56,
-                            position: "relative",
-                            borderRadius: "var(--radius-sm)",
-                            overflow: "hidden",
-                            border: "1px solid var(--border)",
-                          }}
-                        >
-                          <img
-                            src={img}
-                            alt=""
-                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                          />
-                          <button
-                            className="upload-remove"
-                            style={{ top: 2, right: 2, width: 14, height: 14, fontSize: 7 }}
-                            onClick={() =>
-                              setRefImages((r) => r.filter((_, j) => j !== i))
-                            }
-                          >
-                            {IC.x}
-                          </button>
-                        </div>
-                      ))}
-                      <button
-                        type="button"
-                        aria-label="添加参考图片"
-                        style={{
-                          width: 56,
-                          height: 56,
-                          border: "1.5px dashed var(--border)",
-                          borderRadius: "var(--radius-sm)",
-                          display: "grid",
-                          placeItems: "center",
-                          cursor: "pointer",
-                          color: "var(--muted)",
-                          background: "transparent",
-                        }}
-                        onClick={() => {
-                          const inp = document.createElement("input");
-                          inp.type = "file";
-                          inp.accept = "image/*";
-                          inp.onchange = (e) => {
-                            const f = (e.target as HTMLInputElement).files?.[0];
-                            if (f) {
-                              const r = new FileReader();
-                              r.onload = (ev) =>
-                                setRefImages((p) => [...p, ev.target?.result as string]);
-                              r.readAsDataURL(f);
-                            }
-                          };
-                          inp.click();
-                        }}
-                      >
-                        {IC.plus}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </Panel>
-            )}
-
-            <Panel title="尺寸与种子">
-              <div className="size-presets">
-                {sizePresets.map((grp) => (
-                  <div key={grp.label} className="size-group">
-                    <span className="size-group-label">{grp.label}</span>
-                    <div className="size-group-btns">
-                      {grp.sizes.map(([l, w, h]) => (
-                        <button
-                          key={l}
-                          className={`size-preset${
-                            params.width === w && params.height === h ? " active" : ""
-                          }`}
-                          aria-pressed={params.width === w && params.height === h}
-                          onClick={() => {
-                            update("width", w);
-                            update("height", h);
-                          }}
-                        >
-                          {l}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="inline-2">
-                <div className="form-row">
-                  <label className="form-label" htmlFor="generation-width">宽度</label>
-                  <NumberInput
-                    id="generation-width"
-                    value={params.width}
-                    onChange={(value) => update("width", value)}
-                    min={caps.limits?.min_width || 64}
-                    max={caps.limits?.max_width || 4096}
-                    step={64}
-                  />
-                </div>
-                <div className="form-row">
-                  <label className="form-label" htmlFor="generation-height">高度</label>
-                  <NumberInput
-                    id="generation-height"
-                    value={params.height}
-                    onChange={(value) => update("height", value)}
-                    min={caps.limits?.min_height || 64}
-                    max={caps.limits?.max_height || 4096}
-                    step={64}
-                  />
-                </div>
-              </div>
-              <div className="form-row" style={{ marginTop: 8 }}>
-                <label className="form-label" htmlFor="generation-seed">种子</label>
-                <div className="seed-row">
-                  <input
-                    id="generation-seed"
-                    type="number"
-                    value={params.seed < 0 ? "" : params.seed}
-                    onChange={(e) => {
-                      setSeedRandom(false);
-                      update("seed", e.target.value === "" ? 0 : parseInt(e.target.value) || 0);
-                    }}
-                    placeholder="随机"
-                  />
-                  <button
-                    className={`seed-btn${seedRandom ? " active" : ""}`}
-                    title="随机种子"
-                    aria-label="切换每次生成使用随机种子"
-                    aria-pressed={seedRandom}
-                    onClick={randomSeed}
-                  >
-                    {IC.dice}
-                  </button>
-                </div>
-              </div>
-              {mode === "img_gen" && (
-                <div className="form-row" style={{ marginTop: 6 }}>
-                  <label className="form-label" htmlFor="batch-count">批量</label>
-                  <div className="slider-row">
-                    <input
-                      id="batch-count"
-                      type="range"
-                      value={params.batch_count || 1}
-                      onChange={(e) => update("batch_count", parseInt(e.target.value))}
-                      min={1}
-                      max={caps.limits?.max_batch_count || 8}
-                    />
-                    <span className="slider-val">{params.batch_count || 1}</span>
-                  </div>
-                </div>
-              )}
-              {mode === "img_gen" && family === "qwen-image-layered" && (
-                <div className="form-row" style={{ marginTop: 8 }}>
-                  <label className="form-label" htmlFor="qwen-image-layers">
-                    分层数量
-                  </label>
-                  <NumberInput
-                    id="qwen-image-layers"
-                    value={params.qwen_image_layers ?? 3}
-                    onChange={(value) => update("qwen_image_layers", value)}
-                    min={0}
-                    step={1}
-                    style={{ width: 80 }}
-                  />
-                  <div className="field-hint" style={{ margin: "2px 0 0 0" }}>
-                    最终输出数量为分层数量 + 1
-                  </div>
-                </div>
-              )}
-              {mode === "vid_gen" && (
-                <>
-                  <Slider
-                    label="帧数"
-                    value={params.video_frames || 33}
-                    onChange={(v) => update("video_frames", v)}
-                    min={1}
-                    max={family === "sd" ? 32 : 121}
-                  />
-                  {VIDEO_FRAME_PRESETS[family] && (
-                    <div
-                      className="frame-presets"
-                      aria-label={`${FAMILY_CONFIG[family]?.name || "视频"} 帧数快捷项`}
-                    >
-                      {VIDEO_FRAME_PRESETS[family].map((frames) => (
-                        <button
-                          type="button"
-                          key={frames}
-                          className={`size-preset${
-                            params.video_frames === frames ? " active" : ""
-                          }`}
-                          onClick={() => update("video_frames", frames)}
-                        >
-                          {frames} 帧
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <Slider
-                    label="FPS"
-                    value={params.fps || 24}
-                    onChange={(v) => update("fps", v)}
-                    min={1}
-                    max={60}
-                  />
-                </>
-              )}
-            </Panel>
-
-            <Panel title="采样设置">
-              <div className="inline-2">
-                <div className="form-row">
-                  <label className="form-label" htmlFor="sample-method">采样器</label>
-                  <select
-                    id="sample-method"
-                    value={sp?.sample_method || "euler"}
-                    onChange={(e) => update("sample_params.sample_method", e.target.value)}
-                  >
-                    {(caps.samplers || []).map((s) => (
-                      <option key={s} value={s}>
-                        {SAMPLER_NAMES[s] || s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-row">
-                  <label className="form-label" htmlFor="scheduler">调度器</label>
-                  <select
-                    id="scheduler"
-                    value={sp?.scheduler || "discrete"}
-                    onChange={(e) => update("sample_params.scheduler", e.target.value)}
-                  >
-                    {(caps.schedulers || []).map((s) => (
-                      <option key={s} value={s}>
-                        {SCHEDULER_NAMES[s] || s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <Slider
-                label="步数"
-                value={sp?.sample_steps ?? 20}
-                onChange={(v) => update("sample_params.sample_steps", v)}
-                min={1}
-                max={100}
-              />
-              <Slider
-                label="CFG (文本)"
-                value={sp?.guidance?.txt_cfg ?? 7}
-                onChange={(v) => update("sample_params.guidance.txt_cfg", v)}
-                min={0}
-                max={30}
-                step={0.5}
-              />
-              {DISTILL_FAMILIES.includes(family) && (
-                <Slider
-                  label="蒸馏 CFG"
-                  value={sp?.guidance?.distilled_guidance ?? 0}
-                  onChange={(v) => update("sample_params.guidance.distilled_guidance", v)}
-                  min={0}
-                  max={30}
-                  step={0.5}
-                  hint="蒸馏模型"
-                />
-              )}
-              <button
-                className="btn btn-sm"
-                style={{ width: "100%" }}
-                onClick={resetToDefaults}
-              >
-                {IC.refresh}
-                <span>恢复当前模型推荐值</span>
-              </button>
-            </Panel>
-
-            <Panel title="高级采样" collapsed>
-              <Slider
-                label="Eta"
-                value={sp?.eta ?? 1}
-                onChange={(v) => update("sample_params.eta", v)}
-                min={0}
-                max={1}
-                step={0.05}
-                hint="随机噪声强度，通常保持推荐值"
-              />
-              <Slider
-                label="Flow Shift"
-                value={sp?.flow_shift ?? 0}
-                onChange={(v) => update("sample_params.flow_shift", v)}
-                min={0}
-                max={20}
-                step={0.1}
-                hint="Flow 类模型的时间步偏移"
-              />
-              <Slider
-                label="SLG Scale"
-                value={sp?.guidance?.slg?.scale ?? 0}
-                onChange={(v) =>
-                  update("sample_params.guidance.slg", {
-                    ...(sp?.guidance?.slg || { layers: [7, 8, 9] }),
-                    scale: v,
-                  })
-                }
-                min={0}
-                max={10}
-                step={0.1}
-                hint="跳层引导，0 表示关闭"
-              />
-              <Toggle
-                label="VAE 分块"
-                checked={!!params.vae_tiling_params?.enabled}
-                onChange={(v) =>
-                  // 展开保留 caps 默认带下来的 tile_size 等字段，只翻转开关
-                  update("vae_tiling_params", {
-                    ...params.vae_tiling_params,
-                    enabled: v,
-                  })
-                }
-              />
-              <div className="form-row">
-                <label className="form-label" htmlFor="cache-mode">缓存</label>
-                <select
-                  id="cache-mode"
-                  value={params.cache_mode || "disabled"}
-                  onChange={(e) => update("cache_mode", e.target.value)}
-                >
-                  {CACHE_MODES.map((c) => (
-                    <option key={c.v} value={c.v}>
-                      {c.l}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-row">
-                <label className="form-label" htmlFor="clip-skip">CLIP Skip</label>
-                <select
-                  id="clip-skip"
-                  value={params.clip_skip ?? -1}
-                  onChange={(e) => update("clip_skip", parseInt(e.target.value))}
-                >
-                  <option value={-1}>自动（随版本）</option>
-                  <option value={1}>1 · 最后一层</option>
-                  <option value={2}>2 · 倒数第二层</option>
-                  <option value={3}>3</option>
-                </select>
-              </div>
-            </Panel>
-
-            {mode === "vid_gen" && family === "wan-a14b" && (
-              <Panel title="高噪段采样">
-                <div className="inline-2">
-                  <div className="form-row">
-                    <label className="form-label" htmlFor="high-noise-sampler">采样器</label>
-                    <select
-                      id="high-noise-sampler"
-                      value={hsp?.sample_method || sp?.sample_method || "euler"}
-                      onChange={(e) =>
-                        update("high_noise_sample_params.sample_method", e.target.value)
-                      }
-                    >
-                      {(caps.samplers || []).map((s) => (
-                        <option key={s} value={s}>
-                          {SAMPLER_NAMES[s] || s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-row">
-                    <label className="form-label" htmlFor="high-noise-scheduler">调度器</label>
-                    <select
-                      id="high-noise-scheduler"
-                      value={hsp?.scheduler || sp?.scheduler || "discrete"}
-                      onChange={(e) =>
-                        update("high_noise_sample_params.scheduler", e.target.value)
-                      }
-                    >
-                      {(caps.schedulers || []).map((s) => (
-                        <option key={s} value={s}>
-                          {SCHEDULER_NAMES[s] || s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <Slider
-                  label="步数"
-                  value={hsp?.sample_steps ?? 8}
-                  onChange={(v) => update("high_noise_sample_params.sample_steps", v)}
-                  min={1}
-                  max={100}
-                />
-                <Slider
-                  label="CFG (文本)"
-                  value={hsp?.guidance?.txt_cfg ?? 3.5}
-                  onChange={(v) =>
-                    update("high_noise_sample_params.guidance.txt_cfg", v)
-                  }
-                  min={0}
-                  max={30}
-                  step={0.5}
-                />
-                {DISTILL_FAMILIES.includes(family) && (
-                  <Slider
-                    label="蒸馏 CFG (高噪)"
-                    value={hsp?.guidance?.distilled_guidance ?? 0}
-                    onChange={(v) =>
-                      update("high_noise_sample_params.guidance.distilled_guidance", v)
-                    }
-                    min={0}
-                    max={30}
-                    step={0.5}
-                  />
-                )}
-                <Slider
-                  label="Eta (高噪)"
-                  value={hsp?.eta ?? 1}
-                  onChange={(v) => update("high_noise_sample_params.eta", v)}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                />
-                <Slider
-                  label="Flow Shift (高噪)"
-                  value={hsp?.flow_shift ?? 0}
-                  onChange={(v) =>
-                    update("high_noise_sample_params.flow_shift", v)
-                  }
-                  min={0}
-                  max={20}
-                  step={0.1}
-                />
-                <Slider
-                  label="MoE Boundary"
-                  value={params.moe_boundary ?? 0.8}
-                  onChange={(v) => update("moe_boundary", v)}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  hint="低噪段/高噪段分界比例"
-                />
-              </Panel>
-            )}
-
-            {features.lora && (
-              <Panel title="LoRA" badge={(params.lora?.length || 0) || null}>
-                {(params.lora || []).map((l, i) => {
-                  const setMult = (v: number) => {
-                    const n = [...(params.lora || [])];
-                    n[i] = { ...n[i], multiplier: v };
-                    update("lora", n);
-                  };
-                  return (
-                  <div key={i} className="lora-row">
-                    <div className="lora-row-main">
-                      <select
-                        aria-label={`第 ${i + 1} 个 LoRA 模型`}
-                        value={l.path}
-                        onChange={(e) => {
-                          const n = [...(params.lora || [])];
-                          n[i] = { ...n[i], path: e.target.value };
-                          update("lora", n);
-                        }}
-                      >
-                        <option value="">-- 选择 LoRA --</option>
-                        {(caps.loras || []).map((l2) => (
-                          <option key={l2.path} value={l2.path}>
-                            {l2.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        className="lora-remove"
-                        onClick={() =>
-                          update(
-                            "lora",
-                            (params.lora || []).filter((_, j) => j !== i)
-                          )
-                        }
-                      >
-                        {IC.x}
-                      </button>
-                    </div>
-                    <div className="lora-mult-row">
-                      <span className="lora-mult-label">强度</span>
-                      <input
-                        type="range"
-                        className="lora-mult-slider"
-                        min={0}
-                        max={2}
-                        step={0.05}
-                        value={l.multiplier ?? 1}
-                        onChange={(e) => setMult(parseFloat(e.target.value))}
-                      />
-                      <NumberInput
-                        className="lora-mult-num"
-                        min={0}
-                        max={2}
-                        step={0.05}
-                        value={l.multiplier ?? 1}
-                        onChange={setMult}
-                        ariaLabel={`第 ${i + 1} 个 LoRA 强度`}
-                      />
-                    </div>
-                  </div>
-                  );
-                })}
-                <button
-                  className="add-lora"
-                  onClick={() =>
-                    update("lora", [
-                      ...(params.lora || []),
-                      { path: "", multiplier: 1 },
-                    ])
-                  }
-                >
-                  {IC.plus} 添加 LoRA
-                </button>
-              </Panel>
-            )}
-
-            {features.hires && (
-              <Panel title="高清修复" collapsed>
-                <Toggle
-                  label="启用"
-                  checked={!!params.hires?.enabled}
-                  onChange={(v) => update("hires", { ...params.hires, enabled: v })}
-                />
-                {params.hires?.enabled && (
-                  <>
-                    <div className="form-row" style={{ marginTop: 8 }}>
-                      <label className="form-label" htmlFor="hires-upscaler">放大器</label>
-                      <select
-                        id="hires-upscaler"
-                        value={params.hires.upscaler || "Latent"}
-                        onChange={(e) =>
-                          update("hires", { ...params.hires, upscaler: e.target.value })
-                        }
-                      >
-                        {/* caps.upscalers 已包含全部内置项（None/Lanczos/Latent…）
-                            以及 --hires-upscalers-dir 扫描到的 ESRGAN 模型；
-                            BUILTIN_UPSCALERS 仅作为 caps 缺失时的回退，两者不能
-                            拼接使用（会产生重复项和重复 key）。 */}
-                        {(caps.upscalers?.length
-                          ? caps.upscalers.map((u) => u.name)
-                          : BUILTIN_UPSCALERS
-                        ).map((u) => (
-                          <option key={u} value={u}>
-                            {u}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <Slider
-                      label="步数"
-                      value={params.hires.steps ?? 20}
-                      onChange={(v) => update("hires", { ...params.hires, steps: v })}
-                      min={1}
-                      max={100}
-                    />
-                    <Slider
-                      label="缩放"
-                      value={params.hires.scale ?? 2}
-                      onChange={(v) => update("hires", { ...params.hires, scale: v })}
-                      min={1}
-                      max={4}
-                      step={0.1}
-                    />
-                    <Slider
-                      label="降噪"
-                      value={params.hires.denoising_strength ?? 0.7}
-                      onChange={(v) =>
-                        update("hires", { ...params.hires, denoising_strength: v })
-                      }
-                      min={0}
-                      max={1}
-                      step={0.05}
-                    />
-                  </>
-                )}
-              </Panel>
-            )}
-
-            <Panel title="输出" collapsed>
-              <div className="form-row">
-                <label className="form-label" htmlFor="output-format">格式</label>
-                <select
-                  id="output-format"
-                  value={params.output_format || "png"}
-                  onChange={(e) => update("output_format", e.target.value)}
-                >
-                  {(caps.output_formats_by_mode?.[mode] || ["png"]).map((f) => (
-                    <option key={f} value={f}>
-                      {f.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {mode === "img_gen" && (
-                <Slider
-                  label="压缩"
-                  value={params.output_compression ?? 100}
-                  onChange={(v) => update("output_compression", v)}
-                  min={1}
-                  max={100}
-                />
-              )}
-            </Panel>
+        <div className={cn("output-area", currentGen && "dreaming")}>
+          <div className="studio-aurora" aria-hidden="true">
+            <span className="aur a1" />
+            <span className="aur a2" />
+            <span className="aur a3" />
           </div>
-        </aside>
-        <div className="output-area">
-          <div className="canvas-toolbar" role="tablist" aria-label="工作区视图">
-            <div className="mode-tabs">
+          <ProgressBar />
+          <div className="canvas-float left">
+            <div className="mode-tabs" role="tablist" aria-label="工作区视图">
               <button
                 role="tab"
                 aria-selected={workspaceTab === "results"}
-                className={`mode-tab${workspaceTab === "results" ? " active" : ""}`}
+                className={cn("mode-tab", workspaceTab === "results" && "active")}
                 onClick={() => setWorkspaceTab("results")}
               >
                 当前结果
@@ -1268,16 +680,26 @@ export function GenerationUI() {
               <button
                 role="tab"
                 aria-selected={workspaceTab === "history"}
-                className={`mode-tab${workspaceTab === "history" ? " active" : ""}`}
+                className={cn("mode-tab", workspaceTab === "history" && "active")}
                 onClick={() => setWorkspaceTab("history")}
               >
                 历史画廊
               </button>
             </div>
-            <div className="header-spacer" />
+          </div>
+          <div className="canvas-float right">
             <button
-              className={`btn btn-sm queue-toggle${queueOpen ? " active" : ""}`}
-              onClick={() => setQueueOpen((v) => !v)}
+              className={cn("btn btn-sm", sheetOpen && "queue-toggle active")}
+              onClick={toggleSheet}
+              aria-expanded={sheetOpen}
+              aria-label="打开参数面板"
+              title="生成参数（⌘,）"
+            >
+              <SlidersHorizontal size={13} aria-hidden="true" /> 参数
+            </button>
+            <button
+              className={cn("btn btn-sm queue-toggle", queueOpen && "active")}
+              onClick={toggleQueue}
               aria-expanded={queueOpen}
               aria-label="切换任务队列面板"
             >
@@ -1308,116 +730,138 @@ export function GenerationUI() {
               </div>
             )}
           </div>
-          <div className="prompt-dock">
-            {negativeVisible && (
-              <textarea
-                id="negative-prompt"
-                className="dock-negative"
-                value={params.negative_prompt || ""}
-                onChange={(e) => update("negative_prompt", e.target.value)}
-                placeholder="反向提示词：描述你想排除的内容…"
-                rows={2}
-                aria-label="反向提示词"
+          <PromptDock
+            prompt={params.prompt || ""}
+            negative={params.negative_prompt || ""}
+            negativeVisible={negativeVisible}
+            seedRandom={seedRandom}
+            submitting={submitting}
+            generating={!!currentGen}
+            disabled={submitting || activeJobs >= maxQueue}
+            showLingbotTools={family === "lingbot-video"}
+            width={params.width}
+            height={params.height}
+            steps={sp?.sample_steps ?? 20}
+            txtCfg={sp?.guidance?.txt_cfg ?? 7}
+            limits={caps?.limits}
+            onUpdate={update}
+            onToggleNegative={toggleNegative}
+            onRandomSeed={randomSeed}
+            onGenerate={handleGenerate}
+            onInsertLingbot={handleInsertLingbot}
+            onOpenSheet={openSheet}
+          />
+          <QueueDrawer open={queueOpen} onClose={closeQueue}>
+            <JobQueue
+              jobs={jobs}
+              activeJobs={activeJobs}
+              maxQueue={maxQueue}
+              mode={mode}
+              caps={caps}
+              onApplyConfig={applyConfig}
+              onCancel={cancelJob}
+              onRemove={removeJob}
+              onClear={clearJobs}
+              onDownload={download}
+            />
+          </QueueDrawer>
+          <ParamsSheet open={sheetOpen} onClose={closeSheet}>
+            {features.init_image && (
+              <ImageInputsPanel
+                features={features}
+                mode={mode}
+                family={family}
+                initImage={initImage}
+                maskImage={maskImage}
+                controlImage={controlImage}
+                endImage={endImage}
+                refImages={refImages}
+                strength={params.strength}
+                controlStrength={params.control_strength}
+                imgCfg={sp?.guidance?.img_cfg}
+                txtCfg={sp?.guidance?.txt_cfg}
+                onUpdate={update}
+                onSetImage={setImage}
+                onSetRefImages={setRefImages}
+                onInitSize={handleInitSize}
               />
             )}
-            <div className="prompt-dock-row">
-              <textarea
-                id="positive-prompt"
-                className="dock-prompt"
-                value={params.prompt || ""}
-                onChange={(e) => update("prompt", e.target.value)}
-                placeholder="描述你想生成的画面…（Ctrl + Enter 生成）"
-                rows={3}
-                aria-label="正向提示词"
+            <SizeSeedPanel
+              mode={mode}
+              family={family}
+              width={params.width}
+              height={params.height}
+              seed={params.seed}
+              seedRandom={seedRandom}
+              batchCount={params.batch_count}
+              videoFrames={params.video_frames}
+              fps={params.fps}
+              qwenLayers={params.qwen_image_layers}
+              limits={caps.limits}
+              sizePresets={sizePresets}
+              framePresets={VIDEO_FRAME_PRESETS[family]}
+              framePresetsLabel={`${FAMILY_CONFIG[family]?.name || "视频"} 帧数快捷项`}
+              onUpdate={update}
+              onSeedEdit={handleSeedEdit}
+              onRandomSeed={randomSeed}
+              forceOpen={sheetTarget === "size"}
+            />
+            <SamplingPanel
+              samplers={caps.samplers || []}
+              schedulers={caps.schedulers || []}
+              sampleMethod={sp?.sample_method || "euler"}
+              scheduler={sp?.scheduler || "discrete"}
+              steps={sp?.sample_steps}
+              txtCfg={sp?.guidance?.txt_cfg}
+              distilled={sp?.guidance?.distilled_guidance}
+              showDistilled={showDistilled}
+              onUpdate={update}
+              onReset={resetToDefaults}
+              forceOpen={sheetTarget === "sampling"}
+            />
+            <AdvancedSamplingPanel
+              eta={sp?.eta}
+              flowShift={sp?.flow_shift}
+              slg={sp?.guidance?.slg}
+              vaeTilingParams={params.vae_tiling_params}
+              cacheMode={params.cache_mode}
+              clipSkip={params.clip_skip}
+              onUpdate={update}
+            />
+            {mode === "vid_gen" && family === "wan-a14b" && (
+              <HighNoisePanel
+                samplers={caps.samplers || []}
+                schedulers={caps.schedulers || []}
+                hsp={hsp}
+                fallbackSampleMethod={sp?.sample_method || "euler"}
+                fallbackScheduler={sp?.scheduler || "discrete"}
+                moeBoundary={params.moe_boundary}
+                showDistilled={showDistilled}
+                onUpdate={update}
               />
-              <div className="prompt-dock-actions">
-                <button
-                  type="button"
-                  className={`seed-btn${negativeVisible ? " active" : ""}`}
-                  onClick={() => setShowNegative((v) => !v)}
-                  aria-pressed={negativeVisible}
-                  aria-label="切换反向提示词输入"
-                  title="反向提示词"
-                >
-                  反
-                </button>
-                <button
-                  className={`seed-btn${seedRandom ? " active" : ""}`}
-                  onClick={randomSeed}
-                  aria-label="切换每次生成使用随机种子"
-                  aria-pressed={seedRandom}
-                  title="随机种子"
-                >
-                  {IC.dice}
-                </button>
-                <button
-                  className="btn btn-primary generate-btn"
-                  onClick={handleGenerate}
-                  disabled={submitting || activeJobs >= maxQueue}
-                >
-                  {submitting ? (
-                    <>
-                      <span className="spinner" /> 提交中
-                    </>
-                  ) : currentGen ? (
-                    <>
-                      <span className="spinner" /> 生成中
-                    </>
-                  ) : (
-                    <>
-                      {IC.play} 生成
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-            {family === "lingbot-video" && (
-              <div className="prompt-tools">
-                <button
-                  type="button"
-                  className="size-preset"
-                  onClick={() => {
-                    const current = params.prompt?.trim();
-                    if (
-                      current &&
-                      !window.confirm("当前提示词将被 LingBot JSON 模板替换，是否继续？")
-                    ) {
-                      return;
-                    }
-                    update("prompt", LINGBOT_PROMPT_TEMPLATE);
-                  }}
-                >
-                  插入 LingBot JSON 模板
-                </button>
-                <span className="field-hint">
-                  也可继续使用普通文本；以 JSON 开头时会在提交前校验格式
-                </span>
-              </div>
             )}
-          </div>
-          {queueOpen && (
-            <>
-              <div
-                className="queue-backdrop"
-                onClick={() => setQueueOpen(false)}
-                aria-hidden="true"
+            {features.lora && (
+              <LoraPanel
+                loras={params.lora || []}
+                available={caps.loras || []}
+                onUpdate={update}
               />
-              <div className="queue-overlay">
-                <JobQueue
-                  jobs={jobs}
-                  activeJobs={activeJobs}
-                  maxQueue={maxQueue}
-                  mode={mode}
-                  caps={caps}
-                  onApplyConfig={applyConfig}
-                  onCancel={cancelJob}
-                  onRemove={removeJob}
-                  onClear={clearJobs}
-                  onDownload={download}
-                />
-              </div>
-            </>
-          )}
+            )}
+            {features.hires && (
+              <HiresPanel
+                hires={params.hires}
+                upscalers={(caps.upscalers || []).map((u) => u.name)}
+                onUpdate={update}
+              />
+            )}
+            <OutputPanel
+              mode={mode}
+              outputFormat={params.output_format}
+              formats={caps.output_formats_by_mode?.[mode] || ["png"]}
+              compression={params.output_compression}
+              onUpdate={update}
+            />
+          </ParamsSheet>
         </div>
       </div>
       <Lightbox item={lightboxItem} onClose={closeLightbox} />

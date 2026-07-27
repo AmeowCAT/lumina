@@ -93,18 +93,18 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     });
   });
 
-  it("渲染底部指令坞、画布工具栏与空状态", async () => {
+  it("渲染浮动指令条、画布工作区与空状态", async () => {
     render(<GenerationUI />);
     await waitFor(() => expect(screen.getByLabelText("正向提示词")).toBeTruthy());
-    // 提示词已从侧栏移入底部指令坞
+    // 提示词升级为画布底部中央的浮动指令条
     expect(document.querySelector(".prompt-dock")).toBeTruthy();
     expect(screen.getByLabelText("切换反向提示词输入")).toBeTruthy();
-    // 任务队列默认收起为浮层开关
+    // 任务队列默认收起为抽屉开关
     expect(screen.getByLabelText("切换任务队列面板")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "当前结果" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "历史画廊" })).toBeTruthy();
-    // 侧栏不再包含提示词面板，首个面板带仪表编号样式
-    expect(document.querySelector(".sidebar-scroll .panel")).toBeTruthy();
+    // 参数面板移入召唤式 Sheet（关闭时保持挂载）,首个面板带仪表编号样式
+    expect(document.querySelector(".params-sheet .panel")).toBeTruthy();
     expect(screen.getByText("准备就绪")).toBeTruthy();
   });
 
@@ -131,7 +131,7 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     expect(await screen.findByRole("slider", { name: /图生视频强度/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "8 帧" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "16 帧" })).toBeTruthy();
-    expect((screen.getByLabelText("帧数") as HTMLInputElement).value).toBe("16");
+    expect(screen.getByLabelText("帧数")).toHaveAttribute("aria-valuenow", "16");
   });
 
   it("marks PiD reference images as required and blocks an empty submission", async () => {

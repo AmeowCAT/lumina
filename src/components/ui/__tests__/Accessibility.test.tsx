@@ -15,7 +15,7 @@ describe("accessible UI controls", () => {
     );
 
     expect(screen.getByRole("slider", { name: "采样步数" })).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: "启用缓存" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "启用缓存" })).toBeTruthy();
   });
 
   it("closes the lightbox with Escape and restores focus", async () => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import { FAMILY_CONFIG, PID_VAE_FORMATS } from "../../config/families";
@@ -13,7 +14,10 @@ import { Panel } from "../ui/Panel";
 import { IC } from "../ui/Icons";
 import { Logo } from "../ui/Logo";
 import { NumberInput } from "../ui/NumberInput";
+import { Select } from "../ui/Select";
+import { Toggle } from "../ui/Toggle";
 import { useModelSwitch } from "../../hooks/useModelSwitch";
+import { cn } from "../ui/cn";
 
 export function Dashboard() {
 	const settings = useStore((s) => s.settings);
@@ -33,6 +37,8 @@ export function Dashboard() {
 	const toast = useStore((s) => s.toast);
 	const setDashboardOpen = useStore((s) => s.setDashboardOpen);
 	const [starting, setStarting] = useState(false);
+	// 切换模型将影响任务/结果时的待确认影响清单;非空即显示确认条
+	const [pendingSwitch, setPendingSwitch] = useState<string[] | null>(null);
 	const {
 		switchModel,
 		switching: switchingModel,
@@ -195,6 +201,31 @@ export function Dashboard() {
 				})
 			: null;
 	const missingRequirements = launchPreview?.missing || [];
+	// GO/NO-GO 检查单:能否发射只取决于这三件事实
+	const pathsReady = settings.modelDir.trim().length > 0;
+	const modelReady = mainModel.length > 0;
+	const componentsReady =
+		modelReady && familyConfig !== null && missingRequirements.length === 0;
+	const readyCount = [pathsReady, modelReady, componentsReady].filter(
+		Boolean,
+	).length;
+	const allReady = readyCount === 3;
+	const mainModelName = mainModel
+		? (files.find((f) => f.path === mainModel)?.name ??
+			mainModel.split(/[\\/]/).pop())
+		: "";
+	const pathsSection = useRef<HTMLDivElement>(null);
+	const modelSection = useRef<HTMLDivElement>(null);
+	const componentsSection = useRef<HTMLDivElement>(null);
+	const revealSection = (ref: { current: HTMLElement | null }) => {
+		const el = ref.current;
+		if (!el) return;
+		el.scrollIntoView({ behavior: "smooth", block: "start" });
+		// 先移除再强制回流后重加,让闪烁动画可以重复触发
+		el.classList.remove("section-flash");
+		void el.offsetWidth;
+		el.classList.add("section-flash");
+	};
 
 	const browse = async (key: "exeDir" | "modelDir" | "outputDir") => {
 		const p = key === "exeDir" ? await api.pickFile() : await api.pickFolder();
@@ -202,6 +233,7 @@ export function Dashboard() {
 	};
 
 	const selectMainModel = (path: string) => {
+		setPendingSwitch(null);
 		setMainModel(path);
 		const snapshot = path ? settings.modelSnapshots?.[path] : undefined;
 		if (!snapshot) {
@@ -253,7 +285,7 @@ export function Dashboard() {
 		}));
 	};
 
-	const startServer = async () => {
+	const startServer = async (confirmed = false) => {
 		if (!mainModel) {
 			toast("请先选择模型", true);
 			return;
@@ -291,14 +323,11 @@ export function Dashboard() {
 				activeJobs > 0 ? `${activeJobs} 个活动任务` : "",
 				unsavedResults > 0 ? `${unsavedResults} 个尚未安全保存的结果` : "",
 			].filter(Boolean);
-			if (
-				impacts.length > 0 &&
-				!window.confirm(
-					`切换模型会停止当前服务，并影响${impacts.join("、")}。是否继续？`,
-				)
-			) {
+			if (impacts.length > 0 && !confirmed) {
+				setPendingSwitch(impacts);
 				return;
 			}
+			setPendingSwitch(null);
 			setStarting(true);
 			try {
 				const switched = await switchModel(mainModel);
@@ -357,33 +386,35 @@ export function Dashboard() {
 
 	const running = serverStatus?.running ?? false;
 	const external = serverStatus?.external ?? false;
+	// 安全灯 orb 的四种活法:灭(未运行)/闪烁(启动中)/长明(就绪)/警示(失败)
+	const orbState = running
+		? serverStatus?.phase === "failed"
+			? "failed"
+			: serverStatus?.reachable
+				? "ready"
+				: "starting"
+		: external
+			? "ready"
+			: "offline";
 
 	return (
 		<div className="dashboard">
-			<div className="dashboard-card">
-				<h2 className="brand-title">
-					<Logo size={34} />
-					<span>流光 Lumina</span>
-				</h2>
-				<div className="subtitle">
-					配置 sd-server 与模型，启动后进入生成界面
+			<motion.div
+				className="dash-rail"
+				initial={{ opacity: 0, y: 16 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+			>
+				<div className="logo-row">
+					<Logo size={30} />
+					<div>
+						<div className="wordmark">流光</div>
+						<div className="hero-en">LUMINA STUDIO</div>
+					</div>
 				</div>
-				<div className={`settings-state ${settingsState}`} role="status">
-					{settingsState === "loading"
-						? "正在读取设置…"
-						: settingsState === "saving"
-							? "正在保存设置…"
-							: settingsState === "error"
-								? "设置未保存，请检查配置目录权限"
-								: "设置已保存"}
-				</div>
-
-				<div className="server-bar">
-					<span
-						className={`status-dot ${running || external ? "online" : "offline"}`}
-						style={{ marginRight: 8 }}
-					/>
-					<div className="status-info">
+				<div className="orb-wrap">
+					<span className={cn("orb", orbState)} aria-hidden="true" />
+					<div className="orb-info">
 						<div className="model-name">
 							{running
 								? serverStatus?.model || "sd-server"
@@ -405,30 +436,190 @@ export function Dashboard() {
 									: "等待启动"}
 						</div>
 					</div>
-					{running && !external && (
-						<button
-							className="btn btn-danger btn-sm"
-							onClick={stopServer}
-							disabled={starting}
-						>
-							{IC.power} 停止
-						</button>
-					)}
-					{external && (
-						<span className="tag" style={{ fontSize: 11, opacity: 0.7 }}>
-							外部进程
+					<div className="orb-actions">
+						{external && (
+							<span className="tag" style={{ fontSize: 11, opacity: 0.7 }}>
+								外部进程
+							</span>
+						)}
+						{serverStatus?.reachable && (
+							<button
+								className="btn btn-sm"
+								onClick={() => setDashboardOpen(false)}
+							>
+								进入生成界面
+							</button>
+						)}
+					</div>
+				</div>
+				<div className="check-list">
+					<div className="check-head">
+						启动检查
+						<span className={cn("check-summary", allReady && "ready")}>
+							{allReady ? "READY · 可以启动" : `待完成 ${3 - readyCount} 项`}
 						</span>
-					)}
-					{serverStatus?.reachable && (
-						<button
-							className="btn btn-sm"
-							onClick={() => setDashboardOpen(false)}
+					</div>
+					<button
+						type="button"
+						className={cn("check-item", pathsReady && "done")}
+						onClick={() => revealSection(pathsSection)}
+					>
+						<span className="check-dot" aria-hidden="true" />
+						<span className="check-label">路径</span>
+						<span className="check-detail">
+							{!pathsReady
+								? "未设置模型目录"
+								: scanning
+									? "扫描中…"
+									: files.length
+										? `${files.length} 个模型文件`
+										: "目录已设置"}
+						</span>
+					</button>
+					<button
+						type="button"
+						className={cn("check-item", modelReady && "done")}
+						onClick={() => revealSection(modelReady ? modelSection : pathsSection)}
+					>
+						<span className="check-dot" aria-hidden="true" />
+						<span className="check-label">主模型</span>
+						<span className="check-detail">
+							{modelReady ? mainModelName : "等待选择"}
+						</span>
+					</button>
+					<button
+						type="button"
+						className={cn("check-item", componentsReady && "done")}
+						onClick={() =>
+							revealSection(modelReady ? componentsSection : pathsSection)
+						}
+					>
+						<span className="check-dot" aria-hidden="true" />
+						<span className="check-label">组件</span>
+						<span
+							className={cn(
+								"check-detail",
+								modelReady && missingRequirements.length > 0 && "warn",
+							)}
 						>
-							进入生成界面
-						</button>
-					)}
+							{!modelReady
+								? "随主模型检测"
+								: missingRequirements.length > 0
+									? `缺 ${missingRequirements.length} 项`
+									: "齐备"}
+						</span>
+					</button>
 				</div>
 
+				<div className={cn("launch-dock", allReady && "ready")}>
+					{pendingSwitch && (
+						<div className="confirm-strip" role="alert">
+							<span className="confirm-strip-text">
+								切换模型将停止当前服务：{pendingSwitch.join("、")}
+							</span>
+							<span className="confirm-strip-actions">
+								<button
+									className="btn btn-sm"
+									onClick={() => setPendingSwitch(null)}
+								>
+									取消
+								</button>
+								<button
+									className="btn btn-sm btn-danger"
+									onClick={() => startServer(true)}
+									disabled={starting || switchingModel}
+								>
+									确认切换
+								</button>
+							</span>
+						</div>
+					)}
+					{mainModel && familyConfig && missingRequirements.length > 0 && (
+						<div className="validation-summary" role="alert">
+							还缺 {missingRequirements.length} 个必需配置：
+							{missingRequirements.join("、")}
+						</div>
+					)}
+					{mainModel && familyConfig && (
+						<div className="launch-meta">
+							{familyConfig.name} ·{" "}
+							{launchPreview?.mode === "vid_gen" ? "视频生成" : "图像生成"}
+						</div>
+					)}
+					<div className="launch-row">
+						<button
+							className="btn btn-primary btn-launch"
+							onClick={() => startServer()}
+							disabled={
+								!mainModel ||
+								!familyConfig ||
+								starting ||
+								switchingModel ||
+								missingRequirements.length > 0
+							}
+						>
+							{starting || switchingModel ? (
+								<>
+									<span className="spinner" />
+									{switchPhase === "preflight"
+										? "正在检查模型…"
+										: switchPhase === "stopping"
+											? "正在停止当前模型…"
+											: switchPhase === "rollback"
+												? "正在恢复上一个模型…"
+												: serverStatus?.reachable
+													? "正在切换模型…"
+													: "启动中…"}
+								</>
+							) : (
+								<>
+									{IC.play}
+									{serverStatus?.reachable
+										? caps?.model?.path === mainModel
+											? "返回生成界面"
+											: "切换到此模型"
+										: "启动服务器"}
+								</>
+							)}
+						</button>
+						{running && !external && (
+							<button className="btn btn-danger" onClick={stopServer}>
+								{IC.power} 停止
+							</button>
+						)}
+					</div>
+				</div>
+
+				<div className="rail-keys" aria-hidden="true">
+					<span>
+						<span className="kbd">Ctrl + Enter</span> 提交生成
+					</span>
+					<span>
+						<span className="kbd">Ctrl + ,</span> 参数面板
+					</span>
+					<span>
+						<span className="kbd">Esc</span> 关闭浮层
+					</span>
+				</div>
+			</motion.div>
+
+			<motion.div
+				className="dashboard-card"
+				initial={{ opacity: 0, y: 16 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1], delay: 0.08 }}
+			>
+				<div className={cn("settings-state", settingsState)} role="status">
+					{settingsState === "loading"
+						? "正在读取设置…"
+						: settingsState === "saving"
+							? "正在保存设置…"
+							: settingsState === "error"
+								? "设置未保存，请检查配置目录权限"
+								: "设置已保存"}
+				</div>
+
+				<div ref={pathsSection}>
 				<Panel title="程序与路径">
 					<div className="field-row">
 						<label className="form-label" htmlFor="dashboard-server-exe">
@@ -436,6 +627,7 @@ export function Dashboard() {
 						</label>
 						<input
 							id="dashboard-server-exe"
+							className="input"
 							type="text"
 							value={settings.exeDir}
 							onChange={(e) =>
@@ -460,6 +652,7 @@ export function Dashboard() {
 						</label>
 						<input
 							id="dashboard-model-dir"
+							className="input"
 							type="text"
 							value={settings.modelDir}
 							onChange={(e) =>
@@ -504,6 +697,7 @@ export function Dashboard() {
 						</label>
 						<input
 							id="dashboard-output-dir"
+							className="input"
 							type="text"
 							value={settings.outputDir}
 							onChange={(e) =>
@@ -521,29 +715,197 @@ export function Dashboard() {
 					</div>
 					<div className="field-hint">生成图片/视频的保存路径</div>
 				</Panel>
+				</div>
+
+				<div ref={modelSection}>
+				{(files.length > 0 || scanning) && (
+					<Panel title="模型检测">
+						{scanning ? (
+							<div className="empty-state">
+								<span className="spinner" /> 正在扫描模型…
+							</div>
+						) : modelCandidates.length === 0 ? (
+							<div className="empty-state">
+								发现了文件，但没有可作为主模型的候选项
+							</div>
+						) : (
+							<>
+								<div className="form-row">
+									<label className="form-label" htmlFor="dashboard-main-model">
+										主模型
+									</label>
+									<Select
+										id="dashboard-main-model"
+										value={mainModel}
+										onChange={selectMainModel}
+										options={[
+											{ value: "", label: "-- 选择模型 --" },
+											...modelCandidates.map((f) => ({
+												value: f.path,
+												label: modelFileOptionLabel(f),
+											})),
+										]}
+									/>
+								</div>
+								{mainModel && detectedFamily && (
+									<div className="form-row" style={{ marginTop: 8 }}>
+										<label className="form-label" htmlFor="dashboard-family">
+											识别类型
+										</label>
+										<Select
+											id="dashboard-family"
+											value={familyOverride || detectedFamily}
+											onChange={(next) => {
+												setFamilyOverride(next);
+												if (next === "pid" && !settings.vaeFormat) {
+													setSettings((current) => ({
+														...current,
+														vaeFormat: inferPidVaeFormat(mainModel),
+													}));
+												}
+											}}
+											options={Object.entries(FAMILY_CONFIG).map(([k, v]) => ({
+												value: k,
+												label: v.name,
+											}))}
+										/>
+										{familyConfig && (
+											<span className="tag" style={{ marginLeft: 4 }}>
+												{familyConfig.hint}
+											</span>
+										)}
+									</div>
+								)}
+							</>
+						)}
+					</Panel>
+				)}
+				</div>
+
+				<div ref={componentsSection}>
+				{mainModel && familyConfig && (
+					<>
+						{familyConfig.fields.filter((f) => f.key !== modelField?.key)
+							.length > 0 && (
+							<Panel title={`组件配置 — ${familyConfig.name}`}>
+								{familyConfig.fields
+									.filter((field) => field.key !== modelField?.key)
+									.map((field) => {
+										const opts = getOptions(field.cat);
+										const val = components[field.key] || "";
+										return (
+											<div key={field.key} className="form-row">
+												<label
+													className="form-label"
+													htmlFor={`component-${field.key}`}
+												>
+													{field.label}
+												</label>
+												<Select
+													id={`component-${field.key}`}
+													value={val}
+													onChange={(v) =>
+														setComponents((c) => ({
+															...c,
+															[field.key]: v,
+														}))
+													}
+													options={[
+														{
+															value: "",
+															label:
+																field.required && detectedFamily !== "custom"
+																	? "-- 必需，尚未设置 --"
+																	: "-- 未设置（可选） --",
+														},
+														...opts.map((f) => ({
+															value: f.path,
+															label:
+																modelFileOptionLabel(f) +
+																(f.dir !== mainModelDir
+																	? " — " + f.dir.split("/").pop()
+																	: ""),
+														})),
+													]}
+												/>
+											</div>
+										);
+									})}
+								{detectedFamily === "pid" && (
+									<div className="form-row">
+										<label
+											className="form-label"
+											htmlFor="component-pid-vae-format"
+										>
+											VAE 格式
+										</label>
+										<Select
+											id="component-pid-vae-format"
+											value={settings.vaeFormat || ""}
+											onChange={(v) =>
+												setSettings((current) => ({
+													...current,
+													vaeFormat: v,
+												}))
+											}
+											options={[
+												{ value: "", label: "-- 必需，请匹配 PiD 模型 --" },
+												...PID_VAE_FORMATS.map((option) => ({
+													value: option.value,
+													label: `${option.label}（${option.value}）`,
+												})),
+											]}
+										/>
+										<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+											{settings.vaeFormat
+												? "必须与 PiD checkpoint 使用的 VAE latent 布局一致"
+												: "无法从文件名可靠确定，请按模型卡选择对应格式"}
+										</div>
+									</div>
+								)}
+							</Panel>
+						)}
+					</>
+				)}
+				</div>
+
+				<div className="config-group-label">高级配置</div>
 
 				<Panel title="运行后端" collapsed>
 					<div className="form-row">
 						<label className="form-label" htmlFor="dashboard-backend-preset">
 							后端预设
 						</label>
-						<select
+						<Select
 							id="dashboard-backend-preset"
 							value={settings.backend || "auto"}
-							onChange={(e) =>
+							onChange={(v) =>
 								setSettings((s) => ({
 									...s,
-									backend: e.target.value === "auto" ? "" : e.target.value,
+									backend: v === "auto" ? "" : v,
 								}))
 							}
-						>
-							<option value="auto">自动（默认）</option>
-							<option value="gpu">首个可用 GPU</option>
-							<option value="cuda0">CUDA</option>
-							<option value="rocm">AMD ROCm / HIP</option>
-							<option value="vulkan0">Vulkan</option>
-							<option value="cpu">仅 CPU</option>
-						</select>
+							options={[
+								{ value: "auto", label: "自动（默认）" },
+								{ value: "gpu", label: "首个可用 GPU" },
+								{ value: "cuda0", label: "CUDA" },
+								{ value: "rocm", label: "AMD ROCm / HIP" },
+								{ value: "vulkan0", label: "Vulkan" },
+								{ value: "cpu", label: "仅 CPU" },
+								// 自定义 --backend 值不在预设中时回显为"自定义",避免触发器空态
+								...(settings.backend &&
+								!["gpu", "cuda0", "rocm", "vulkan0", "cpu"].includes(
+									settings.backend,
+								)
+									? [
+											{
+												value: settings.backend,
+												label: `自定义（${settings.backend}）`,
+											},
+										]
+									: []),
+							]}
+						/>
 					</div>
 					<div className="form-row" style={{ marginTop: 8 }}>
 						<label className="form-label" htmlFor="dashboard-backend-custom">
@@ -551,6 +913,7 @@ export function Dashboard() {
 						</label>
 						<input
 							id="dashboard-backend-custom"
+							className="input"
 							type="text"
 							value={settings.backend}
 							onChange={(e) =>
@@ -569,25 +932,26 @@ export function Dashboard() {
 						<label className="form-label" htmlFor="dashboard-ref-image-preset">
 							处理预设
 						</label>
-						<select
+						<Select
 							id="dashboard-ref-image-preset"
 							value={settings.refImagePreset}
-							onChange={(e) =>
-								setSettings((s) => ({ ...s, refImagePreset: e.target.value }))
+							onChange={(v) =>
+								setSettings((s) => ({ ...s, refImagePreset: v }))
 							}
-						>
-							<option value="">自动检测（推荐）</option>
-							<option value="flux_kontext">Flux Kontext</option>
-							<option value="longcat">LongCat Edit</option>
-							<option value="qwen">Qwen Image Edit</option>
-							<option value="qwen_layered">Qwen Image Layered</option>
-							<option value="mage_flow">Mage-Flow Edit</option>
-							<option value="flux2">Flux 2</option>
-							<option value="z_image_omni">Boogu / Z-Image Omni</option>
-							<option value="krea2_ostris_edit">Krea2 Ostris Edit</option>
-							<option value="krea2_edit">Krea2 Edit 768</option>
-							<option value="cosmos_reference">Anima / Cosmos Reference</option>
-						</select>
+							options={[
+								{ value: "", label: "自动检测（推荐）" },
+								{ value: "flux_kontext", label: "Flux Kontext" },
+								{ value: "longcat", label: "LongCat Edit" },
+								{ value: "qwen", label: "Qwen Image Edit" },
+								{ value: "qwen_layered", label: "Qwen Image Layered" },
+								{ value: "mage_flow", label: "Mage-Flow Edit" },
+								{ value: "flux2", label: "Flux 2" },
+								{ value: "z_image_omni", label: "Boogu / Z-Image Omni" },
+								{ value: "krea2_ostris_edit", label: "Krea2 Ostris Edit" },
+								{ value: "krea2_edit", label: "Krea2 Edit 768" },
+								{ value: "cosmos_reference", label: "Anima / Cosmos Reference" },
+							]}
+						/>
 						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
 							作为 --ref-image-args preset=… 在模型启动时传给
 							sd-server；通常保持自动即可
@@ -604,17 +968,13 @@ export function Dashboard() {
 
 				<Panel title="性能与显存" collapsed>
 					<div className="form-row">
-						<label className="form-label">
-							<input
-								type="checkbox"
-								checked={settings.offloadCpu}
-								onChange={(e) =>
-									setSettings((s) => ({ ...s, offloadCpu: e.target.checked }))
-								}
-								style={{ marginRight: 6 }}
-							/>
-							CPU 卸载（--offload-to-cpu）
-						</label>
+						<Toggle
+							label="CPU 卸载（--offload-to-cpu）"
+							checked={settings.offloadCpu}
+							onChange={(v) =>
+								setSettings((s) => ({ ...s, offloadCpu: v }))
+							}
+						/>
 						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
 							将部分层卸载到 CPU 以节省显存，适合低显存跑大模型
 						</div>
@@ -623,21 +983,22 @@ export function Dashboard() {
 						<label className="form-label" htmlFor="dashboard-quant-type">
 							加载时量化（--type）
 						</label>
-						<select
+						<Select
 							id="dashboard-quant-type"
 							value={settings.quantType}
-							onChange={(e) =>
-								setSettings((s) => ({ ...s, quantType: e.target.value }))
+							onChange={(v) =>
+								setSettings((s) => ({ ...s, quantType: v }))
 							}
-						>
-							<option value="">不量化（默认）</option>
-							<option value="q4_0">Q4_0</option>
-							<option value="q4_1">Q4_1</option>
-							<option value="q5_0">Q5_0</option>
-							<option value="q5_1">Q5_1</option>
-							<option value="q8_0">Q8_0</option>
-							<option value="f16">F16</option>
-						</select>
+							options={[
+								{ value: "", label: "不量化（默认）" },
+								{ value: "q4_0", label: "Q4_0" },
+								{ value: "q4_1", label: "Q4_1" },
+								{ value: "q5_0", label: "Q5_0" },
+								{ value: "q5_1", label: "Q5_1" },
+								{ value: "q8_0", label: "Q8_0" },
+								{ value: "f16", label: "F16" },
+							]}
+						/>
 					</div>
 					<div className="form-row" style={{ marginTop: 8 }}>
 						<label className="form-label" htmlFor="dashboard-extra-args">
@@ -645,6 +1006,7 @@ export function Dashboard() {
 						</label>
 						<input
 							id="dashboard-extra-args"
+							className="input"
 							type="text"
 							value={settings.extraArgs}
 							onChange={(e) =>
@@ -677,199 +1039,7 @@ export function Dashboard() {
 					</div>
 				</Panel>
 
-				{(files.length > 0 || scanning) && (
-					<Panel title="模型检测">
-						{scanning ? (
-							<div className="empty-state">
-								<span className="spinner" /> 正在扫描模型…
-							</div>
-						) : modelCandidates.length === 0 ? (
-							<div className="empty-state">
-								发现了文件，但没有可作为主模型的候选项
-							</div>
-						) : (
-							<>
-								<div className="form-row">
-									<label className="form-label" htmlFor="dashboard-main-model">
-										主模型
-									</label>
-									<select
-										id="dashboard-main-model"
-										value={mainModel}
-										onChange={(e) => selectMainModel(e.target.value)}
-									>
-										<option value="">-- 选择模型 --</option>
-										{modelCandidates.map((f) => (
-											<option key={f.path} value={f.path}>
-												{modelFileOptionLabel(f)}
-											</option>
-										))}
-									</select>
-								</div>
-								{mainModel && detectedFamily && (
-									<div className="form-row" style={{ marginTop: 8 }}>
-										<label className="form-label" htmlFor="dashboard-family">
-											识别类型
-										</label>
-										<select
-											id="dashboard-family"
-											value={familyOverride || detectedFamily}
-											onChange={(e) => {
-												const next = e.target.value;
-												setFamilyOverride(next);
-												if (next === "pid" && !settings.vaeFormat) {
-													setSettings((current) => ({
-														...current,
-														vaeFormat: inferPidVaeFormat(mainModel),
-													}));
-												}
-											}}
-										>
-											{Object.entries(FAMILY_CONFIG).map(([k, v]) => (
-												<option key={k} value={k}>
-													{v.name}
-												</option>
-											))}
-										</select>
-										{familyConfig && (
-											<span className="tag" style={{ marginLeft: 4 }}>
-												{familyConfig.hint}
-											</span>
-										)}
-									</div>
-								)}
-							</>
-						)}
-					</Panel>
-				)}
-
-				{mainModel && familyConfig && (
-					<>
-						{familyConfig.fields.filter((f) => f.key !== modelField?.key)
-							.length > 0 && (
-							<Panel title={`组件配置 — ${familyConfig.name}`}>
-								{familyConfig.fields
-									.filter((field) => field.key !== modelField?.key)
-									.map((field) => {
-										const opts = getOptions(field.cat);
-										const val = components[field.key] || "";
-										return (
-											<div key={field.key} className="form-row">
-												<label
-													className="form-label"
-													htmlFor={`component-${field.key}`}
-												>
-													{field.label}
-												</label>
-												<select
-													id={`component-${field.key}`}
-													value={val}
-													onChange={(e) =>
-														setComponents((c) => ({
-															...c,
-															[field.key]: e.target.value,
-														}))
-													}
-												>
-													<option value="">
-														{field.required && detectedFamily !== "custom"
-															? "-- 必需，尚未设置 --"
-															: "-- 未设置（可选） --"}
-													</option>
-													{opts.map((f) => (
-														<option key={f.path} value={f.path}>
-															{modelFileOptionLabel(f)}
-															{f.dir !== mainModelDir
-																? " — " + f.dir.split("/").pop()
-																: ""}
-														</option>
-													))}
-												</select>
-											</div>
-										);
-									})}
-								{detectedFamily === "pid" && (
-									<div className="form-row">
-										<label
-											className="form-label"
-											htmlFor="component-pid-vae-format"
-										>
-											VAE 格式
-										</label>
-										<select
-											id="component-pid-vae-format"
-											value={settings.vaeFormat || ""}
-											onChange={(e) =>
-												setSettings((current) => ({
-													...current,
-													vaeFormat: e.target.value,
-												}))
-											}
-										>
-											<option value="">-- 必需，请匹配 PiD 模型 --</option>
-											{PID_VAE_FORMATS.map((option) => (
-												<option key={option.value} value={option.value}>
-													{option.label}（{option.value}）
-												</option>
-											))}
-										</select>
-										<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
-											{settings.vaeFormat
-												? "必须与 PiD checkpoint 使用的 VAE latent 布局一致"
-												: "无法从文件名可靠确定，请按模型卡选择对应格式"}
-										</div>
-									</div>
-								)}
-							</Panel>
-						)}
-						{missingRequirements.length > 0 && (
-							<div className="validation-summary" role="alert">
-								还缺 {missingRequirements.length} 个必需配置：
-								{missingRequirements.join("、")}
-							</div>
-						)}
-						<div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-							<button
-								className="btn btn-primary"
-								style={{ flex: 1 }}
-								onClick={startServer}
-								disabled={
-									starting || switchingModel || missingRequirements.length > 0
-								}
-							>
-								{starting || switchingModel ? (
-									<>
-										<span className="spinner" />
-										{switchPhase === "preflight"
-											? "正在检查模型…"
-											: switchPhase === "stopping"
-												? "正在停止当前模型…"
-												: switchPhase === "rollback"
-													? "正在恢复上一个模型…"
-													: serverStatus?.reachable
-														? "正在切换模型…"
-														: "启动中…"}
-									</>
-								) : (
-									<>
-										{IC.play}
-										{serverStatus?.reachable
-											? caps?.model?.path === mainModel
-												? "返回生成界面"
-												: "切换到此模型"
-											: "启动服务器"}
-									</>
-								)}
-							</button>
-							{running && !external && (
-								<button className="btn btn-danger" onClick={stopServer}>
-									{IC.power} 停止
-								</button>
-							)}
-						</div>
-					</>
-				)}
-			</div>
+				</motion.div>
 		</div>
 	);
 }

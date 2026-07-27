@@ -48,13 +48,7 @@ export const JobQueue = memo(function JobQueue({
     <div className="job-queue">
       <div className="jq-header">
         <h4>任务队列</h4>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 10,
-            color: "var(--muted)",
-          }}
-        >
+        <span className="jq-count">
           {activeJobs} / {maxQueue}
         </span>
         {jobs.length > 0 && (

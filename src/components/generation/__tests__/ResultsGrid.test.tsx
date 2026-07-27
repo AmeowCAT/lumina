@@ -46,8 +46,31 @@ function renderGrid(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ResultsGrid", () => {
-  it("removes only the selected image from a batch", () => {
+  it("arms before removing an unsaved image, then removes on confirm", () => {
     const { onRemove } = renderGrid();
+    fireEvent.click(screen.getByRole("button", { name: "删除此图片" }));
+    expect(onRemove).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "确认删除（尚未保存）" })
+    );
+    expect(onRemove).toHaveBeenCalledWith("job-1", 3);
+  });
+
+  it("removes a safely saved image with a single click", () => {
+    const { onRemove } = renderGrid({
+      results: [
+        {
+          jobId: "job-1",
+          mode: "img_gen",
+          result: {
+            output_format: "png",
+            images: [{ index: 3, b64_json: "aW1hZ2U=" }],
+          },
+          config,
+          saveStatus: "saved",
+        },
+      ],
+    });
     fireEvent.click(screen.getByRole("button", { name: "删除此图片" }));
     expect(onRemove).toHaveBeenCalledWith("job-1", 3);
   });

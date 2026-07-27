@@ -1,4 +1,5 @@
 import { type ReactNode, useId } from "react";
+import { Switch as RxSwitch } from "radix-ui";
 
 export function Toggle({
   label,
@@ -13,15 +14,14 @@ export function Toggle({
   return (
     <label className="toggle-row" htmlFor={inputId}>
       <span className="form-label">{label}</span>
-      <span className="toggle">
-        <input
-          id={inputId}
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <span className="toggle-track" />
-      </span>
+      <RxSwitch.Root
+        id={inputId}
+        className="switch-root"
+        checked={checked}
+        onCheckedChange={onChange}
+      >
+        <RxSwitch.Thumb className="switch-thumb" />
+      </RxSwitch.Root>
     </label>
   );
 }
