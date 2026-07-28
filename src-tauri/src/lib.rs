@@ -19,6 +19,21 @@ pub struct AppState {
     pub settings_warning: Mutex<Option<settings::SettingsWarning>>,
 }
 
+/// Port every HTTP call should go to: the one a running child was launched on,
+/// otherwise the configured one. Without the first branch, changing the port in
+/// the dashboard would immediately misdirect calls to a server that is still
+/// listening on the old port.
+///
+/// The two locks are taken sequentially (never held together) so this can't
+/// deadlock against `start_server` / `save_settings`.
+async fn effective_port(state: &AppState) -> u16 {
+    let active = state.server.lock().await.active_port();
+    match active {
+        Some(port) => port,
+        None => state.settings.lock().await.sd_port,
+    }
+}
+
 // ── sd-server lifecycle ───────────────────────────────────────────────
 
 #[tauri::command]
@@ -28,12 +43,25 @@ async fn start_server(
     exe_path: String,
     model_name: String,
     mode: Option<String>,
+    port: Option<u16>,
     args: serde_json::Value,
 ) -> Result<server::StartResult, String> {
+    // The dashboard debounces its settings write, so a launch fired right after
+    // editing the port would otherwise still read the previous value from disk.
+    let port = match port {
+        Some(port) => port,
+        None => state.settings.lock().await.sd_port,
+    };
     let mut srv = state.server.lock().await;
-    srv.start(&app, &exe_path, &model_name, mode, args)
+    let result = srv
+        .start(&app, &exe_path, &model_name, port, mode, args)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    drop(srv);
+    // Keep the in-memory settings coherent with what is actually running, so
+    // the proxy commands resolve the right port before the debounced save lands.
+    state.settings.lock().await.sd_port = port;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -55,12 +83,18 @@ async fn server_status(state: State<'_, AppState>) -> Result<server::ServerStatu
     let model = srv.model().to_string();
     let last_error = srv.last_error().map(str::to_string);
     let started_at = srv.started_at();
+    let active_port = srv.active_port();
     drop(srv);
+
+    let sd_port = match active_port {
+        Some(port) => port,
+        None => state.settings.lock().await.sd_port,
+    };
 
     // Always ping so we can detect an externally-launched sd-server that
     // happens to listen on the same port.  `running` only reflects a child we
     // spawned ourselves.
-    let reachable = sdcpp::SdClient::new(server::SD_PORT).ping().await;
+    let reachable = sdcpp::SdClient::new(sd_port).ping().await;
     let external = reachable && !running;
     let phase = if external {
         "external"
@@ -80,7 +114,7 @@ async fn server_status(state: State<'_, AppState>) -> Result<server::ServerStatu
         external,
         pid,
         model,
-        sd_port: server::SD_PORT,
+        sd_port,
         phase: phase.into(),
         last_error,
         started_at,
@@ -252,7 +286,8 @@ fn filter_caps_loras(caps: &mut serde_json::Value, model_dir: &str) {
 
 #[tauri::command]
 async fn sdcpp_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let mut caps = sdcpp::SdClient::new(server::SD_PORT)
+    let port = effective_port(&state).await;
+    let mut caps = sdcpp::SdClient::new(port)
         .capabilities()
         .await
         .map_err(|e| e.to_string())?;
@@ -264,8 +299,13 @@ async fn sdcpp_capabilities(state: State<'_, AppState>) -> Result<serde_json::Va
 }
 
 #[tauri::command]
-async fn sdcpp_submit(mode: String, body: serde_json::Value) -> Result<serde_json::Value, String> {
-    let (status, body) = sdcpp::SdClient::new(server::SD_PORT)
+async fn sdcpp_submit(
+    state: State<'_, AppState>,
+    mode: String,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let port = effective_port(&state).await;
+    let (status, body) = sdcpp::SdClient::new(port)
         .submit(&mode, &body)
         .await
         .map_err(|e| e.to_string())?;
@@ -273,8 +313,9 @@ async fn sdcpp_submit(mode: String, body: serde_json::Value) -> Result<serde_jso
 }
 
 #[tauri::command]
-async fn sdcpp_job(id: String) -> Result<serde_json::Value, String> {
-    let (status, body) = sdcpp::SdClient::new(server::SD_PORT)
+async fn sdcpp_job(state: State<'_, AppState>, id: String) -> Result<serde_json::Value, String> {
+    let port = effective_port(&state).await;
+    let (status, body) = sdcpp::SdClient::new(port)
         .job(&id)
         .await
         .map_err(|e| e.to_string())?;
@@ -282,8 +323,9 @@ async fn sdcpp_job(id: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn sdcpp_cancel(id: String) -> Result<serde_json::Value, String> {
-    let (status, body) = sdcpp::SdClient::new(server::SD_PORT)
+async fn sdcpp_cancel(state: State<'_, AppState>, id: String) -> Result<serde_json::Value, String> {
+    let port = effective_port(&state).await;
+    let (status, body) = sdcpp::SdClient::new(port)
         .cancel(&id)
         .await
         .map_err(|e| e.to_string())?;

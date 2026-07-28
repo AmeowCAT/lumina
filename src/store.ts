@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { DEFAULT_SD_PORT } from "./lib/utils";
 import type {
   Capabilities,
   GenMode,
@@ -115,6 +116,7 @@ export const useStore = create<StoreState>((set, get) => ({
     offloadCpu: false,
     quantType: "",
     maxQueueSize: 4,
+    sdPort: DEFAULT_SD_PORT,
     modelSnapshots: {},
   },
   setSettings: (updater) => set((s) => ({ settings: updater(s.settings) })),

@@ -1,5 +1,20 @@
 import type { GenImages, GenMode, GenParams, ModelFile } from "../types";
 
+/** sd-server 的历史默认端口；与 Rust 侧 `server::DEFAULT_SD_PORT` 保持一致。 */
+export const DEFAULT_SD_PORT = 1234;
+/** 启动端口可选范围：<1024 在 Unix 上需要提权，0 会让系统随机选端口。 */
+export const MIN_SD_PORT = 1024;
+export const MAX_SD_PORT = 65535;
+
+/** 把任意输入夹到合法端口区间，非法值回落到默认端口。 */
+export function normalizeSdPort(port: unknown): number {
+  const value = Math.trunc(Number(port));
+  if (!Number.isFinite(value) || value < MIN_SD_PORT || value > MAX_SD_PORT) {
+    return DEFAULT_SD_PORT;
+  }
+  return value;
+}
+
 export const LINGBOT_PROMPT_TEMPLATE = JSON.stringify(
   {
     caption: {

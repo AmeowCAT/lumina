@@ -18,8 +18,16 @@ export const api = {
     exePath: string,
     modelName: string,
     mode: GenMode | null,
-    args: ServerArgs
-  ) => invoke<{ pid: number }>("start_server", { exePath, modelName, mode, args }),
+    args: ServerArgs,
+    port: number
+  ) =>
+    invoke<{ pid: number; sdPort: number }>("start_server", {
+      exePath,
+      modelName,
+      mode,
+      args,
+      port,
+    }),
 
   stopServer: () =>
     invoke<{ stopped: boolean; alreadyStopped: boolean; pid?: number | null }>(

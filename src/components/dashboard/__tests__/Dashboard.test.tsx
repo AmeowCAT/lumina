@@ -37,6 +37,7 @@ const settings: Settings = {
   offloadCpu: false,
   quantType: "",
   maxQueueSize: 4,
+  sdPort: 1234,
   modelSnapshots: {},
 };
 
@@ -240,7 +241,62 @@ describe("Dashboard onboarding validation", () => {
           model: "/models/main.safetensors",
           "motion-module": "/models/mm_sd15_v3.safetensors",
           "ref-image-args": "preset=flux_kontext",
-        })
+        }),
+        1234
+      )
+    );
+  });
+
+  it("launches sd-server on the port configured in the dashboard", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("sd"));
+    mocks.startServer.mockResolvedValue({ pid: 123, sdPort: 8188 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+
+    const port = screen.getByLabelText("sd-server 启动端口");
+    await userEvent.clear(port);
+    await userEvent.type(port, "8188");
+    fireEvent.blur(port);
+    await waitFor(() => expect(port).toHaveValue(8188));
+
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "SD 1.x / 2.x",
+        null,
+        expect.objectContaining({ model: "/models/main.safetensors" }),
+        8188
+      )
+    );
+  });
+
+  it("clamps an out-of-range port back into the allowed span", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("sd"));
+    mocks.startServer.mockResolvedValue({ pid: 123, sdPort: 1024 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+
+    const port = screen.getByLabelText("sd-server 启动端口");
+    await userEvent.clear(port);
+    await userEvent.type(port, "80");
+    fireEvent.blur(port);
+    // NumberInput clamps to `min` on commit, so a privileged port never reaches
+    // the backend's own validation.
+    await waitFor(() => expect(port).toHaveValue(1024));
+
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "SD 1.x / 2.x",
+        null,
+        expect.anything(),
+        1024
       )
     );
   });
@@ -304,7 +360,8 @@ describe("Dashboard onboarding validation", () => {
           vae: "/models/ae.sft",
           llm: "/models/gemma_2_2b.safetensors",
           "vae-format": "flux",
-        })
+        }),
+        1234
       )
     );
   });
@@ -369,7 +426,8 @@ describe("Dashboard onboarding validation", () => {
           llm: "/models/qwen_2.5_vl_7b.safetensors",
           t5xxl: "/models/byt5_small_glyphxl_fp16.safetensors",
           "diffusion-fa": true,
-        })
+        }),
+        1234
       )
     );
   });

@@ -30,6 +30,8 @@ export interface Settings {
   quantType: string;
   /** Fallback queue size when server doesn't report max_queue_size. Default 4. */
   maxQueueSize: number;
+  /** Port sd-server is launched on and proxied through. Default 1234. */
+  sdPort: number;
   modelSnapshots: Record<string, ModelConfigSnapshot>;
   loadWarning?: {
     code: string;

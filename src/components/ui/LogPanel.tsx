@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../../api";
 import { useStore } from "../../store";
-import { formatError } from "../../lib/utils";
+import { DEFAULT_SD_PORT, formatError } from "../../lib/utils";
 
 /**
  * 底部可折叠的服务器日志面板。sd-server 的 stdout/stderr 由后端逐行捕获、
@@ -42,7 +42,7 @@ export function LogPanel() {
           external: false,
           pid: null,
           model: "",
-          sdPort: serverStatus?.sdPort ?? 1234,
+          sdPort: serverStatus?.sdPort ?? DEFAULT_SD_PORT,
         },
       });
       toast(result.alreadyStopped ? "服务器已经停止" : "服务器已停止");

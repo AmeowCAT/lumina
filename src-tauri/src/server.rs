@@ -9,15 +9,26 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 
-/// Port the launcher reserves for sd-server (matches the webui default).
-pub const SD_PORT: u16 = 1234;
+/// Historical sd-server port, kept as the fallback when nothing is configured.
+pub const DEFAULT_SD_PORT: u16 = 1234;
+
+/// Reject ports the launcher can't realistically bind to. Port 0 would make the
+/// OS pick a random one (we'd never know where to proxy), and <1024 needs
+/// elevation on Unix — both fail far less legibly at spawn time than here.
+pub fn validate_port(port: u16) -> Result<u16> {
+    if port < 1024 {
+        anyhow::bail!("端口 {} 不可用，请使用 1024–65535 之间的端口", port);
+    }
+    Ok(port)
+}
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatus {
     pub running: bool,
     pub reachable: bool,
-    /// true when an sd-server is responding on SD_PORT but wasn't started by us
+    /// true when an sd-server is responding on the configured port but wasn't
+    /// started by us
     pub external: bool,
     pub pid: Option<u32>,
     pub model: String,
@@ -36,6 +47,7 @@ pub struct StartResult {
     pub pid: u32,
     pub phase: String,
     pub executable: String,
+    pub sd_port: u16,
 }
 
 #[derive(Serialize)]
@@ -50,6 +62,9 @@ pub struct ServerManager {
     child: Option<Child>,
     model: String,
     executable: String,
+    /// Port the currently-running child was launched on. `None` when no child
+    /// of ours is alive — callers then fall back to the configured port.
+    port: Option<u16>,
     last_error: Option<String>,
     started_at: Option<u64>,
 }
@@ -115,10 +130,10 @@ fn validate_path_arg(key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_args(args: &serde_json::Value) -> Result<Vec<String>> {
+fn build_args(args: &serde_json::Value, port: u16) -> Result<Vec<String>> {
     let mut out = vec![
         "--listen-port".into(),
-        SD_PORT.to_string(),
+        port.to_string(),
         "--listen-ip".into(),
         "127.0.0.1".into(),
     ];
@@ -127,6 +142,16 @@ fn build_args(args: &serde_json::Value) -> Result<Vec<String>> {
             if key == "extra_args" {
                 if let Some(s) = val.as_str() {
                     for t in split_args(s)? {
+                        // The launcher owns the listen address: it proxies every
+                        // API call to `port`, so an override buried in the extra
+                        // args would silently point sd-server somewhere the GUI
+                        // never talks to.
+                        if t == "--listen-port" || t == "--listen-ip" {
+                            anyhow::bail!(
+                                "附加启动参数不能包含 {}，请在控制台的“启动端口”中修改",
+                                t
+                            );
+                        }
                         out.push(t);
                     }
                 }
@@ -247,6 +272,7 @@ impl ServerManager {
             child: None,
             model: String::new(),
             executable: String::new(),
+            port: None,
             last_error: None,
             started_at: None,
         }
@@ -254,6 +280,11 @@ impl ServerManager {
 
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    /// Port of the child we launched, if one is still tracked.
+    pub fn active_port(&self) -> Option<u16> {
+        self.child.as_ref().and(self.port)
     }
 
     pub fn pid(&self) -> Option<u32> {
@@ -268,6 +299,15 @@ impl ServerManager {
         self.started_at
     }
 
+    /// Forget everything tied to a child process that is no longer running.
+    fn clear_child_state(&mut self) {
+        self.child = None;
+        self.model.clear();
+        self.executable.clear();
+        self.port = None;
+        self.started_at = None;
+    }
+
     /// Non-blocking liveness check; reaps the child if it has exited.
     pub fn check_alive(&mut self) -> bool {
         if let Some(child) = self.child.as_mut() {
@@ -276,10 +316,7 @@ impl ServerManager {
                     if !status.success() {
                         self.last_error = Some(format!("sd-server exited with status {}", status));
                     }
-                    self.child = None;
-                    self.model.clear();
-                    self.executable.clear();
-                    self.started_at = None;
+                    self.clear_child_state();
                     false
                 }
                 Ok(None) => true,
@@ -295,9 +332,7 @@ impl ServerManager {
 
     pub async fn stop(&mut self) -> Result<StopResult> {
         let Some(child) = self.child.as_mut() else {
-            self.model.clear();
-            self.executable.clear();
-            self.started_at = None;
+            self.clear_child_state();
             return Ok(StopResult {
                 stopped: true,
                 already_stopped: true,
@@ -309,10 +344,7 @@ impl ServerManager {
             .try_wait()
             .context("query sd-server before stopping")?
         {
-            self.child = None;
-            self.model.clear();
-            self.executable.clear();
-            self.started_at = None;
+            self.clear_child_state();
             if !status.success() {
                 self.last_error = Some(format!("sd-server exited with status {}", status));
             }
@@ -339,10 +371,7 @@ impl ServerManager {
                 anyhow::bail!("timed out waiting for sd-server to stop");
             }
         }
-        self.child = None;
-        self.model.clear();
-        self.executable.clear();
-        self.started_at = None;
+        self.clear_child_state();
         self.last_error = None;
         Ok(StopResult {
             stopped: true,
@@ -356,20 +385,22 @@ impl ServerManager {
         app: &AppHandle,
         exe_path: &str,
         model_name: &str,
+        port: u16,
         _mode: Option<String>,
         args: serde_json::Value,
     ) -> Result<StartResult> {
         // Validate the new launch completely before unloading the current model.
+        let port = validate_port(port)?;
         let exe = resolve_executable(exe_path)?;
-        let cmd_args = build_args(&args)?;
+        let cmd_args = build_args(&args, port)?;
         self.stop().await?;
 
         // A listener that is not our previous child would make the new process
         // fail immediately with a much less actionable log message.
-        let port_guard = TcpListener::bind(("127.0.0.1", SD_PORT)).map_err(|error| {
+        let port_guard = TcpListener::bind(("127.0.0.1", port)).map_err(|error| {
             anyhow!(
-                "port {} is already in use; stop the other sd-server first ({})",
-                SD_PORT,
+                "端口 {} 已被占用，请先停止占用它的进程或改用其他端口（{}）",
+                port,
                 error
             )
         })?;
@@ -412,6 +443,7 @@ impl ServerManager {
         self.child = Some(child);
         self.model = model_name.to_string();
         self.executable = exe.to_string_lossy().to_string();
+        self.port = Some(port);
         self.started_at = Some(now_epoch_seconds());
         self.last_error = None;
 
@@ -430,6 +462,7 @@ impl ServerManager {
             pid,
             phase: "starting".into(),
             executable: self.executable.clone(),
+            sd_port: port,
         })
     }
 
@@ -440,10 +473,7 @@ impl ServerManager {
         if let Some(child) = self.child.as_mut() {
             let _ = child.start_kill();
         }
-        self.child = None;
-        self.model.clear();
-        self.executable.clear();
-        self.started_at = None;
+        self.clear_child_state();
         log::info!("sd-server killed");
     }
 }
@@ -628,7 +658,7 @@ mod tests {
             now_epoch_seconds()
         ));
         let args = serde_json::json!({ "model": missing.to_string_lossy() });
-        let error = build_args(&args).unwrap_err().to_string();
+        let error = build_args(&args, DEFAULT_SD_PORT).unwrap_err().to_string();
         assert!(error.contains("path does not exist"));
     }
 
@@ -641,7 +671,7 @@ mod tests {
             "extra_args": "--verbose --threads 4"
         });
         assert_eq!(
-            build_args(&args).unwrap(),
+            build_args(&args, DEFAULT_SD_PORT).unwrap(),
             vec![
                 "--listen-port",
                 "1234",
@@ -655,5 +685,34 @@ mod tests {
                 "--offload-to-cpu",
             ]
         );
+    }
+
+    #[test]
+    fn build_args_uses_the_configured_port() {
+        let args = serde_json::json!({});
+        assert_eq!(
+            build_args(&args, 8188).unwrap(),
+            vec!["--listen-port", "8188", "--listen-ip", "127.0.0.1"]
+        );
+    }
+
+    #[test]
+    fn build_args_rejects_a_listen_override_in_extra_args() {
+        let args = serde_json::json!({ "extra_args": "--listen-port 9000" });
+        let error = build_args(&args, 1234).unwrap_err().to_string();
+        assert!(error.contains("--listen-port"));
+
+        let args = serde_json::json!({ "extra_args": "--listen-ip 0.0.0.0" });
+        assert!(build_args(&args, 1234).is_err());
+    }
+
+    #[test]
+    fn validate_port_rejects_privileged_and_zero_ports() {
+        assert!(validate_port(0).is_err());
+        assert!(validate_port(80).is_err());
+        assert!(validate_port(1023).is_err());
+        assert_eq!(validate_port(1024).unwrap(), 1024);
+        assert_eq!(validate_port(DEFAULT_SD_PORT).unwrap(), 1234);
+        assert_eq!(validate_port(65535).unwrap(), 65535);
     }
 }

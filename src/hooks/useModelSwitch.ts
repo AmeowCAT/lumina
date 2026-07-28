@@ -8,7 +8,7 @@ import type {
   ModelConfigSnapshot,
   ServerArgs,
 } from "../types";
-import { formatError } from "../lib/utils";
+import { formatError, normalizeSdPort } from "../lib/utils";
 import {
   buildLaunchConfig as buildLaunchArgs,
   inferPidVaeFormat,
@@ -112,7 +112,8 @@ export function useModelSwitch() {
       exePath,
       config.familyConfig.name,
       config.mode,
-      config.args
+      config.args,
+      normalizeSdPort(settings.sdPort)
     );
     setPhase("loading");
     return waitUntilReady(config.modelPath);

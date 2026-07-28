@@ -3,7 +3,14 @@ import { motion } from "motion/react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import { FAMILY_CONFIG, PID_VAE_FORMATS } from "../../config/families";
-import { formatError, modelFileOptionLabel } from "../../lib/utils";
+import {
+	DEFAULT_SD_PORT,
+	MAX_SD_PORT,
+	MIN_SD_PORT,
+	formatError,
+	modelFileOptionLabel,
+	normalizeSdPort,
+} from "../../lib/utils";
 import {
 	buildLaunchConfig,
 	findModelField,
@@ -285,6 +292,9 @@ export function Dashboard() {
 		}));
 	};
 
+	// 端口输入允许中途处于空/越界状态，落到启动与展示时统一夹回合法区间。
+	const sdPort = normalizeSdPort(settings.sdPort);
+
 	const startServer = async (confirmed = false) => {
 		if (!mainModel) {
 			toast("请先选择模型", true);
@@ -361,6 +371,7 @@ export function Dashboard() {
 				familyConfig.name,
 				launch.mode,
 				launch.args,
+				sdPort,
 			);
 			saveModelSnapshot();
 			persistFamilyDefaults(familyConfig);
@@ -1035,6 +1046,29 @@ export function Dashboard() {
 						/>
 						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
 							生成队列上限（服务器未提供时生效）
+						</div>
+					</div>
+					<div className="form-row" style={{ marginTop: 8 }}>
+						<label className="form-label" htmlFor="dashboard-sd-port">
+							启动端口
+						</label>
+						<NumberInput
+							id="dashboard-sd-port"
+							style={{ width: 96 }}
+							value={sdPort}
+							min={MIN_SD_PORT}
+							max={MAX_SD_PORT}
+							onChange={(value) =>
+								setSettings((s) => ({ ...s, sdPort: value }))
+							}
+							ariaLabel="sd-server 启动端口"
+						/>
+						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+							sd-server 监听 127.0.0.1 的端口，默认 {DEFAULT_SD_PORT}；范围{" "}
+							{MIN_SD_PORT}–{MAX_SD_PORT}
+							{running && sdPort !== serverStatus?.sdPort
+								? `。当前服务器运行在 ${serverStatus?.sdPort}，重启后改用新端口`
+								: ""}
 						</div>
 					</div>
 				</Panel>

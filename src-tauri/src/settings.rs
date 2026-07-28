@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Persisted launcher settings (mirrors the webui `Settings` struct).
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     #[serde(default)]
@@ -30,8 +30,34 @@ pub struct Settings {
     pub quant_type: String,
     #[serde(default = "default_max_queue_size")]
     pub max_queue_size: u32,
+    /// Port sd-server listens on. Configurable from the dashboard; older
+    /// settings files without this key fall back to the historical 1234.
+    #[serde(default = "default_sd_port")]
+    pub sd_port: u16,
     #[serde(default)]
     pub model_snapshots: HashMap<String, ModelConfigSnapshot>,
+}
+
+/// Hand-written so that `Settings::default()` (used on a corrupt/missing file)
+/// agrees with the serde `#[serde(default = …)]` fallbacks — a derived Default
+/// would hand out `max_queue_size: 0` / `sd_port: 0`.
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            exe_dir: String::new(),
+            model_dir: String::new(),
+            output_dir: String::new(),
+            backend: String::new(),
+            ref_image_preset: String::new(),
+            vae_format: String::new(),
+            extra_args: String::new(),
+            offload_cpu: false,
+            quant_type: String::new(),
+            max_queue_size: default_max_queue_size(),
+            sd_port: default_sd_port(),
+            model_snapshots: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -86,6 +112,11 @@ pub struct LoadedSettings {
 
 fn default_max_queue_size() -> u32 {
     4
+}
+
+/// Historical sd-server port — the value the upstream webui also defaults to.
+pub fn default_sd_port() -> u16 {
+    crate::server::DEFAULT_SD_PORT
 }
 
 fn config_path() -> PathBuf {
@@ -402,6 +433,21 @@ mod tests {
         assert_eq!(settings.backend, "cuda0");
         assert!(settings.ref_image_preset.is_empty());
         assert!(settings.vae_format.is_empty());
+        // Pre-0.7.4 files have no `sdPort` key — they must keep the old port.
+        assert_eq!(settings.sd_port, 1234);
+    }
+
+    #[test]
+    fn custom_port_round_trips_and_default_matches_serde_fallback() {
+        let settings: Settings = serde_json::from_str(r#"{"sdPort":8188}"#).unwrap();
+        assert_eq!(settings.sd_port, 8188);
+
+        let encoded = serde_json::to_string(&settings).unwrap();
+        assert!(encoded.contains("\"sdPort\":8188"));
+
+        let fallback = Settings::default();
+        assert_eq!(fallback.sd_port, default_sd_port());
+        assert_eq!(fallback.max_queue_size, default_max_queue_size());
     }
 
     #[test]
