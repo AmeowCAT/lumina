@@ -76,6 +76,7 @@ interface Props {
   endImage: string | null;
   refImages: string[];
   controlFrames: string[];
+  controlFramesSupported: boolean;
   strength: number | undefined;
   controlStrength: number | undefined;
   ipAdapterStrength: number | undefined;
@@ -107,6 +108,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   endImage,
   refImages,
   controlFrames,
+  controlFramesSupported,
   strength,
   controlStrength,
   ipAdapterStrength,
@@ -223,7 +225,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           addLabel="添加参考图片"
         />
       )}
-      {features.control_frames && mode === "vid_gen" && (
+      {controlFramesSupported && mode === "vid_gen" && (
         <MultiImageRow
           label="条件帧（VACE）"
           images={controlFrames}

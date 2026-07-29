@@ -270,6 +270,9 @@ export function buildRequestBody(
     // 上游：custom_sigmas 一旦存在就覆盖二次采样 sigma 表；空数组没有
     // "沿用默认" 的语义，必须整个省略。
     if (!h.custom_sigmas?.length) delete h.custom_sigmas;
+    // 兼容旧版已持久化的 0；上游要求该值为正，省略后沿用服务端默认值。
+    if (h.upscale_tile_size != null && h.upscale_tile_size <= 0)
+      delete h.upscale_tile_size;
     b.hires = h;
   }
   if (params.vae_tiling_params?.enabled)

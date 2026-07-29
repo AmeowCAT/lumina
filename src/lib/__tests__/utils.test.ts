@@ -382,4 +382,14 @@ describe("buildRequestBody", () => {
       1.5, 0.8,
     ]);
   });
+
+  it("omits a non-positive hires upscale tile size from persisted state", () => {
+    const p: GenParams = {
+      ...baseParams,
+      hires: { enabled: true, upscale_tile_size: 0 },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+
+    expect("upscale_tile_size" in (body.hires as object)).toBe(false);
+  });
 });

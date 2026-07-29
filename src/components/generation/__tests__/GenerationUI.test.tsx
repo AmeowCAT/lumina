@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../../store";
 
 // Tauri IPC 在 jsdom 不存在；所有 api 方法统一返回空对象，
-// 本文件只验证 UI 结构渲染，不触发真实调用。
+// 仅对需要断言的调用保留稳定 mock。
+const apiMocks = vi.hoisted(() => ({
+  detectFamily: vi.fn(),
+  sdcppSubmit: vi.fn(),
+}));
 vi.mock("../../../api", () => ({
-  api: new Proxy({}, { get: () => vi.fn().mockResolvedValue({}) }),
+  api: apiMocks,
 }));
 
 import { GenerationUI } from "../GenerationUI";
@@ -76,9 +80,29 @@ const PID_CAPS = {
   },
 };
 
+const CONTROL_FRAME_VIDEO_CAPS = {
+  ...VIDEO_CAPS,
+  features_by_mode: {
+    ...VIDEO_CAPS.features_by_mode,
+    vid_gen: {
+      ...VIDEO_CAPS.features_by_mode.vid_gen,
+      control_frames: true,
+    },
+  },
+};
+
 describe("GenerationUI 结构（暗房重构版）", () => {
   beforeEach(() => {
     localStorage.clear();
+    apiMocks.detectFamily.mockReset().mockResolvedValue("custom");
+    apiMocks.sdcppSubmit.mockReset().mockResolvedValue({
+      status: 202,
+      body: {
+        id: "job_test",
+        kind: "vid_gen",
+        status: "queued",
+      },
+    });
     useStore.setState({
       caps: CAPS as never,
       mode: "img_gen",
@@ -87,7 +111,13 @@ describe("GenerationUI 结构（暗房重构版）", () => {
       results: [],
       mainModel: "",
       familyOverride: "",
+      initImage: null,
+      maskImage: null,
+      controlImage: null,
+      ipAdapterImage: null,
+      endImage: null,
       refImages: [],
+      controlFrames: [],
       toasts: [],
       seedRandom: true,
     });
@@ -154,5 +184,61 @@ describe("GenerationUI 结构（暗房重构版）", () => {
         "参考图片"
       )
     );
+  });
+
+  it("hides and omits control frames for LTX even when the protocol advertises them", async () => {
+    const caps = {
+      ...CONTROL_FRAME_VIDEO_CAPS,
+      model: {
+        name: "ltx-video-2b.safetensors",
+        path: "D:/models/ltx-video-2b.safetensors",
+      },
+    };
+    useStore.setState({
+      caps: caps as never,
+      mode: "vid_gen",
+      params: null,
+      mainModel: caps.model.path,
+      familyOverride: "ltx",
+      controlFrames: ["data:image/png;base64,stale-frame"],
+      seedRandom: false,
+    });
+    render(<GenerationUI />);
+
+    const generate = await screen.findByRole("button", { name: "生成" });
+    expect(screen.queryByRole("button", { name: "添加条件帧" })).toBeNull();
+    fireEvent.click(generate);
+
+    await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
+    const requestBody = apiMocks.sdcppSubmit.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(requestBody.control_frames).toBeUndefined();
+    expect(
+      useStore.getState().jobs[0]?.config?.images?.controlFrames
+    ).toEqual([]);
+  });
+
+  it("shows control frames for a VACE model", async () => {
+    const caps = {
+      ...CONTROL_FRAME_VIDEO_CAPS,
+      model: {
+        name: "Wan2.1-VACE-1.3B.safetensors",
+        path: "D:/models/Wan2.1-VACE-1.3B.safetensors",
+      },
+    };
+    useStore.setState({
+      caps: caps as never,
+      mode: "vid_gen",
+      params: null,
+      mainModel: caps.model.path,
+      familyOverride: "wan-t2v",
+    });
+    render(<GenerationUI />);
+
+    expect(
+      await screen.findByRole("button", { name: "添加条件帧" })
+    ).toBeTruthy();
   });
 });

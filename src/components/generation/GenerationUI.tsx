@@ -46,6 +46,12 @@ const MAX_SEED = Number.MAX_SAFE_INTEGER;
 const randSeed = () => Math.floor(Math.random() * MAX_SEED);
 const normalizeModelPath = (path: string) => path.replace(/\\/g, "/").toLowerCase();
 
+function isVaceModel(model?: { name?: string; path?: string }): boolean {
+  const source = model?.name || model?.path || "";
+  const fileName = source.replace(/\\/g, "/").split("/").pop() || "";
+  return fileName.toLowerCase().includes("vace");
+}
+
 function modelSelectionMatches(reportedPath: string, selectedPath: string): boolean {
   if (!reportedPath || !selectedPath) return false;
   const reported = normalizeModelPath(reportedPath);
@@ -154,6 +160,10 @@ export function GenerationUI() {
   // placed before them skips the params-init effect, leaving `params` null
   // forever → blank screen. The null guard lives just before the JSX return.
   const features = caps?.features_by_mode?.[mode] || {};
+  // 上游目前把 control_frames 作为 vid_gen 的通用协议能力返回，但实际仅
+  // VACE 模型消费；LTX-AV 会明确拒绝非空条件帧。
+  const controlFramesSupported =
+    mode === "vid_gen" && !!features.control_frames && isVaceModel(caps?.model);
   // 家族检测走 Rust detect_family（唯一实现）；异步就位前先按 custom 渲染。
   const activeFamilyOverride =
     familyOverride &&
@@ -278,6 +288,7 @@ export function GenerationUI() {
       toast("队列已满", true);
       return;
     }
+    const submittedControlFrames = controlFramesSupported ? controlFrames : [];
     const missingInputs = missingRequiredInputs(FAMILY_CONFIG[family], mode, {
       initImage,
       maskImage,
@@ -285,7 +296,7 @@ export function GenerationUI() {
       ipAdapterImage,
       endImage,
       refImages,
-      controlFrames,
+      controlFrames: submittedControlFrames,
     });
     if (missingInputs.length > 0) {
       toast("请先提供: " + missingInputs.join("、"), true);
@@ -306,7 +317,7 @@ export function GenerationUI() {
         ipAdapterImage,
         endImage,
         refImages,
-        controlFrames,
+        controlFrames: submittedControlFrames,
       };
       const body = buildRequestBody(mode, activeParams, images);
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
@@ -322,8 +333,8 @@ export function GenerationUI() {
               // 两个数组必须拷贝，否则后续增删会改写已提交任务的快照。
               images: {
                 ...images,
-                refImages: [...refImages],
-                controlFrames: [...controlFrames],
+                refImages: [...images.refImages],
+                controlFrames: [...images.controlFrames],
               },
             },
           },
@@ -356,6 +367,7 @@ export function GenerationUI() {
     endImage,
     refImages,
     controlFrames,
+    controlFramesSupported,
     seedRandom,
     update,
     setJobs,
@@ -809,7 +821,7 @@ export function GenerationUI() {
               features.ip_adapter_image ||
               features.end_image ||
               features.ref_images ||
-              features.control_frames) && (
+              controlFramesSupported) && (
               <ImageInputsPanel
                 features={features}
                 mode={mode}
@@ -821,6 +833,7 @@ export function GenerationUI() {
                 endImage={endImage}
                 refImages={refImages}
                 controlFrames={controlFrames}
+                controlFramesSupported={controlFramesSupported}
                 strength={params.strength}
                 controlStrength={params.control_strength}
                 ipAdapterStrength={params.ip_adapter_strength}
