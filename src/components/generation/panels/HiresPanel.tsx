@@ -66,6 +66,36 @@ export const HiresPanel = memo(function HiresPanel({
             max={1}
             step={0.05}
           />
+          {/* 上游语义：target_width/height 为 0 时才使用上面的「缩放」换算。 */}
+          <Slider
+            label="目标宽度"
+            value={hires.target_width ?? 0}
+            onChange={(v) => onUpdate("hires", { ...hires, target_width: v })}
+            min={0}
+            max={4096}
+            step={64}
+            hint={hires.target_width ? undefined : "0 = 按缩放倍数换算"}
+          />
+          <Slider
+            label="目标高度"
+            value={hires.target_height ?? 0}
+            onChange={(v) => onUpdate("hires", { ...hires, target_height: v })}
+            min={0}
+            max={4096}
+            step={64}
+            hint={hires.target_height ? undefined : "0 = 按缩放倍数换算"}
+          />
+          <Slider
+            label="放大分块"
+            value={hires.upscale_tile_size ?? 128}
+            onChange={(v) =>
+              onUpdate("hires", { ...hires, upscale_tile_size: v })
+            }
+            min={0}
+            max={1024}
+            step={32}
+            hint="模型放大器的分块尺寸；显存不足时调小"
+          />
         </>
       )}
     </Panel>

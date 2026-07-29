@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   deepClone,
   deepMerge,
+  extractApiError,
   fmtSize,
   b64ToBlobUrl,
   buildRequestBody,
@@ -11,6 +12,44 @@ import {
   validateLingbotPrompt,
 } from "../utils";
 import type { GenImages, GenParams } from "../../types";
+
+describe("extractApiError", () => {
+  // sd-server 的 HTTP 错误响应里 `error` 是字符串（routes_sdcpp.cpp），
+  // 早期按 `.error.message` 读会把所有失败原因吞成 "错误 400"。
+  it("reads the string-shaped HTTP error body", () => {
+    expect(
+      extractApiError({ error: "invalid generation parameters" }, 400)
+    ).toBe("invalid generation parameters");
+    expect(extractApiError({ error: "job queue is full" }, 429)).toBe(
+      "job queue is full"
+    );
+  });
+
+  it("appends the detail message for invalid json", () => {
+    expect(
+      extractApiError(
+        { error: "invalid json", message: "unexpected token" },
+        400
+      )
+    ).toBe("invalid json：unexpected token");
+  });
+
+  // Job 对象内的 error 是 {code,message} 对象（async_jobs.cpp）——形状不同。
+  it("reads the object-shaped job error", () => {
+    expect(
+      extractApiError({
+        error: { code: "generation_failed", message: "generate_image returned empty results" },
+      })
+    ).toBe("generate_image returned empty results（generation_failed）");
+  });
+
+  it("falls back to the status code when nothing is parseable", () => {
+    expect(extractApiError(null, 500)).toBe("错误 500");
+    expect(extractApiError({}, 400)).toBe("错误 400");
+    expect(extractApiError({ error: "" }, 400)).toBe("错误 400");
+    expect(extractApiError(undefined)).toBe("未知错误");
+  });
+});
 
 describe("deepClone", () => {
   it("clones a flat object", () => {
@@ -185,8 +224,10 @@ describe("buildRequestBody", () => {
         initImage: "data:image/png;base64,init",
         maskImage: null,
         controlImage: null,
+        ipAdapterImage: null,
         endImage: null,
         refImages: [],
+        controlFrames: [],
       }
     );
     expect(body.strength).toBe(0.75);
@@ -262,5 +303,83 @@ describe("buildRequestBody", () => {
     };
     const body = buildRequestBody("vid_gen", p, {} as GenImages);
     expect(body.high_noise_sample_params).toBeDefined();
+  });
+
+  // 上游 #1824 将 IP-Adapter 纳入 img_gen schema；vid_gen 不接受这两个字段。
+  it("sends ip_adapter fields only for img_gen", () => {
+    const images = {
+      ...({} as GenImages),
+      ipAdapterImage: "data:image/png;base64,ip",
+    };
+    const p: GenParams = { ...baseParams, ip_adapter_strength: 0.6 };
+
+    const img = buildRequestBody("img_gen", p, images);
+    expect(img.ip_adapter_image).toBe("data:image/png;base64,ip");
+    expect(img.ip_adapter_strength).toBe(0.6);
+
+    const vid = buildRequestBody("vid_gen", p, images);
+    expect(vid.ip_adapter_image).toBeUndefined();
+    expect(vid.ip_adapter_strength).toBeUndefined();
+  });
+
+  it("defaults ip_adapter_strength to 1.0 for img_gen", () => {
+    const body = buildRequestBody("img_gen", baseParams, {} as GenImages);
+    expect(body.ip_adapter_strength).toBe(1.0);
+  });
+
+  // control_frames 是 vid_gen 的 VACE 条件帧，顺序即条件帧顺序。
+  it("sends control_frames only for vid_gen and preserves order", () => {
+    const frames = ["data:image/png;base64,a", "data:image/png;base64,b"];
+    const images = { ...({} as GenImages), controlFrames: frames };
+
+    const vid = buildRequestBody("vid_gen", baseParams, images);
+    expect(vid.control_frames).toEqual(frames);
+
+    const img = buildRequestBody("img_gen", baseParams, images);
+    expect(img.control_frames).toBeUndefined();
+  });
+
+  it("passes through the full hires field set", () => {
+    const p: GenParams = {
+      ...baseParams,
+      hires: {
+        enabled: true,
+        upscaler: "Latent",
+        scale: 2,
+        steps: 10,
+        denoising_strength: 0.7,
+        target_width: 2048,
+        target_height: 1536,
+        upscale_tile_size: 256,
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(body.hires).toMatchObject({
+      target_width: 2048,
+      target_height: 1536,
+      upscale_tile_size: 256,
+    });
+  });
+
+  // 空 custom_sigmas 必须整个省略：上游只要该键存在就用它覆盖 sigma 表。
+  it("omits an empty hires.custom_sigmas", () => {
+    const p: GenParams = {
+      ...baseParams,
+      hires: { enabled: true, custom_sigmas: [] },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(body.hires).toBeDefined();
+    expect("custom_sigmas" in (body.hires as object)).toBe(false);
+  });
+
+  it("keeps a non-empty hires.custom_sigmas", () => {
+    const p: GenParams = {
+      ...baseParams,
+      hires: { enabled: true, custom_sigmas: [1.5, 0.8] },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect((body.hires as { custom_sigmas?: number[] }).custom_sigmas).toEqual([
+      1.5, 0.8,
+    ]);
   });
 });

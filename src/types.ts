@@ -93,6 +93,7 @@ export interface Features {
   init_image?: boolean;
   mask_image?: boolean;
   control_image?: boolean;
+  ip_adapter_image?: boolean;
   end_image?: boolean;
   ref_images?: boolean;
   lora?: boolean;
@@ -151,6 +152,12 @@ export interface HiresParams {
   steps?: number;
   scale?: number;
   denoising_strength?: number;
+  /** 目标宽/高；0 表示改用 `scale` 换算（上游语义）。 */
+  target_width?: number;
+  target_height?: number;
+  /** 覆盖二次采样的 sigma 表；留空则按 denoising_strength 裁剪。 */
+  custom_sigmas?: number[];
+  upscale_tile_size?: number;
 }
 
 export interface VaeTilingParams {
@@ -180,6 +187,7 @@ export interface GenParams {
   auto_resize_ref_image?: boolean;
   increase_ref_index?: boolean;
   control_strength?: number;
+  ip_adapter_strength?: number;
   embed_image_metadata?: boolean;
   video_frames?: number;
   fps?: number;
@@ -241,13 +249,27 @@ export type JobStatus =
   | "cancelled"
   | "unknown";
 
+/**
+ * sd-server 的 **HTTP 层**错误响应体。注意 `error` 是字符串
+ * （`{"error":"invalid generation parameters"}`），与 `Job.error` 的
+ * `{code,message}` 对象形状不同——两者不可互换解析。
+ * 见 upstream `examples/server/routes_sdcpp.cpp`。
+ */
+export interface ApiErrorBody {
+  error?: string;
+  message?: string;
+}
+
 /** 一次生成任务附带的全部图片输入（dataURL）。 */
 export interface GenImages {
   initImage: string | null;
   maskImage: string | null;
   controlImage: string | null;
+  ipAdapterImage: string | null;
   endImage: string | null;
   refImages: string[];
+  /** vid_gen 的 VACE 条件帧，按请求顺序作为条件帧序列。 */
+  controlFrames: string[];
 }
 
 export interface JobConfig {

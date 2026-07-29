@@ -67,13 +67,21 @@ interface StoreState {
   initImage: string | null;
   maskImage: string | null;
   controlImage: string | null;
+  ipAdapterImage: string | null;
   endImage: string | null;
   refImages: string[];
+  controlFrames: string[];
   setImage: (
-    which: "initImage" | "maskImage" | "controlImage" | "endImage",
+    which:
+      | "initImage"
+      | "maskImage"
+      | "controlImage"
+      | "ipAdapterImage"
+      | "endImage",
     v: string | null
   ) => void;
   setRefImages: (updater: (r: string[]) => string[]) => void;
+  setControlFrames: (updater: (r: string[]) => string[]) => void;
   seedRandom: boolean;
   setSeedRandom: (v: boolean) => void;
   clearImages: () => void;
@@ -164,11 +172,15 @@ export const useStore = create<StoreState>((set, get) => ({
   initImage: null,
   maskImage: null,
   controlImage: null,
+  ipAdapterImage: null,
   endImage: null,
   refImages: [],
+  controlFrames: [],
   setImage: (which, v) => set({ [which]: v } as Partial<StoreState>),
   setRefImages: (updater) =>
     set((s) => ({ refImages: updater(s.refImages) })),
+  setControlFrames: (updater) =>
+    set((s) => ({ controlFrames: updater(s.controlFrames) })),
   seedRandom: true,
   setSeedRandom: (v) => set({ seedRandom: v }),
   clearImages: () =>
@@ -176,8 +188,10 @@ export const useStore = create<StoreState>((set, get) => ({
       initImage: null,
       maskImage: null,
       controlImage: null,
+      ipAdapterImage: null,
       endImage: null,
       refImages: [],
+      controlFrames: [],
     }),
   logs: [],
   lastProgress: false,

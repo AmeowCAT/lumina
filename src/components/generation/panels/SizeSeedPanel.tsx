@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type { GenMode, Limits } from "../../../types";
+import { alignVideoFrames, VIDEO_FRAME_ALIGN } from "../../../config/families";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { NumberInput } from "../../ui/NumberInput";
@@ -165,6 +166,14 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             onChange={(v) => onUpdate("video_frames", v)}
             min={1}
             max={family === "sd" ? 32 : 121}
+            hint={
+              // 上游会把帧数下调到最近的 step·n+1；提前说明避免"设了 34 却出 33 帧"。
+              alignVideoFrames(family, videoFrames || 33) !== (videoFrames || 33)
+                ? `实际生成 ${alignVideoFrames(family, videoFrames || 33)} 帧（该模型按 ${
+                    VIDEO_FRAME_ALIGN[family]
+                  }n+1 对齐）`
+                : undefined
+            }
           />
           {framePresets && (
             <div className="frame-presets" aria-label={framePresetsLabel}>

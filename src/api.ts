@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ApiErrorBody,
   Capabilities,
   GenMode,
   Job,
@@ -58,14 +59,19 @@ export const api = {
 
   sdcppCapabilities: () => invoke<Capabilities>("sdcpp_capabilities"),
 
+  /**
+   * 提交失败时 sd-server 返回的是 `{"error":"...", "message"?:"..."}`——`error`
+   * 是**字符串**（routes_sdcpp.cpp），与 job 对象内 `{code,message}` 的形状不同，
+   * 不可混用。解析统一走 `extractApiError`。
+   */
   sdcppSubmit: (mode: GenMode, body: Record<string, unknown>) =>
-    invoke<{ status: number; body: Job | { error?: { message?: string } } }>(
-      "sdcpp_submit",
-      { mode, body }
-    ),
+    invoke<{ status: number; body: Job | ApiErrorBody }>("sdcpp_submit", {
+      mode,
+      body,
+    }),
 
   sdcppJob: (id: string) =>
-    invoke<{ status: number; body: Job | { error?: string } }>("sdcpp_job", {
+    invoke<{ status: number; body: Job | ApiErrorBody }>("sdcpp_job", {
       id,
     }),
   sdcppCancel: (id: string) =>

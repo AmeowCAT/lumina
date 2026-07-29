@@ -12,6 +12,7 @@ import {
   buildRequestBody,
   deepClone,
   deepMerge,
+  extractApiError,
   formatError,
   LINGBOT_PROMPT_TEMPLATE,
   validateLingbotPrompt,
@@ -72,10 +73,13 @@ export function GenerationUI() {
   const initImage = useStore((s) => s.initImage);
   const maskImage = useStore((s) => s.maskImage);
   const controlImage = useStore((s) => s.controlImage);
+  const ipAdapterImage = useStore((s) => s.ipAdapterImage);
   const endImage = useStore((s) => s.endImage);
   const refImages = useStore((s) => s.refImages);
+  const controlFrames = useStore((s) => s.controlFrames);
   const setImage = useStore((s) => s.setImage);
   const setRefImages = useStore((s) => s.setRefImages);
+  const setControlFrames = useStore((s) => s.setControlFrames);
   const seedRandom = useStore((s) => s.seedRandom);
   const setSeedRandom = useStore((s) => s.setSeedRandom);
   const clearProgress = useStore((s) => s.clearProgress);
@@ -129,15 +133,19 @@ export function GenerationUI() {
       initImage: null,
       maskImage: null,
       controlImage: null,
+      ipAdapterImage: null,
       endImage: null,
       refImages: [],
+      controlFrames: [],
     },
     vid_gen: {
       initImage: null,
       maskImage: null,
       controlImage: null,
+      ipAdapterImage: null,
       endImage: null,
       refImages: [],
+      controlFrames: [],
     },
   });
 
@@ -225,15 +233,19 @@ export function GenerationUI() {
         initImage,
         maskImage,
         controlImage,
+        ipAdapterImage,
         endImage,
         refImages: [...refImages],
+        controlFrames: [...controlFrames],
       };
       const next = imageSnapshots.current[m];
       setImage("initImage", next.initImage);
       setImage("maskImage", next.maskImage);
       setImage("controlImage", next.controlImage);
+      setImage("ipAdapterImage", next.ipAdapterImage);
       setImage("endImage", next.endImage);
       setRefImages(() => [...next.refImages]);
+      setControlFrames(() => [...next.controlFrames]);
       setMode(m);
     },
     [
@@ -241,10 +253,13 @@ export function GenerationUI() {
       initImage,
       maskImage,
       controlImage,
+      ipAdapterImage,
       endImage,
       refImages,
+      controlFrames,
       setImage,
       setRefImages,
+      setControlFrames,
       setMode,
     ]
   );
@@ -267,8 +282,10 @@ export function GenerationUI() {
       initImage,
       maskImage,
       controlImage,
+      ipAdapterImage,
       endImage,
       refImages,
+      controlFrames,
     });
     if (missingInputs.length > 0) {
       toast("请先提供: " + missingInputs.join("、"), true);
@@ -286,8 +303,10 @@ export function GenerationUI() {
         initImage,
         maskImage,
         controlImage,
+        ipAdapterImage,
         endImage,
         refImages,
+        controlFrames,
       };
       const body = buildRequestBody(mode, activeParams, images);
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
@@ -300,7 +319,12 @@ export function GenerationUI() {
               params: deepClone(activeParams),
               // 图片输入一并快照（字符串引用共享，无额外内存拷贝），
               // "应用此配置"才能完整复现 img2img/inpaint 任务。
-              images: { ...images, refImages: [...refImages] },
+              // 两个数组必须拷贝，否则后续增删会改写已提交任务的快照。
+              images: {
+                ...images,
+                refImages: [...refImages],
+                controlFrames: [...controlFrames],
+              },
             },
           },
           ...j,
@@ -310,10 +334,7 @@ export function GenerationUI() {
       } else if (status === 429) {
         toast("队列已满", true);
       } else {
-        const err =
-          (respBody as { error?: { message?: string } })?.error?.message ||
-          `错误 ${status}`;
-        toast(err, true);
+        toast(extractApiError(respBody, status), true);
       }
     } catch (e) {
       toast("网络错误: " + formatError(e), true);
@@ -331,8 +352,10 @@ export function GenerationUI() {
     initImage,
     maskImage,
     controlImage,
+    ipAdapterImage,
     endImage,
     refImages,
+    controlFrames,
     seedRandom,
     update,
     setJobs,
@@ -365,7 +388,7 @@ export function GenerationUI() {
   const cancelJob = useCallback(
     async (id: string) => {
       try {
-        const { status } = await api.sdcppCancel(id);
+        const { status, body } = await api.sdcppCancel(id);
         if (status === 200) {
           setJobs((j) =>
             j.map((x) => (x.id === id ? { ...x, status: "cancelled" } : x))
@@ -374,10 +397,10 @@ export function GenerationUI() {
           // sd-server 不支持中断生成中的任务（capabilities.cancel_generating=false）
           toast("任务正在生成，暂不支持中断", true);
         } else {
-          toast("取消失败", true);
+          toast("取消失败：" + extractApiError(body, status), true);
         }
-      } catch {
-        toast("取消失败", true);
+      } catch (e) {
+        toast("取消失败：" + formatError(e), true);
       }
     },
     [setJobs, toast]
@@ -391,7 +414,11 @@ export function GenerationUI() {
         try {
           const cancelled = await api.sdcppCancel(id);
           if (cancelled.status !== 200) {
-            toast("取消排队任务失败，已保留任务记录", true);
+            toast(
+              "取消排队任务失败，已保留任务记录：" +
+                extractApiError(cancelled.body, cancelled.status),
+              true
+            );
             return;
           }
         } catch (e) {
@@ -492,8 +519,10 @@ export function GenerationUI() {
       setImage("initImage", img?.initImage ?? null);
       setImage("maskImage", img?.maskImage ?? null);
       setImage("controlImage", img?.controlImage ?? null);
+      setImage("ipAdapterImage", img?.ipAdapterImage ?? null);
       setImage("endImage", img?.endImage ?? null);
       setRefImages(() => img?.refImages ?? []);
+      setControlFrames(() => img?.controlFrames ?? []);
       // 恢复配置的意图是复现：种子已是提交时的具体值，关闭随机开关。
       if (p.seed >= 0) setSeedRandom(false);
       // 跨 mode 时还要写入 localStorage，供 mode 切换后的 init effect 读取。
@@ -505,7 +534,15 @@ export function GenerationUI() {
       setMode(config.mode);
       toast(seedOffset > 0 ? `已恢复该张的配置（种子 ${p.seed}）` : "已恢复该任务的配置");
     },
-    [setParams, setImage, setRefImages, setSeedRandom, setMode, toast]
+    [
+      setParams,
+      setImage,
+      setRefImages,
+      setControlFrames,
+      setSeedRandom,
+      setMode,
+      toast,
+    ]
   );
 
   const download = useCallback(
@@ -766,7 +803,13 @@ export function GenerationUI() {
             />
           </QueueDrawer>
           <ParamsSheet open={sheetOpen} onClose={closeSheet}>
-            {features.init_image && (
+            {(features.init_image ||
+              features.mask_image ||
+              features.control_image ||
+              features.ip_adapter_image ||
+              features.end_image ||
+              features.ref_images ||
+              features.control_frames) && (
               <ImageInputsPanel
                 features={features}
                 mode={mode}
@@ -774,15 +817,19 @@ export function GenerationUI() {
                 initImage={initImage}
                 maskImage={maskImage}
                 controlImage={controlImage}
+                ipAdapterImage={ipAdapterImage}
                 endImage={endImage}
                 refImages={refImages}
+                controlFrames={controlFrames}
                 strength={params.strength}
                 controlStrength={params.control_strength}
+                ipAdapterStrength={params.ip_adapter_strength}
                 imgCfg={sp?.guidance?.img_cfg}
                 txtCfg={sp?.guidance?.txt_cfg}
                 onUpdate={update}
                 onSetImage={setImage}
                 onSetRefImages={setRefImages}
+                onSetControlFrames={setControlFrames}
                 onInitSize={handleInitSize}
               />
             )}

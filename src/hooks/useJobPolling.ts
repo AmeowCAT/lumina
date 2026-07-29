@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Job } from "../types";
-import { formatError } from "../lib/utils";
+import { extractApiError, formatError } from "../lib/utils";
 
 const POLL_FAILURE_THRESHOLD = 3;
 
@@ -44,7 +44,7 @@ export function useJobPolling() {
               continue;
             }
             if (status !== 200) {
-              recordPollFailure(job.id, `服务器返回 HTTP ${status}`);
+              recordPollFailure(job.id, extractApiError(body, status));
               continue;
             }
             const d = body as Job;
@@ -104,7 +104,7 @@ export function useJobPolling() {
               }
             }
             if (d.status === "failed")
-              store.toast(`任务失败: ${d.error?.message || "未知错误"}`, true);
+              store.toast(`任务失败: ${extractApiError(d)}`, true);
           } catch (e) {
             recordPollFailure(job.id, formatError(e));
           }

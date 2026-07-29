@@ -26,6 +26,9 @@ export const SAMPLER_NAMES: Record<string, string> = {
 
 export const SCHEDULER_NAMES: Record<string, string> = {
 	discrete: "Discrete",
+	// capabilities 会在 discrete 之后额外返回 "normal" 别名（routes_sdcpp.cpp），
+	// 上游 str_to_scheduler 把它解析成 DISCRETE——标注出来免得看着像两个调度器。
+	normal: "Discrete (normal)",
 	karras: "Karras",
 	exponential: "Exp",
 	ays: "AYS",
@@ -207,6 +210,33 @@ export const VIDEO_FRAME_PRESETS: Record<string, number[]> = {
 	"lingbot-video": [33, 49, 81],
 	"hunyuan-video": [17, 33, 49],
 };
+
+/**
+ * 视频帧数的对齐步长。上游 `align_video_frames` 会把请求帧数归一化为
+ * **不超过该值的最大 `step·n + 1`**，且步长依模型版本而定
+ * （src/stable-diffusion.cpp `video_frames_to_latent_frames`）：
+ *   - LTX-AV：8
+ *   - Wan / LingBot-Video / Hunyuan-Video：4
+ *   - 其余（含 AnimateDiff）：不对齐，原样使用
+ *
+ * 注意 api.md 只笼统写了 "4n+1"，与源码不符，此处以源码为准。
+ */
+export const VIDEO_FRAME_ALIGN: Record<string, number> = {
+	"wan-t2v": 4,
+	"wan-i2v": 4,
+	"wan-ti2v": 4,
+	"wan-a14b": 4,
+	"lingbot-video": 4,
+	"hunyuan-video": 4,
+	ltx: 8,
+};
+
+/** 返回该家族下 `frames` 实际生效的帧数；不对齐的家族原样返回。 */
+export function alignVideoFrames(family: string, frames: number): number {
+	const step = VIDEO_FRAME_ALIGN[family];
+	if (!step || !Number.isFinite(frames) || frames <= 1) return frames;
+	return Math.floor((frames - 1) / step) * step + 1;
+}
 
 const F = (
 	key: string,

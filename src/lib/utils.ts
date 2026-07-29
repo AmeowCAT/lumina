@@ -75,6 +75,40 @@ export function formatError(error: unknown): string {
   return String(error);
 }
 
+/**
+ * 从 sd-server 响应体中取出人类可读的错误原因。
+ *
+ * 上游有两种**形状不同**的错误载体，必须都能解析：
+ *  - HTTP 层（提交/查询被拒）：`{"error":"invalid generation parameters"}`
+ *    —— `error` 是字符串，`invalid json` 时另带 `message`
+ *  - Job 对象内（任务失败/取消）：`{"error":{"code":"...","message":"..."}}`
+ *
+ * 早期实现只按对象形状读 `.error.message`，导致 400/429/500 的真实原因
+ * （模式不支持、参数非法、webm 未编译等）全部退化成 "错误 400"。
+ */
+export function extractApiError(body: unknown, status?: number): string {
+  const fallback = status != null ? `错误 ${status}` : "未知错误";
+  if (!body || typeof body !== "object") return fallback;
+  const b = body as { error?: unknown; message?: unknown };
+
+  if (typeof b.error === "string" && b.error.trim()) {
+    // `invalid json` 会附带更具体的 message，拼在一起更好定位。
+    const detail = typeof b.message === "string" ? b.message.trim() : "";
+    return detail ? `${b.error}：${detail}` : b.error;
+  }
+  if (b.error && typeof b.error === "object") {
+    const inner = b.error as { message?: unknown; code?: unknown };
+    if (typeof inner.message === "string" && inner.message.trim()) {
+      return typeof inner.code === "string" && inner.code
+        ? `${inner.message}（${inner.code}）`
+        : inner.message;
+    }
+    if (typeof inner.code === "string" && inner.code) return inner.code;
+  }
+  if (typeof b.message === "string" && b.message.trim()) return b.message;
+  return fallback;
+}
+
 export type { GenImages } from "../types";
 
 export function deepClone<T>(o: T): T {
@@ -181,6 +215,7 @@ export function buildRequestBody(
     b.auto_resize_ref_image = params.auto_resize_ref_image !== false;
     b.increase_ref_index = !!params.increase_ref_index;
     b.control_strength = params.control_strength ?? 0.9;
+    b.ip_adapter_strength = params.ip_adapter_strength ?? 1.0;
     b.embed_image_metadata = params.embed_image_metadata !== false;
   }
   if (mode === "vid_gen") {
@@ -194,9 +229,14 @@ export function buildRequestBody(
   if (mode === "img_gen" && images.maskImage) b.mask_image = images.maskImage;
   if (mode === "img_gen" && images.controlImage)
     b.control_image = images.controlImage;
+  if (mode === "img_gen" && images.ipAdapterImage)
+    b.ip_adapter_image = images.ipAdapterImage;
   if (mode === "vid_gen" && images.endImage) b.end_image = images.endImage;
   if (mode === "img_gen" && images.refImages?.length)
     b.ref_images = images.refImages;
+  // VACE 条件帧：顺序即条件帧顺序，上游按请求顺序保留。
+  if (mode === "vid_gen" && images.controlFrames?.length)
+    b.control_frames = images.controlFrames;
 
   if (sp?.eta != null) sampleParams.eta = sp.eta;
   if (sp?.flow_shift != null) sampleParams.flow_shift = sp.flow_shift;
@@ -225,7 +265,13 @@ export function buildRequestBody(
       return e;
     });
 
-  if (params.hires?.enabled) b.hires = { ...params.hires };
+  if (params.hires?.enabled) {
+    const h = { ...params.hires };
+    // 上游：custom_sigmas 一旦存在就覆盖二次采样 sigma 表；空数组没有
+    // "沿用默认" 的语义，必须整个省略。
+    if (!h.custom_sigmas?.length) delete h.custom_sigmas;
+    b.hires = h;
+  }
   if (params.vae_tiling_params?.enabled)
     b.vae_tiling_params = { ...params.vae_tiling_params };
 

@@ -54,6 +54,31 @@ impl SaveCommandError {
     }
 }
 
+/// Strips anything that could escape the target directory or break the
+/// filesystem. `name` and `ext` reach us from the frontend, so even though the
+/// current callers only pass server-generated job ids (`[A-Za-z0-9_-]+`), a
+/// future caller must not be able to turn a "save" into an arbitrary write.
+/// Returns `None` when nothing usable is left.
+fn sanitize_component(value: &str) -> Option<String> {
+    let cleaned: String = value
+        .chars()
+        .map(|c| match c {
+            // Path separators, drive/ADS colons, wildcards and shell-ish chars.
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            // Control characters would produce unopenable files.
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    // Leading dots would still allow ".." / "..." to address a parent.
+    let cleaned = cleaned.trim_matches(['.', ' ']).to_string();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
 /// Decodes a base64 payload (with optional `data:...;base64,` prefix) and writes
 /// it to `<dir>/<name>.<ext>`. sd-server itself never persists outputs, so this
 /// is the launcher's responsibility — mirrors the webui `/api/save` endpoint.
@@ -70,12 +95,9 @@ pub fn save_output(b64: &str, ext: &str, name: &str, dir: &str) -> Result<String
     };
     let data = base64::engine::general_purpose::STANDARD.decode(raw)?;
 
-    let ext = if ext.is_empty() { "png" } else { ext };
-    let name = if name.is_empty() {
-        format!("sdcpp_{}", chrono_like_ts())
-    } else {
-        name.to_string()
-    };
+    let ext = sanitize_component(ext).unwrap_or_else(|| "png".into());
+    let name = sanitize_component(name)
+        .unwrap_or_else(|| format!("sdcpp_{}", chrono_like_ts()));
     let path = dir_path.join(format!("{}.{}", name, ext));
     fs::write(&path, data)?;
     Ok(path.to_string_lossy().to_string())
@@ -86,11 +108,13 @@ pub fn save_output(b64: &str, ext: &str, name: &str, dir: &str) -> Result<String
 /// WebView has no download manager, so `<a download>.click()` does nothing —
 /// this is the only reliable way to "download" a generated image/video.
 pub async fn save_as(b64: &str, ext: &str, name: &str) -> Result<Option<String>> {
-    let ext = if ext.is_empty() { "png" } else { ext };
-    let stem = if name.is_empty() { "lumina" } else { name };
+    // The user picks the real path in the dialog; these only seed the default
+    // file name, but a stray separator would make rfd show a broken suggestion.
+    let ext = sanitize_component(ext).unwrap_or_else(|| "png".into());
+    let stem = sanitize_component(name).unwrap_or_else(|| "lumina".into());
     let file = rfd::AsyncFileDialog::new()
         .set_file_name(format!("{}.{}", stem, ext))
-        .add_filter(ext.to_uppercase(), &[ext])
+        .add_filter(ext.to_uppercase(), &[ext.as_str()])
         .save_file()
         .await;
     let Some(handle) = file else {
@@ -183,5 +207,49 @@ mod tests {
         assert!(!result.saved);
         assert!(result.cancelled);
         assert!(result.path.is_none());
+    }
+
+    #[test]
+    fn sanitize_component_strips_traversal_and_separators() {
+        assert_eq!(sanitize_component("..").as_deref(), None);
+        assert_eq!(sanitize_component("../../evil").as_deref(), Some("_.._evil"));
+        assert_eq!(
+            sanitize_component(r"..\..\evil").as_deref(),
+            Some("_.._evil")
+        );
+        assert_eq!(sanitize_component("C:/tmp/x").as_deref(), Some("C__tmp_x"));
+        assert_eq!(sanitize_component("   ").as_deref(), None);
+        assert_eq!(sanitize_component("").as_deref(), None);
+        // Ordinary names must survive untouched.
+        assert_eq!(
+            sanitize_component("sdcpp_job_01HTXYZ_0").as_deref(),
+            Some("sdcpp_job_01HTXYZ_0")
+        );
+    }
+
+    #[test]
+    fn save_output_keeps_the_file_inside_the_target_dir() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-escape-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        // 1x1 transparent PNG.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+        let written = save_output(png, "png", "../../escaped", dir.to_str().unwrap()).unwrap();
+        let written_path = PathBuf::from(&written);
+        // The separators are gone, so a residual ".." is just an ordinary
+        // filename character — what matters is that the parent is still `dir`.
+        assert_eq!(
+            written_path.parent(),
+            Some(dir.as_path()),
+            "written outside the target dir: {}",
+            written
+        );
+        assert!(written_path.is_file());
+        let _ = fs::remove_dir_all(dir);
     }
 }

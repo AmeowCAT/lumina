@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { FAMILY_CONFIG } from "../../config/families";
+import { alignVideoFrames, FAMILY_CONFIG } from "../../config/families";
 import type { LaunchRuntime } from "../launchConfig";
 import {
   buildLaunchConfig,
@@ -8,6 +8,46 @@ import {
   missingRequiredInputs,
   persistFamilyDefaults,
 } from "../launchConfig";
+
+// 对齐步长依模型版本而定（src/stable-diffusion.cpp video_frames_to_latent_frames）。
+// api.md 笼统写作 "4n+1"，但 LTX-AV 实为 8，AnimateDiff 根本不对齐。
+describe("alignVideoFrames", () => {
+  it("aligns Wan / LingBot / Hunyuan to 4n+1", () => {
+    for (const family of [
+      "wan-t2v",
+      "wan-i2v",
+      "wan-ti2v",
+      "wan-a14b",
+      "lingbot-video",
+      "hunyuan-video",
+    ]) {
+      expect(alignVideoFrames(family, 33)).toBe(33);
+      expect(alignVideoFrames(family, 34)).toBe(33);
+      expect(alignVideoFrames(family, 32)).toBe(29);
+    }
+  });
+
+  it("aligns LTX to 8n+1, not 4n+1", () => {
+    expect(alignVideoFrames("ltx", 33)).toBe(33);
+    expect(alignVideoFrames("ltx", 34)).toBe(33);
+    // 4n+1 会得到 37；8n+1 必须回落到 33。
+    expect(alignVideoFrames("ltx", 40)).toBe(33);
+    expect(alignVideoFrames("ltx", 41)).toBe(41);
+  });
+
+  it("leaves unaligned families alone", () => {
+    // AnimateDiff 的 8/16/24/32 预设正是因为它不走对齐路径。
+    for (const frames of [8, 16, 24, 32]) {
+      expect(alignVideoFrames("sd", frames)).toBe(frames);
+    }
+    expect(alignVideoFrames("custom", 34)).toBe(34);
+  });
+
+  it("handles degenerate input", () => {
+    expect(alignVideoFrames("wan-t2v", 1)).toBe(1);
+    expect(alignVideoFrames("wan-t2v", 0)).toBe(0);
+  });
+});
 
 const runtime: LaunchRuntime = {
   backend: "cuda0",
@@ -134,8 +174,10 @@ describe("launch configuration", () => {
       initImage: null,
       maskImage: null,
       controlImage: null,
+      ipAdapterImage: null,
       endImage: null,
       refImages: [],
+      controlFrames: [],
     };
     expect(missingRequiredInputs(FAMILY_CONFIG.pid, "img_gen", empty)).toEqual(["参考图片"]);
     expect(missingRequiredInputs(FAMILY_CONFIG.pid, "vid_gen", empty)).toEqual([]);

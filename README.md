@@ -3,7 +3,7 @@
   <h1>流光 Lumina</h1>
   <p><strong>stable-diffusion.cpp 的桌面工作台</strong>——暗房金色的本地生成工作室</p>
   <p>
-    <img src="https://img.shields.io/badge/版本-0.7.4-d9a441" alt="版本" />
+    <img src="https://img.shields.io/badge/版本-0.7.5-d9a441" alt="版本" />
     <img src="https://img.shields.io/badge/Tauri-2-b56a35" alt="Tauri 2" />
     <img src="https://img.shields.io/badge/平台-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-14110d" alt="平台" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-14110d" alt="MIT" /></a>
