@@ -51,6 +51,9 @@ function MultiImageRow({
             inp.onchange = (e) => {
               const files = Array.from((e.target as HTMLInputElement).files || []);
               if (!files.length) return;
+              // 条件帧顺序即上游条件帧顺序：显式按文件名排序，
+              // 不依赖浏览器的 FileList 顺序。
+              files.sort((a, b) => a.name.localeCompare(b.name));
               Promise.all(files.map(readFileAsDataUrl)).then((urls) =>
                 onChange((p) => [...p, ...urls])
               );

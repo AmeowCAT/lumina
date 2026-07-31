@@ -73,10 +73,17 @@ fn sanitize_component(value: &str) -> Option<String> {
     // Leading dots would still allow ".." / "..." to address a parent.
     let cleaned = cleaned.trim_matches(['.', ' ']).to_string();
     if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned)
+        return None;
     }
+    // Windows reserved device names (CON/PRN/AUX/NUL/COM1-9/LPT1-9, with any
+    // extension) cannot be created as ordinary files; a leading underscore
+    // keeps the name informative while staying creatable.
+    let stem = cleaned.split('.').next().unwrap_or("").to_lowercase();
+    let reserved = matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    Some(if reserved { format!("_{}", cleaned) } else { cleaned })
 }
 
 /// Decodes a base64 payload (with optional `data:...;base64,` prefix) and writes
@@ -251,5 +258,17 @@ mod tests {
         );
         assert!(written_path.is_file());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sanitize_component_neutralizes_windows_reserved_device_names() {
+        assert_eq!(sanitize_component("CON").as_deref(), Some("_CON"));
+        assert_eq!(sanitize_component("con.png").as_deref(), Some("_con.png"));
+        assert_eq!(sanitize_component("NUL").as_deref(), Some("_NUL"));
+        assert_eq!(sanitize_component("com1").as_deref(), Some("_com1"));
+        assert_eq!(sanitize_component("LPT9.txt").as_deref(), Some("_LPT9.txt"));
+        // Only COM1-9 / LPT1-9 are reserved; "com10" and "console" are ordinary.
+        assert_eq!(sanitize_component("com10").as_deref(), Some("com10"));
+        assert_eq!(sanitize_component("console").as_deref(), Some("console"));
     }
 }

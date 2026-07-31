@@ -22,7 +22,7 @@ describe("HiresPanel", () => {
       "32"
     );
     expect(
-      screen.getByText("宽高均为 0：使用缩放；仅高度为 0：跟随宽度")
+      screen.getByText("宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）")
     ).toBeTruthy();
   });
 });

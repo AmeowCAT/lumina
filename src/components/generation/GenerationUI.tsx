@@ -49,7 +49,12 @@ const normalizeModelPath = (path: string) => path.replace(/\\/g, "/").toLowerCas
 function isVaceModel(model?: { name?: string; path?: string }): boolean {
   const source = model?.name || model?.path || "";
   const fileName = source.replace(/\\/g, "/").split("/").pop() || "";
-  return fileName.toLowerCase().includes("vace");
+  const lower = fileName.toLowerCase();
+  // 上游只在模型内嵌 desc 精确等于 "Wan2.1-VACE-1.3B" / "Wan2.x-VACE-14B"
+  // 时消费条件帧（src/stable-diffusion.cpp），capabilities 不暴露 desc，
+  // 只能以文件名逼近：必须同时含 "wan" 与 "vace"，避免把其他含 "vace"
+  // 子串的文件误判。重命名模型会保守地隐藏入口（功能不可达但不报错）。
+  return lower.includes("wan") && lower.includes("vace");
 }
 
 function modelSelectionMatches(reportedPath: string, selectedPath: string): boolean {

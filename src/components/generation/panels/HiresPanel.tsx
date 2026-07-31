@@ -77,7 +77,7 @@ export const HiresPanel = memo(function HiresPanel({
             hint={
               hires.target_width
                 ? undefined
-                : "宽高均为 0：使用缩放；仅宽度为 0：跟随高度"
+                : "宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）"
             }
           />
           <Slider
@@ -90,7 +90,7 @@ export const HiresPanel = memo(function HiresPanel({
             hint={
               hires.target_height
                 ? undefined
-                : "宽高均为 0：使用缩放；仅高度为 0：跟随宽度"
+                : "宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）"
             }
           />
           <Slider

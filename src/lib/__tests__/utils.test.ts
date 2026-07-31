@@ -383,6 +383,18 @@ describe("buildRequestBody", () => {
     ]);
   });
 
+  // 上游 validate 对长度 <2 的 custom_sigmas 直接拒绝（400 invalid
+  // generation parameters），必须省略，不能透传。
+  it("omits a single-value hires.custom_sigmas that upstream would reject", () => {
+    const p: GenParams = {
+      ...baseParams,
+      hires: { enabled: true, custom_sigmas: [0.8] },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+
+    expect("custom_sigmas" in (body.hires as object)).toBe(false);
+  });
+
   it("omits a non-positive hires upscale tile size from persisted state", () => {
     const p: GenParams = {
       ...baseParams,

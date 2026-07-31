@@ -267,9 +267,12 @@ export function buildRequestBody(
 
   if (params.hires?.enabled) {
     const h = { ...params.hires };
-    // 上游：custom_sigmas 一旦存在就覆盖二次采样 sigma 表；空数组没有
-    // "沿用默认" 的语义，必须整个省略。
-    if (!h.custom_sigmas?.length) delete h.custom_sigmas;
+    // 上游（common.cpp from_json_str + validate）：
+    //  - 空数组解析为 custom_sigmas_count=0，等价于未设置；
+    //  - 长度 1 会让 validate 直接失败（"must contain at least two values"），
+    //    提交返回 400；生成层同样忽略 count==1。
+    // 因此长度 <2 一律省略，避免提交失败与语义歧义。
+    if (h.custom_sigmas && h.custom_sigmas.length < 2) delete h.custom_sigmas;
     // 兼容旧版已持久化的 0；上游要求该值为正，省略后沿用服务端默认值。
     if (h.upscale_tile_size != null && h.upscale_tile_size <= 0)
       delete h.upscale_tile_size;

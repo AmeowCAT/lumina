@@ -241,4 +241,25 @@ describe("GenerationUI 结构（暗房重构版）", () => {
       await screen.findByRole("button", { name: "添加条件帧" })
     ).toBeTruthy();
   });
+
+  it("hides control frames for a non-Wan file that merely contains 'vace'", async () => {
+    const caps = {
+      ...CONTROL_FRAME_VIDEO_CAPS,
+      model: {
+        name: "notvace.safetensors",
+        path: "D:/models/notvace.safetensors",
+      },
+    };
+    useStore.setState({
+      caps: caps as never,
+      mode: "vid_gen",
+      params: null,
+      mainModel: caps.model.path,
+      familyOverride: "wan-t2v",
+    });
+    render(<GenerationUI />);
+
+    await screen.findByRole("button", { name: "生成" });
+    expect(screen.queryByRole("button", { name: "添加条件帧" })).toBeNull();
+  });
 });
