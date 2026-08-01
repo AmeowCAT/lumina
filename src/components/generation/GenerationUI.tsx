@@ -874,12 +874,14 @@ export function GenerationUI() {
             <SamplingPanel
               samplers={caps.samplers || []}
               schedulers={caps.schedulers || []}
-              sampleMethod={sp?.sample_method || "euler"}
-              scheduler={sp?.scheduler || "discrete"}
+              sampleMethod={sp?.sample_method || "default"}
+              scheduler={sp?.scheduler || "default"}
               steps={sp?.sample_steps}
               txtCfg={sp?.guidance?.txt_cfg}
               distilled={sp?.guidance?.distilled_guidance}
               showDistilled={showDistilled}
+              betaAlpha={sp?.beta_alpha}
+              betaBeta={sp?.beta_beta}
               onUpdate={update}
               onReset={resetToDefaults}
               forceOpen={sheetTarget === "sampling"}
@@ -898,10 +900,12 @@ export function GenerationUI() {
                 samplers={caps.samplers || []}
                 schedulers={caps.schedulers || []}
                 hsp={hsp}
-                fallbackSampleMethod={sp?.sample_method || "euler"}
-                fallbackScheduler={sp?.scheduler || "discrete"}
+                fallbackSampleMethod={sp?.sample_method || "default"}
+                fallbackScheduler={sp?.scheduler || "default"}
                 moeBoundary={params.moe_boundary}
                 showDistilled={showDistilled}
+                betaAlpha={hsp?.beta_alpha}
+                betaBeta={hsp?.beta_beta}
                 onUpdate={update}
               />
             )}

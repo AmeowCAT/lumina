@@ -202,6 +202,39 @@ describe("buildRequestBody", () => {
     expect(body.output_format).toBeUndefined();
   });
 
+  // capabilities 把"未设置"序列化为 "default"（routes_sdcpp.cpp
+  // capability_*_name），请求体应省略而不是透传，让服务端用模型默认。
+  it("omits default sentinels for sample_method/scheduler", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        sample_method: "default",
+        scheduler: "default",
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    const sp = body.sample_params as Record<string, unknown>;
+    expect(sp.sample_method).toBeUndefined();
+    expect(sp.scheduler).toBeUndefined();
+  });
+
+  it("omits default sentinels in high_noise_sample_params", () => {
+    const p: GenParams = {
+      ...baseParams,
+      high_noise_sample_params: {
+        sample_method: "default",
+        sample_steps: 8,
+        scheduler: "default",
+        guidance: { txt_cfg: 3.5 },
+      },
+    };
+    const body = buildRequestBody("vid_gen", p, {} as GenImages);
+    const hn = body.high_noise_sample_params as Record<string, unknown>;
+    expect(hn.sample_method).toBeUndefined();
+    expect(hn.scheduler).toBeUndefined();
+  });
+
   it("includes Qwen Image Layered layer count for img_gen", () => {
     const p: GenParams = { ...baseParams, qwen_image_layers: 5 };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
@@ -303,6 +336,92 @@ describe("buildRequestBody", () => {
     };
     const body = buildRequestBody("vid_gen", p, {} as GenImages);
     expect(body.high_noise_sample_params).toBeDefined();
+  });
+
+  // 上游 #1834：beta 调度器经 sample_params.extra_sample_args 自定义 alpha/beta。
+  it("sends beta scheduler alpha/beta via extra_sample_args", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        scheduler: "beta",
+        beta_alpha: 0.8,
+        beta_beta: 0.5,
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "alpha=0.8,beta=0.5"
+    );
+  });
+
+  it("omits extra_sample_args when beta values are unset", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: { ...baseParams.sample_params, scheduler: "beta" },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(
+      (body.sample_params as Record<string, unknown>).extra_sample_args
+    ).toBeUndefined();
+  });
+
+  it("does not send beta args for other schedulers", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        scheduler: "karras",
+        beta_alpha: 0.8,
+        beta_beta: 0.5,
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(
+      (body.sample_params as Record<string, unknown>).extra_sample_args
+    ).toBeUndefined();
+  });
+
+  it("ignores non-positive beta args and trims float noise", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        scheduler: "beta",
+        beta_alpha: 0,
+        beta_beta: 0.6000000000000001,
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "beta=0.6"
+    );
+  });
+
+  it("sends beta args in high_noise_sample_params separately", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        scheduler: "beta",
+        beta_alpha: 0.7,
+      },
+      high_noise_sample_params: {
+        sample_method: "euler",
+        sample_steps: 8,
+        scheduler: "beta",
+        beta_beta: 0.4,
+        guidance: { txt_cfg: 3.5 },
+      },
+    };
+    const body = buildRequestBody("vid_gen", p, {} as GenImages);
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "alpha=0.7"
+    );
+    expect(
+      (body.high_noise_sample_params as Record<string, unknown>)
+        .extra_sample_args
+    ).toBe("beta=0.4");
   });
 
   // 上游 #1824 将 IP-Adapter 纳入 img_gen schema；vid_gen 不接受这两个字段。

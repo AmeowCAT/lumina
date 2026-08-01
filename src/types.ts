@@ -124,6 +124,10 @@ export interface SampleParams {
   sample_method?: string;
   sample_steps?: number;
   scheduler?: string;
+  /** 仅 scheduler === "beta" 时生效，对应上游 extra_sample_args 的 alpha（默认 0.6）。 */
+  beta_alpha?: number;
+  /** 仅 scheduler === "beta" 时生效，对应上游 extra_sample_args 的 beta（默认 0.6）。 */
+  beta_beta?: number;
   eta?: number;
   flow_shift?: number;
   shifted_timestep?: number;
@@ -135,6 +139,10 @@ export interface HighNoiseSampleParams {
   sample_method?: string;
   sample_steps?: number;
   scheduler?: string;
+  /** 仅调度器为 beta 时生效，对应上游 extra_sample_args 的 alpha（默认 0.6）。 */
+  beta_alpha?: number;
+  /** 仅调度器为 beta 时生效，对应上游 extra_sample_args 的 beta（默认 0.6）。 */
+  beta_beta?: number;
   eta?: number;
   flow_shift?: number;
   guidance: Guidance;

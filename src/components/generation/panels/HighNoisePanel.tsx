@@ -13,6 +13,8 @@ interface Props {
   fallbackScheduler: string;
   moeBoundary: number | undefined;
   showDistilled: boolean;
+  betaAlpha: number | undefined;
+  betaBeta: number | undefined;
   onUpdate: (path: string, v: unknown) => void;
 }
 
@@ -24,27 +26,35 @@ export const HighNoisePanel = memo(function HighNoisePanel({
   fallbackScheduler,
   moeBoundary,
   showDistilled,
+  betaAlpha,
+  betaBeta,
   onUpdate,
 }: Props) {
   const sampler = hsp?.sample_method || fallbackSampleMethod;
   const scheduler = hsp?.scheduler || fallbackScheduler;
-  // caps 列表不含当前值时补一项,否则触发器会显示成"未选中"的空态
-  const samplerOptions = samplers.map((s) => ({
-    value: s,
-    label: SAMPLER_NAMES[s] || s,
-  }));
-  if (sampler && !samplers.includes(sampler)) {
-    samplerOptions.unshift({
+  // capabilities 对"未设置"返回 "default"（routes_sdcpp.cpp
+  // capability_*_name），固定放一个"默认（自动）"选项；
+  // 当前值不在 caps 列表时再补一项，避免触发器空态。
+  const samplerOptions = [
+    { value: "default", label: "默认（自动）" },
+    ...samplers
+      .filter((s) => s !== "default")
+      .map((s) => ({ value: s, label: SAMPLER_NAMES[s] || s })),
+  ];
+  if (sampler && sampler !== "default" && !samplers.includes(sampler)) {
+    samplerOptions.push({
       value: sampler,
       label: SAMPLER_NAMES[sampler] || sampler,
     });
   }
-  const schedulerOptions = schedulers.map((s) => ({
-    value: s,
-    label: SCHEDULER_NAMES[s] || s,
-  }));
-  if (scheduler && !schedulers.includes(scheduler)) {
-    schedulerOptions.unshift({
+  const schedulerOptions = [
+    { value: "default", label: "默认（自动）" },
+    ...schedulers
+      .filter((s) => s !== "default")
+      .map((s) => ({ value: s, label: SCHEDULER_NAMES[s] || s })),
+  ];
+  if (scheduler && scheduler !== "default" && !schedulers.includes(scheduler)) {
+    schedulerOptions.push({
       value: scheduler,
       label: SCHEDULER_NAMES[scheduler] || scheduler,
     });
@@ -73,6 +83,28 @@ export const HighNoisePanel = memo(function HighNoisePanel({
           options={schedulerOptions}
         />
       </div>
+      {scheduler === "beta" && (
+        <>
+          <Slider
+            label="Beta α (高噪)"
+            value={betaAlpha ?? 0.6}
+            onChange={(v) => onUpdate("high_noise_sample_params.beta_alpha", v)}
+            min={0.05}
+            max={2}
+            step={0.05}
+            hint="调度器曲线形状参数（>0），上游默认 0.6"
+          />
+          <Slider
+            label="Beta β (高噪)"
+            value={betaBeta ?? 0.6}
+            onChange={(v) => onUpdate("high_noise_sample_params.beta_beta", v)}
+            min={0.05}
+            max={2}
+            step={0.05}
+            hint="调度器曲线形状参数（>0），上游默认 0.6"
+          />
+        </>
+      )}
       <Slider
         label="步数"
         value={hsp?.sample_steps ?? 8}

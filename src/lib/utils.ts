@@ -177,6 +177,23 @@ export function getImageSize(
   });
 }
 
+/** 上游 #1834：beta 调度器经 sample_params.extra_sample_args 自定义 alpha/beta。
+ * common.cpp parse_sample_params_json 读取该字符串（api.md 未列但解析器支持），
+ * denoiser.hpp 要求值 > 0，非法值忽略并回落默认 0.6。 */
+function buildBetaSchedulerArgs(p?: {
+  scheduler?: string;
+  beta_alpha?: number;
+  beta_beta?: number;
+}): string | undefined {
+  if (!p || p.scheduler !== "beta") return undefined;
+  const parts: string[] = [];
+  // 滑动条可能产生浮点尾数（如 0.6000000000000001），发请求前收窄到 4 位小数。
+  const fmt = (v: number) => String(Math.round(v * 10000) / 10000);
+  if (p.beta_alpha != null && p.beta_alpha > 0) parts.push(`alpha=${fmt(p.beta_alpha)}`);
+  if (p.beta_beta != null && p.beta_beta > 0) parts.push(`beta=${fmt(p.beta_beta)}`);
+  return parts.length ? parts.join(",") : undefined;
+}
+
 /** Build the `/sdcpp/v1/img_gen|vid_gen` request body (mirrors webui). */
 export function buildRequestBody(
   mode: GenMode,
@@ -184,15 +201,21 @@ export function buildRequestBody(
   images: GenImages
 ): Record<string, unknown> {
   const sp = params.sample_params;
+  // capabilities 把"未设置"序列化为 "default"（routes_sdcpp.cpp
+  // capability_*_name）；请求体里省略字段等价于让服务端用模型默认，
+  // 比显式透传 "default" 更准确。
+  const noDefault = (v?: string) => (v && v !== "default" ? v : undefined);
   const sampleParams: Record<string, unknown> = {
-    sample_method: sp?.sample_method,
+    sample_method: noDefault(sp?.sample_method),
     sample_steps: sp?.sample_steps,
-    scheduler: sp?.scheduler,
+    scheduler: noDefault(sp?.scheduler),
     guidance: {
       txt_cfg: sp?.guidance?.txt_cfg,
       distilled_guidance: sp?.guidance?.distilled_guidance ?? 0,
     },
   };
+  const betaArgs = buildBetaSchedulerArgs(sp);
+  if (betaArgs) sampleParams.extra_sample_args = betaArgs;
   const b: Record<string, unknown> = {
     prompt: params.prompt || "",
     negative_prompt: params.negative_prompt || "",
@@ -291,9 +314,9 @@ export function buildRequestBody(
   if (mode === "vid_gen" && params.high_noise_sample_params) {
     const h = params.high_noise_sample_params;
     const hn: Record<string, unknown> = {
-      sample_method: h.sample_method,
+      sample_method: noDefault(h.sample_method),
       sample_steps: h.sample_steps,
-      scheduler: h.scheduler,
+      scheduler: noDefault(h.scheduler),
       guidance: {
         txt_cfg: h.guidance?.txt_cfg,
         distilled_guidance: h.guidance?.distilled_guidance,
@@ -305,6 +328,8 @@ export function buildRequestBody(
       (hn.guidance as Record<string, unknown>).img_cfg = h.guidance.img_cfg;
     if ((h.guidance?.slg?.scale ?? 0) > 0)
       (hn.guidance as Record<string, unknown>).slg = { ...h.guidance?.slg };
+    const hnBetaArgs = buildBetaSchedulerArgs(h);
+    if (hnBetaArgs) hn.extra_sample_args = hnBetaArgs;
     b.high_noise_sample_params = hn;
   }
 

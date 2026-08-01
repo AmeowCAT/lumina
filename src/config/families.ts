@@ -2,6 +2,7 @@ import type { GenMode, ServerArgs } from "../types";
 
 // ── Display name maps (sampler / scheduler indices come from capabilities) ──
 export const SAMPLER_NAMES: Record<string, string> = {
+	default: "默认（自动）",
 	euler: "Euler",
 	euler_a: "Euler A",
 	heun: "Heun",
@@ -25,6 +26,7 @@ export const SAMPLER_NAMES: Record<string, string> = {
 };
 
 export const SCHEDULER_NAMES: Record<string, string> = {
+	default: "默认（自动）",
 	discrete: "Discrete",
 	// capabilities 会在 discrete 之后额外返回 "normal" 别名（routes_sdcpp.cpp），
 	// 上游 str_to_scheduler 把它解析成 DISCRETE——标注出来免得看着像两个调度器。
