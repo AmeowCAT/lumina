@@ -1028,7 +1028,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 	},
 	krea2: {
 		name: "Krea2",
-		hint: "Krea2 Raw + Wan VAE + Qwen3-VL 4B",
+		hint: "Krea2 Raw + Wan VAE + Qwen3-VL 4B（官方 52 步 / CFG 3.5）",
 		mode: "img",
 		fields: [
 			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1042,16 +1042,16 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			width: 1024,
 			height: 1024,
 			sample_params: {
-				sample_steps: 20,
+				sample_steps: 52,
 				sample_method: "euler",
-				guidance: { txt_cfg: 1.0 },
+				guidance: { txt_cfg: 3.5 },
 				flow_shift: 1.15,
 			},
 		},
 	},
 	"krea2-turbo": {
 		name: "Krea2 Turbo",
-		hint: "Krea2 Turbo + Wan VAE + Qwen3-VL 4B (少步数)",
+		hint: "Krea2 Turbo + Wan VAE + Qwen3-VL 4B（官方 8 步蒸馏）",
 		mode: "img",
 		fields: [
 			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1065,7 +1065,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			width: 1024,
 			height: 1024,
 			sample_params: {
-				sample_steps: 4,
+				sample_steps: 8,
 				sample_method: "euler",
 				guidance: { txt_cfg: 1.0 },
 				flow_shift: 1.15,
