@@ -1,4 +1,11 @@
-import type { GenImages, GenMode, GenParams, ModelFile } from "../types";
+import type {
+  GenImages,
+  GenMode,
+  GenParams,
+  LoraEntry,
+  ModelFile,
+  SampleParams,
+} from "../types";
 
 /** sd-server 的历史默认端口；与 Rust 侧 `server::DEFAULT_SD_PORT` 保持一致。 */
 export const DEFAULT_SD_PORT = 1234;
@@ -192,6 +199,151 @@ function buildBetaSchedulerArgs(p?: {
   if (p.beta_alpha != null && p.beta_alpha > 0) parts.push(`alpha=${fmt(p.beta_alpha)}`);
   if (p.beta_beta != null && p.beta_beta > 0) parts.push(`beta=${fmt(p.beta_beta)}`);
   return parts.length ? parts.join(",") : undefined;
+}
+
+/** 解析 beta 调度器的 extra_sample_args（"alpha=0.8,beta=0.5"）回结构化字段。 */
+function parseBetaSchedulerArgs(extra?: unknown): {
+  beta_alpha?: number;
+  beta_beta?: number;
+} {
+  if (typeof extra !== "string") return {};
+  const out: { beta_alpha?: number; beta_beta?: number } = {};
+  for (const part of extra.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = Number(part.slice(eq + 1).trim());
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (key === "alpha") out.beta_alpha = value;
+    else if (key === "beta") out.beta_beta = value;
+  }
+  return out;
+}
+
+function isMetaObj(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function metaNum(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function metaStr(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function metaBool(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function metaNumArr(v: unknown): number[] | undefined {
+  return Array.isArray(v) && v.every((x) => typeof x === "number")
+    ? (v as number[])
+    : undefined;
+}
+
+/** 元数据 `sampling` / `high_noise_sampling` 对象 → GUI 的采样参数。 */
+function mapSamplingMetadata(s: unknown): SampleParams | undefined {
+  if (!isMetaObj(s)) return undefined;
+  const g = isMetaObj(s.guidance) ? s.guidance : {};
+  const slg = isMetaObj(g.slg) ? g.slg : undefined;
+  return {
+    sample_steps: metaNum(s.steps),
+    eta: metaNum(s.eta),
+    flow_shift: metaNum(s.flow_shift),
+    shifted_timestep: metaNum(s.shifted_timestep),
+    sample_method: metaStr(s.method),
+    scheduler: metaStr(s.scheduler),
+    custom_sigmas: metaNumArr(s.custom_sigmas),
+    ...parseBetaSchedulerArgs(s.extra_sample_args),
+    guidance: {
+      txt_cfg: metaNum(g.txt_cfg),
+      img_cfg: metaNum(g.img_cfg),
+      distilled_guidance: metaNum(g.distilled_guidance),
+      slg: slg
+        ? {
+            scale: metaNum(slg.scale) ?? 0,
+            layers: metaNumArr(slg.layers),
+            layer_start: metaNum(slg.start),
+            layer_end: metaNum(slg.end),
+          }
+        : undefined,
+    },
+  };
+}
+
+/** 把 sd-server 嵌入图片的 `sdcpp.image.params/v1` 元数据映射为 GenParams。
+ * 元数据中的 LoRA 只有文件名，需用 `availableLoras` 按名字匹配回完整路径，
+ * 匹配不到的 LoRA 跳过（无法恢复路径）。 */
+export function sdcppMetadataToGenParams(
+  meta: Record<string, unknown>,
+  availableLoras?: { name: string; path: string }[]
+): Partial<GenParams> {
+  const prompt = isMetaObj(meta.prompt) ? meta.prompt : {};
+  const sampling = mapSamplingMetadata(meta.sampling);
+  const highNoise = mapSamplingMetadata(meta.high_noise_sampling);
+  const video = isMetaObj(meta.video) ? meta.video : {};
+  const hires = isMetaObj(meta.hires) ? meta.hires : undefined;
+  const cache = isMetaObj(meta.cache) ? meta.cache : undefined;
+
+  const out: Partial<GenParams> = {
+    prompt: metaStr(prompt.positive),
+    negative_prompt: metaStr(prompt.negative),
+    width: metaNum(meta.width),
+    height: metaNum(meta.height),
+    seed: metaNum(meta.seed),
+    sample_params: sampling,
+    high_noise_sample_params: highNoise,
+    video_frames: metaNum(video.frame_count),
+    fps: metaNum(video.fps),
+    moe_boundary: metaNum(meta.moe_boundary),
+    vace_strength: metaNum(meta.vace_strength),
+    clip_skip: metaNum(meta.clip_skip),
+    strength: metaNum(meta.strength),
+    control_strength: metaNum(meta.control_strength),
+    ip_adapter_strength: metaNum(meta.ip_adapter_strength),
+    auto_resize_ref_image: metaBool(meta.auto_resize_ref_image),
+    increase_ref_index: metaBool(meta.increase_ref_index),
+  };
+
+  if (hires) {
+    out.hires = {
+      enabled: metaBool(hires.enabled) ?? true,
+      upscaler: metaStr(hires.upscaler),
+      steps: metaNum(hires.steps),
+      scale: metaNum(hires.scale),
+      target_width: metaNum(hires.target_width),
+      target_height: metaNum(hires.target_height),
+      denoising_strength: metaNum(hires.denoising_strength),
+      custom_sigmas: metaNumArr(hires.custom_sigmas),
+      upscale_tile_size: metaNum(hires.upscale_tile_size),
+    };
+  }
+  if (cache) {
+    out.cache_mode = metaStr(cache.requested_mode);
+    out.cache_option = metaStr(cache.requested_option);
+    out.scm_mask = metaStr(cache.scm_mask);
+    out.scm_policy_dynamic = metaBool(cache.scm_policy_dynamic);
+  }
+  if (Array.isArray(meta.loras) && availableLoras?.length) {
+    const loras: LoraEntry[] = [];
+    for (const raw of meta.loras) {
+      if (!isMetaObj(raw)) continue;
+      const name = metaStr(raw.name);
+      if (!name) continue;
+      const found = availableLoras.find((a) => a.name === name);
+      if (found) {
+        loras.push({
+          path: found.path,
+          multiplier: metaNum(raw.multiplier) ?? 1,
+          is_high_noise: metaBool(raw.is_high_noise),
+        });
+      }
+    }
+    if (loras.length) out.lora = loras;
+  }
+
+  return out;
 }
 
 /** Build the `/sdcpp/v1/img_gen|vid_gen` request body (mirrors webui). */

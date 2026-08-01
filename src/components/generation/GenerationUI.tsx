@@ -15,6 +15,7 @@ import {
   extractApiError,
   formatError,
   LINGBOT_PROMPT_TEMPLATE,
+  sdcppMetadataToGenParams,
   validateLingbotPrompt,
 } from "../../lib/utils";
 import { familyDefaults, missingRequiredInputs } from "../../lib/launchConfig";
@@ -592,8 +593,12 @@ export function GenerationUI() {
     (metadata: Record<string, unknown>, _imageSrc: string) => {
       try {
         if (!params) return;
-        // 元数据的字段结构与 GenParams 兼容（server 写入的 JSON 即为请求体格式）。
-        const merged = { ...deepClone(params), ...metadata } as Partial<GenParams>;
+        // sd-server 元数据是 sdcpp.image.params/v1 schema，
+        // 由 sdcppMetadataToGenParams 映射为 GenParams（含 Beta 参数回填）。
+        const merged = {
+          ...deepClone(params),
+          ...sdcppMetadataToGenParams(metadata, caps?.loras),
+        } as Partial<GenParams>;
         setParams({
           width: (merged.width as number) || params.width,
           height: (merged.height as number) || params.height,
@@ -611,7 +616,7 @@ export function GenerationUI() {
         toast("参数恢复失败", true);
       }
     },
-    [params, setParams, setSeedRandom, toast]
+    [caps?.loras, params, setParams, setSeedRandom, toast]
   );
 
   // 初始图片尺寸自动填充：对齐到 64 并 clamp 到 limits。

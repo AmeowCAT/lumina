@@ -9,6 +9,7 @@ import {
   formatError,
   LINGBOT_PROMPT_TEMPLATE,
   modelFileOptionLabel,
+  sdcppMetadataToGenParams,
   validateLingbotPrompt,
 } from "../utils";
 import type { GenImages, GenParams } from "../../types";
@@ -522,5 +523,145 @@ describe("buildRequestBody", () => {
     const body = buildRequestBody("img_gen", p, {} as GenImages);
 
     expect("upscale_tile_size" in (body.hires as object)).toBe(false);
+  });
+});
+
+describe("sdcppMetadataToGenParams", () => {
+  it("maps img_gen v1 metadata into GenParams with beta args", () => {
+    const meta = {
+      schema: "sdcpp.image.params/v1",
+      mode: "img_gen",
+      seed: 42,
+      width: 1024,
+      height: 1024,
+      prompt: { positive: "a fox", negative: "blurry" },
+      sampling: {
+        steps: 8,
+        eta: 1,
+        flow_shift: 1.15,
+        extra_sample_args: "alpha=0.8,beta=0.5",
+        method: "euler",
+        scheduler: "beta",
+        guidance: {
+          txt_cfg: 1.0,
+          img_cfg: 5,
+          distilled_guidance: 0,
+          slg: { scale: 2, layers: [7, 8, 9], start: 0.01, end: 0.2 },
+        },
+        custom_sigmas: [0.1, 0.2],
+      },
+      clip_skip: 2,
+      strength: 0.75,
+      control_strength: 0.9,
+      ip_adapter_strength: 0.6,
+      auto_resize_ref_image: true,
+      increase_ref_index: false,
+      hires: {
+        enabled: true,
+        upscaler: "Lanczos",
+        scale: 2,
+        target_width: 0,
+        target_height: 0,
+        steps: 12,
+        denoising_strength: 0.4,
+        custom_sigmas: [],
+        upscale_tile_size: 512,
+      },
+    };
+
+    const p = sdcppMetadataToGenParams(meta);
+    expect(p.prompt).toBe("a fox");
+    expect(p.negative_prompt).toBe("blurry");
+    expect(p.width).toBe(1024);
+    expect(p.height).toBe(1024);
+    expect(p.seed).toBe(42);
+    expect(p.sample_params).toMatchObject({
+      sample_steps: 8,
+      eta: 1,
+      flow_shift: 1.15,
+      sample_method: "euler",
+      scheduler: "beta",
+      beta_alpha: 0.8,
+      beta_beta: 0.5,
+      custom_sigmas: [0.1, 0.2],
+      guidance: {
+        txt_cfg: 1.0,
+        img_cfg: 5,
+        slg: { scale: 2, layers: [7, 8, 9], layer_start: 0.01, layer_end: 0.2 },
+      },
+    });
+    expect(p.clip_skip).toBe(2);
+    expect(p.strength).toBe(0.75);
+    expect(p.control_strength).toBe(0.9);
+    expect(p.ip_adapter_strength).toBe(0.6);
+    expect(p.auto_resize_ref_image).toBe(true);
+    expect(p.increase_ref_index).toBe(false);
+    expect(p.hires).toMatchObject({
+      enabled: true,
+      upscaler: "Lanczos",
+      steps: 12,
+      scale: 2,
+      denoising_strength: 0.4,
+      upscale_tile_size: 512,
+    });
+  });
+
+  it("maps vid_gen metadata including high-noise beta args", () => {
+    const meta = {
+      mode: "vid_gen",
+      seed: 7,
+      width: 832,
+      height: 480,
+      prompt: { positive: "panning" },
+      sampling: { steps: 20, scheduler: "discrete" },
+      video: { frame_count: 33, fps: 24 },
+      moe_boundary: 0.8,
+      vace_strength: 1.0,
+      high_noise_sampling: {
+        steps: 8,
+        scheduler: "beta",
+        extra_sample_args: "beta=0.4",
+      },
+    };
+
+    const p = sdcppMetadataToGenParams(meta);
+    expect(p.video_frames).toBe(33);
+    expect(p.fps).toBe(24);
+    expect(p.moe_boundary).toBe(0.8);
+    expect(p.vace_strength).toBe(1.0);
+    expect(p.high_noise_sample_params).toMatchObject({
+      sample_steps: 8,
+      scheduler: "beta",
+      beta_beta: 0.4,
+    });
+  });
+
+  it("matches loras by name and skips unmatched ones", () => {
+    const meta = {
+      seed: 1,
+      loras: [
+        { name: "style.safetensors", multiplier: 0.8, is_high_noise: false },
+        { name: "missing.safetensors", multiplier: 1 },
+      ],
+    };
+    const p = sdcppMetadataToGenParams(meta, [
+      { name: "style.safetensors", path: "D:/loras/style.safetensors" },
+    ]);
+    expect(p.lora).toEqual([
+      {
+        path: "D:/loras/style.safetensors",
+        multiplier: 0.8,
+        is_high_noise: false,
+      },
+    ]);
+  });
+
+  it("leaves beta fields unset for unrelated extra_sample_args", () => {
+    const p = sdcppMetadataToGenParams({
+      seed: 1,
+      sampling: { steps: 4, extra_sample_args: "noise_clip_std=0.5" },
+    });
+    expect(p.sample_params?.beta_alpha).toBeUndefined();
+    expect(p.sample_params?.beta_beta).toBeUndefined();
   });
 });

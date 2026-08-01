@@ -6,6 +6,35 @@ fn read_be_u32(buf: &[u8], off: usize) -> u32 {
     u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
 }
 
+fn read_le_u32(buf: &[u8], off: usize) -> u32 {
+    u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
+}
+
+/// 从 sd-server 写入的 `parameters` 文本中提取 `SDCPP:` 之后的 JSON。
+/// 文本形如 A1111 风格参数串 + ", SDCPP: {json}"
+/// （common.cpp `get_image_params` 的输出格式）。
+pub fn extract_sdcpp_metadata(text: &str) -> Option<serde_json::Value> {
+    const MARKER: &str = "SDCPP: ";
+    let idx = text.rfind(MARKER)?;
+    serde_json::from_str(text[idx + MARKER.len()..].trim()).ok()
+}
+
+fn xml_unescape(text: &str) -> String {
+    text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+}
+
+fn parse_webp_xmp(xmp: &str) -> Option<serde_json::Value> {
+    const OPEN: &str = "<sdcpp:parameters>";
+    const CLOSE: &str = "</sdcpp:parameters>";
+    let start = xmp.find(OPEN)? + OPEN.len();
+    let rel_end = xmp[start..].find(CLOSE)?;
+    extract_sdcpp_metadata(&xml_unescape(&xmp[start..start + rel_end]))
+}
+
 /// Parse a PNG file and extract the `parameters` tEXt chunk (sd-server
 /// `embed_image_metadata` output). Returns the JSON value, or None if no
 /// metadata was found / the file is not a valid PNG.
@@ -22,6 +51,9 @@ pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
     let mut off = 8usize;
     while off + 12 <= data.len() {
         let len = read_be_u32(&data, off) as usize;
+        if off + 12 + len > data.len() {
+            break;
+        }
         let chunk_type = &data[off + 4..off + 8];
         if chunk_type == b"tEXt" {
             let chunk_data = &data[off + 8..off + 8 + len];
@@ -30,7 +62,7 @@ pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
                 let keyword = std::str::from_utf8(&chunk_data[..nul]).unwrap_or("");
                 if keyword == "parameters" {
                     let text = std::str::from_utf8(&chunk_data[nul + 1..]).unwrap_or("");
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
+                    if let Some(v) = extract_sdcpp_metadata(text) {
                         return Ok(Some(v));
                     }
                 }
@@ -43,7 +75,34 @@ pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
     Ok(None)
 }
 
-/// List files in a directory with their PNG metadata, for the history gallery.
+/// Parse a WebP file and extract the `sdcpp:parameters` XMP packet
+/// (`embed_image_metadata` output). Returns the JSON value, or None if no
+/// metadata was found / the file is not a valid WebP.
+pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
+    let data = fs::read(Path::new(path))?;
+    if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" {
+        return Err(anyhow!("not a valid WebP"));
+    }
+    let mut off = 12usize;
+    while off + 8 <= data.len() {
+        let size = read_le_u32(&data, off + 4) as usize;
+        if off + 8 + size > data.len() {
+            break;
+        }
+        let fourcc = &data[off..off + 4];
+        if fourcc == b"XMP " {
+            let chunk = &data[off + 8..off + 8 + size];
+            let xmp = std::str::from_utf8(chunk).unwrap_or("");
+            if let Some(v) = parse_webp_xmp(xmp) {
+                return Ok(Some(v));
+            }
+        }
+        off += 8 + size + (size & 1);
+    }
+    Ok(None)
+}
+
+/// List files in a directory with their image metadata, for the history gallery.
 pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
     let base = Path::new(dir);
     if !base.is_dir() {
@@ -84,10 +143,15 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
                     "modified": modified,
                     "ext": ext,
                 });
-                if ext == "png" {
-                    if let Ok(Some(metadata)) = parse_png_metadata(&path_str) {
-                        entry_json["metadata"] = metadata;
-                    }
+                let parsed = if ext == "png" {
+                    parse_png_metadata(&path_str)
+                } else if ext == "webp" {
+                    parse_webp_metadata(&path_str)
+                } else {
+                    Ok(None)
+                };
+                if let Ok(Some(metadata)) = parsed {
+                    entry_json["metadata"] = metadata;
                 }
                 entries.push(entry_json);
             }
@@ -99,4 +163,106 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
         tb.cmp(&ta)
     });
     Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+
+    fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        v.extend_from_slice(kind);
+        v.extend_from_slice(data);
+        v.extend_from_slice(&[0; 4]); // CRC 不参与解析，占位即可
+        v
+    }
+
+    fn make_png(text: &str) -> Vec<u8> {
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&1u32.to_be_bytes());
+        ihdr.extend_from_slice(&1u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        png.extend_from_slice(&chunk(b"IHDR", &ihdr));
+        let mut text_data = b"parameters\0".to_vec();
+        text_data.extend_from_slice(text.as_bytes());
+        png.extend_from_slice(&chunk(b"tEXt", &text_data));
+        png.extend_from_slice(&chunk(b"IEND", &[]));
+        png
+    }
+
+    fn make_webp(xmp: &str) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"XMP ");
+        body.extend_from_slice(&(xmp.len() as u32).to_le_bytes());
+        body.extend_from_slice(xmp.as_bytes());
+        if xmp.len() % 2 == 1 {
+            body.push(0);
+        }
+        let mut webp = Vec::new();
+        webp.extend_from_slice(b"RIFF");
+        webp.extend_from_slice(&((4 + body.len()) as u32).to_le_bytes());
+        webp.extend_from_slice(b"WEBP");
+        webp.extend_from_slice(&body);
+        webp
+    }
+
+    fn temp_path(ext: &str) -> std::path::PathBuf {
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "lumina_png_info_{}_{}.{}",
+            std::process::id(),
+            n,
+            ext
+        ))
+    }
+
+    const METADATA_TEXT: &str = "a lovely cat\nSteps: 8, CFG scale: 1.0, Seed: 42, SDCPP: {\"schema\":\"sdcpp.image.params/v1\",\"seed\":42,\"width\":1024,\"height\":1024}";
+
+    #[test]
+    fn parses_sdcpp_json_from_png_text_chunk() {
+        let p = temp_path("png");
+        fs::write(&p, make_png(METADATA_TEXT)).unwrap();
+        let meta = parse_png_metadata(p.to_str().unwrap())
+            .unwrap()
+            .expect("metadata");
+        assert_eq!(meta["seed"], 42);
+        assert_eq!(meta["schema"], "sdcpp.image.params/v1");
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn returns_none_when_png_has_no_sdcpp_metadata() {
+        let p = temp_path("png");
+        fs::write(&p, make_png("Steps: 8, CFG scale: 1.0")).unwrap();
+        assert!(parse_png_metadata(p.to_str().unwrap()).unwrap().is_none());
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn parses_sdcpp_json_from_webp_xmp() {
+        let escaped = METADATA_TEXT.replace('&', "&amp;").replace('<', "&lt;");
+        let xmp = format!(
+            "<?xpacket begin=\"\"?><x:xmpmeta><rdf:RDF><rdf:Description><sdcpp:parameters>{}</sdcpp:parameters></rdf:Description></rdf:RDF></x:xmpmeta>",
+            escaped
+        );
+        let p = temp_path("webp");
+        fs::write(&p, make_webp(&xmp)).unwrap();
+        let meta = parse_webp_metadata(p.to_str().unwrap())
+            .unwrap()
+            .expect("metadata");
+        assert_eq!(meta["seed"], 42);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn extracts_json_after_sdcpp_marker() {
+        let v = extract_sdcpp_metadata("prompt\nSteps: 4, SDCPP: {\"a\":1}").unwrap();
+        assert_eq!(v["a"], 1);
+        assert!(extract_sdcpp_metadata("no metadata here").is_none());
+    }
 }
