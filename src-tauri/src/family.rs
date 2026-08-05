@@ -48,6 +48,14 @@ pub fn detect_family(path: &str) -> &'static str {
     ) {
         return "hunyuan-video";
     }
+    // MiniMax-H3 权重文件名：minimax_h3_fl2va[-pruned] / minimax_h3_ref2va[-pruned]。
+    // Ref2VA 变体单独成族——其参考视频/音频输入目前只有 sd-cli 通道。
+    if has_any(&t, &["minimax-h3", "minimax_h3", "minimaxh3"]) {
+        if has_any(&t, &["ref2va"]) {
+            return "minimax-h3-ref2va";
+        }
+        return "minimax-h3-fl2va";
+    }
     if has_any(&t, &["mage-flow", "mage_flow", "mageflow"]) {
         let is_edit = t.contains("edit");
         let is_turbo = t.contains("turbo");
@@ -234,6 +242,9 @@ fn is_llm_encoder(test: &str) -> bool {
             "qwen3-",
             "qwen_3_",
             "qwen3_",
+            // MiniMax-H3 文本编码器（qwen3vl_32b_minimax_h3）：不带连字符/下划线，
+            // 上面的 qwen3- / qwen3_ 都匹配不到。
+            "qwen3vl",
         ],
     )
 }
@@ -315,6 +326,7 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "sefi",
             "minit2i",
             "mini-t2i",
+            "minimax",
         ],
     )
 }
@@ -469,6 +481,71 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_minimax_h3_variants() {
+        assert_eq!(
+            detect_family("minimax_h3_fl2va-Q4_K_M.gguf"),
+            "minimax-h3-fl2va"
+        );
+        assert_eq!(
+            detect_family("minimax_h3_fl2va_pruned-Q4_K_M.gguf"),
+            "minimax-h3-fl2va"
+        );
+        assert_eq!(
+            detect_family("minimax_h3_ref2va-Q4_K_M.gguf"),
+            "minimax-h3-ref2va"
+        );
+        assert_eq!(
+            detect_family("minimax_h3_ref2va_pruned-Q2_K_M.gguf"),
+            "minimax-h3-ref2va"
+        );
+        assert_eq!(
+            detect_family("MiniMax-H3-FL2VA.safetensors"),
+            "minimax-h3-fl2va"
+        );
+    }
+
+    #[test]
+    fn classifies_minimax_h3_components() {
+        // 文本编码器名字不带 qwen3- / qwen3_，此前会被大小回退误判成 model。
+        assert_eq!(
+            classify_file(
+                "qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
+                "qwen3vl_32b_minimax_h3-Q4_K_M",
+                "text_encoders",
+                18000.0,
+            ),
+            "llm"
+        );
+        assert_eq!(
+            classify_file(
+                "minimax_h3_audio_vae_fp32.safetensors",
+                "minimax_h3_audio_vae_fp32",
+                "vae",
+                600.0,
+            ),
+            "audio_vae"
+        );
+        assert_eq!(
+            classify_file(
+                "minimax_h3_video_vae_fp16.safetensors",
+                "minimax_h3_video_vae_fp16",
+                "vae",
+                800.0,
+            ),
+            "vae"
+        );
+        assert_eq!(
+            classify_file(
+                "minimax_h3_fl2va-Q4_K_M.gguf",
+                "minimax_h3_fl2va-Q4_K_M",
+                "diffusion_models",
+                9000.0,
+            ),
+            "model"
+        );
+    }
 
     #[test]
     fn detects_wan_ti2v_before_i2v_substring() {

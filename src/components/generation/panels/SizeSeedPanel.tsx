@@ -1,6 +1,12 @@
 import { memo } from "react";
 import type { GenMode, Limits } from "../../../types";
-import { alignVideoFrames, VIDEO_FRAME_ALIGN } from "../../../config/families";
+import {
+  alignSizeUp,
+  alignVideoFrames,
+  SIZE_SPATIAL_ALIGN,
+  VIDEO_FRAME_ALIGN,
+  VIDEO_FRAME_MAX,
+} from "../../../config/families";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { NumberInput } from "../../ui/NumberInput";
@@ -54,6 +60,12 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
   onRandomSeed,
   forceOpen,
 }: Props) {
+  // 上游 align_image_size 会把宽高向上对齐到家族的空间基数（MiniMax-H3 为 32）；
+  // 与帧数提示同理，提前说明显示尺寸与实际输出不一致的情况。
+  const spatialMultiple = SIZE_SPATIAL_ALIGN[family];
+  const alignedWidth = alignSizeUp(family, width);
+  const alignedHeight = alignSizeUp(family, height);
+  const sizeWillChange = alignedWidth !== width || alignedHeight !== height;
   return (
     <Panel title="尺寸与种子" forceOpen={forceOpen}>
       <div className="size-presets">
@@ -106,6 +118,12 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
           max={limits?.max_height || 4096}
           step={64}
         />
+        {spatialMultiple && sizeWillChange && (
+          <div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+            实际生成 {alignedWidth}×{alignedHeight}（该模型按 {spatialMultiple}{" "}
+            向上对齐）
+          </div>
+        )}
       </div>
       <div className="form-row" style={{ marginTop: 8 }}>
         <label className="form-label" htmlFor="generation-seed">
@@ -165,13 +183,16 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             value={videoFrames || 33}
             onChange={(v) => onUpdate("video_frames", v)}
             min={1}
-            max={family === "sd" ? 32 : 121}
+            max={VIDEO_FRAME_MAX[family] ?? 121}
             hint={
-              // 上游会把帧数下调到最近的 step·n+1；提前说明避免"设了 34 却出 33 帧"。
+              // 上游会调整帧数（step·n+1 向下；MiniMax-H3 是 17k+5 向上）；
+              // 提前说明避免"设了 34 却出 33 帧 / 设了 50 却出 56 帧"。
               alignVideoFrames(family, videoFrames || 33) !== (videoFrames || 33)
-                ? `实际生成 ${alignVideoFrames(family, videoFrames || 33)} 帧（该模型按 ${
-                    VIDEO_FRAME_ALIGN[family]
-                  }n+1 对齐）`
+                ? `实际生成 ${alignVideoFrames(family, videoFrames || 33)} 帧（${
+                    family.startsWith("minimax-h3")
+                      ? "该模型按 17k+5 向上对齐"
+                      : `该模型按 ${VIDEO_FRAME_ALIGN[family]}n+1 对齐`
+                  }）`
                 : undefined
             }
           />
@@ -198,6 +219,13 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             onChange={(v) => onUpdate("fps", v)}
             min={1}
             max={60}
+            hint={
+              // 引擎对 MiniMax-H3 强制 24 fps（src/stable-diffusion.cpp
+              // GenerationRequest），其他取值会被静默覆盖，提前说明。
+              family.startsWith("minimax-h3")
+                ? "该模型固定 24 fps，其他值会被引擎覆盖"
+                : undefined
+            }
           />
         </>
       )}

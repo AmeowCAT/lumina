@@ -22,6 +22,7 @@ export type LaunchRuntime = Pick<
   | "extraArgs"
   | "offloadCpu"
   | "quantType"
+  | "maxVram"
 >;
 
 export interface BuildLaunchConfigInput {
@@ -90,6 +91,7 @@ export function buildLaunchConfig({
   const vaeFormat = runtimeValue(runtime, "vaeFormat");
   const extraArgs = runtimeValue(runtime, "extraArgs");
   const quantType = runtimeValue(runtime, "quantType");
+  const maxVram = runtimeValue(runtime, "maxVram");
 
   if (modelDir) {
     args["lora-model-dir"] = modelDir;
@@ -100,6 +102,8 @@ export function buildLaunchConfig({
   if (refImagePreset) args["ref-image-args"] = `preset=${refImagePreset}`;
   if (runtimeValue(runtime, "offloadCpu")) args["offload-to-cpu"] = true;
   if (quantType) args.type = quantType;
+  // --max-vram 为空/纯空白时不传该参数：引擎不设置图切分预算。
+  if (maxVram && maxVram.trim()) args["max-vram"] = maxVram.trim();
   if (extraArgs) args.extra_args = extraArgs;
 
   if (family === "pid") {

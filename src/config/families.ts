@@ -23,6 +23,7 @@ export const SAMPLER_NAMES: Record<string, string> = {
 	euler_ge: "Euler GE",
 	"dpm++2m_sde": "DPM++ 2M SDE",
 	"dpm++2m_sde_bt": "DPM++ 2M SDE BT",
+	lms: "LMS",
 };
 
 export const SCHEDULER_NAMES: Record<string, string> = {
@@ -195,6 +196,12 @@ export interface FamilyConfig {
 	genDefaultsByMode?: Partial<Record<GenMode, Record<string, unknown>>>;
 	/** Inputs that must be present before a request can be submitted. */
 	requiredInputsByMode?: Partial<Record<GenMode, RequiredInput[]>>;
+	/**
+	 * 非空表示该家族已被识别但暂时无法经 sd-server 使用，值为展示给用户的原因；
+	 * 启动检查单保持 NO-GO 并阻断启动（如 MiniMax-H3 Ref2VA 的参考视频/音频
+	 * 输入目前只有 sd-cli 通道，server HTTP 未开放）。
+	 */
+	unsupported?: string;
 }
 
 export type RequiredInput = "init_image" | "end_image" | "ref_images";
@@ -211,6 +218,15 @@ export const VIDEO_FRAME_PRESETS: Record<string, number[]> = {
 	sd: [8, 16, 24, 32],
 	"lingbot-video": [33, 49, 81],
 	"hunyuan-video": [17, 33, 49],
+	// 全部落在 17k+5 网格上（约 1 / 2.3 / 5.2 / 10.1 / 15.1 秒 @24fps）。
+	"minimax-h3-fl2va": [22, 56, 124, 243, 362],
+};
+
+/** 帧数滑杆上限（家族缺省 121）。MiniMax-H3 放宽到 481（17×28+5 ≈ 20s @24fps）。 */
+export const VIDEO_FRAME_MAX: Record<string, number> = {
+	sd: 32,
+	"minimax-h3-fl2va": 481,
+	"minimax-h3-ref2va": 481,
 };
 
 /**
@@ -220,6 +236,10 @@ export const VIDEO_FRAME_PRESETS: Record<string, number[]> = {
  *   - LTX-AV：8
  *   - Wan / LingBot-Video / Hunyuan-Video：4
  *   - 其余（含 AnimateDiff）：不对齐，原样使用
+ *
+ * 例外：MiniMax-H3 不走 `step·n+1`，而是 `17k+5` 网格**向上**取整、
+ * 最小 5（`max(frames,5)` 后递增到 `%17==5`），在 alignVideoFrames 里特判，
+ * 不放进本表（本表公式与取整方向都不适用）。
  *
  * 注意 api.md 只笼统写了 "4n+1"，与源码不符，此处以源码为准。
  */
@@ -235,9 +255,34 @@ export const VIDEO_FRAME_ALIGN: Record<string, number> = {
 
 /** 返回该家族下 `frames` 实际生效的帧数；不对齐的家族原样返回。 */
 export function alignVideoFrames(family: string, frames: number): number {
+	// MiniMax-H3：17k+5 网格向上取整、最小 5（src/stable-diffusion.cpp
+	// align_video_frames）。50 → 56，5 → 5，6 → 22。
+	if (family.startsWith("minimax-h3")) {
+		if (!Number.isFinite(frames)) return frames;
+		if (frames <= 5) return 5;
+		return Math.ceil((frames - 5) / 17) * 17 + 5;
+	}
 	const step = VIDEO_FRAME_ALIGN[family];
 	if (!step || !Number.isFinite(frames) || frames <= 1) return frames;
 	return Math.floor((frames - 1) / step) * step + 1;
+}
+
+/**
+ * 宽高的空间对齐基数。上游 `align_image_size`（src/stable-diffusion.cpp）
+ * 把请求宽高**向上**对齐到 `vae_scale_factor × diffusion_model_down_factor`。
+ * 目前只有 MiniMax-H3 的基数（16×2=32）会被常用尺寸（720/1080 → 736/1088）
+ * 触发；其余家族基数 ≤16、常规预设天然满足，故不列入本表。
+ */
+export const SIZE_SPATIAL_ALIGN: Record<string, number> = {
+	"minimax-h3-fl2va": 32,
+	"minimax-h3-ref2va": 32,
+};
+
+/** 返回该家族下 `dim` 实际生效的宽/高；无对齐要求的家族原样返回。 */
+export function alignSizeUp(family: string, dim: number): number {
+	const multiple = SIZE_SPATIAL_ALIGN[family];
+	if (!multiple || !Number.isFinite(dim) || dim <= 0) return dim;
+	return Math.ceil(dim / multiple) * multiple;
 }
 
 const F = (
@@ -640,7 +685,59 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			vae_tiling_params: { enabled: true },
 		},
 	},
-	zimage: {
+		// docs/minimax_h3.md 示例参数：864×480、56 帧、24 fps、cfg 1.0。
+		// 采样器（DiT 默认 euler）与 flow shift（引擎对 minimax-h3 默认 12）
+		// 交由上游默认值，不重复硬编码；缺省 --audio-vae 仍可出片但无音轨。
+		"minimax-h3-fl2va": {
+			name: "MiniMax-H3 (FL2VA)",
+			hint: "音视频联合生成：Diffusion + 视频 VAE + 音频 VAE + Qwen3-VL 32B",
+			mode: "vid",
+			fields: [
+				F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+				F("vae", "视频 VAE", "vae", "vae"),
+				F(
+					"audio_vae",
+					"音频 VAE (可选)",
+					"audio-vae",
+					"audio_vae",
+					false,
+					"缺省仍可生成视频，但成品没有解码出的音轨",
+				),
+				F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+				F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+			],
+			fixedArgs: { "diffusion-fa": true },
+			genDefaults: {
+				seed: -1,
+				width: 864,
+				height: 480,
+				sample_params: {
+					sample_steps: 20,
+					guidance: { txt_cfg: 1.0 },
+				},
+				video_frames: 56,
+				fps: 24,
+			},
+		},
+		"minimax-h3-ref2va": {
+			name: "MiniMax-H3 (Ref2VA)",
+			hint: "参考条件音视频生成（Ref2VA）",
+			mode: "vid",
+			// sd-server 的 JSON 协议目前只接受 ref_images，Ref2VA 的参考视频/音频
+			// 仅有 sd-cli 通道（examples/cli/main.cpp 本地加载 WAV/帧目录）。
+			// 待上游 server 开放后移除 unsupported 并补参考输入 UI。
+			unsupported:
+				"Ref2VA 的参考视频/音频输入尚未经 sd-server 开放（仅 sd-cli 可用），请改用 FL2VA 变体",
+			fields: [
+				F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+				F("vae", "视频 VAE", "vae", "vae"),
+				F("audio_vae", "音频 VAE (可选)", "audio-vae", "audio_vae", false),
+				F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+				F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+			],
+			fixedArgs: { "diffusion-fa": true },
+		},
+		zimage: {
 		name: "Z-Image",
 		hint: "Base 模型 + VAE + Qwen3",
 		mode: "img",

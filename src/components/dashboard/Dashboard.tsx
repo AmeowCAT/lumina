@@ -211,8 +211,12 @@ export function Dashboard() {
 	// GO/NO-GO 检查单:能否发射只取决于这三件事实
 	const pathsReady = settings.modelDir.trim().length > 0;
 	const modelReady = mainModel.length > 0;
+	const familyUnsupported = Boolean(familyConfig?.unsupported);
 	const componentsReady =
-		modelReady && familyConfig !== null && missingRequirements.length === 0;
+		modelReady &&
+		familyConfig !== null &&
+		!familyUnsupported &&
+		missingRequirements.length === 0;
 	const readyCount = [pathsReady, modelReady, componentsReady].filter(
 		Boolean,
 	).length;
@@ -241,6 +245,7 @@ export function Dashboard() {
 
 	const selectMainModel = (path: string) => {
 		setPendingSwitch(null);
+		setMaxVramModePick(null);
 		setMainModel(path);
 		const snapshot = path ? settings.modelSnapshots?.[path] : undefined;
 		if (!snapshot) {
@@ -266,6 +271,7 @@ export function Dashboard() {
 			extraArgs: snapshot.extraArgs,
 			offloadCpu: snapshot.offloadCpu,
 			quantType: snapshot.quantType,
+			maxVram: snapshot.maxVram || "",
 			maxQueueSize: snapshot.maxQueueSize,
 		}));
 		toast("已恢复该模型上次启动配置");
@@ -286,6 +292,7 @@ export function Dashboard() {
 					extraArgs: current.extraArgs,
 					offloadCpu: current.offloadCpu,
 					quantType: current.quantType,
+					maxVram: current.maxVram || "",
 					maxQueueSize: current.maxQueueSize,
 				},
 			},
@@ -295,6 +302,35 @@ export function Dashboard() {
 	// 端口输入允许中途处于空/越界状态，落到启动与展示时统一夹回合法区间。
 	const sdPort = normalizeSdPort(settings.sdPort);
 
+	// --max-vram 的原始 spec 即设置中存的字符串，界面模式由此推导：
+	// 空 = 不传；含 "=" = 按设备自定义；负值 = 自动探测保留余量；其余 = 固定预算。
+	const maxVramRaw = (settings.maxVram || "").trim();
+	const maxVramDerived =
+		maxVramRaw === ""
+			? "unset"
+			: maxVramRaw.includes("=")
+				? "custom"
+				: maxVramRaw.startsWith("-")
+					? "auto"
+					: "fixed";
+	// 手动选择的模式需要粘住：自定义模式下清空输入时值为空，纯推导会掉回
+	// "不限"导致输入框消失。快照恢复/换模型时重置回推导（见 selectMainModel）。
+	const [maxVramModePick, setMaxVramModePick] = useState<string | null>(null);
+	const maxVramMode = maxVramModePick ?? maxVramDerived;
+	// 切换模式时尽量保留同模式下的已有数值，避免来回切换丢掉输入。
+	const setMaxVramMode = (mode: string) => {
+		setMaxVramModePick(mode === "unset" ? null : mode);
+		setSettings((s) => {
+			const raw = (s.maxVram || "").trim();
+			let maxVram = "";
+			if (mode === "fixed") maxVram = /^\d+(\.\d+)?$/.test(raw) ? raw : "6";
+			else if (mode === "auto")
+				maxVram = /^-\d+(\.\d+)?$/.test(raw) ? raw : "-2";
+			else if (mode === "custom") maxVram = raw.includes("=") ? raw : "";
+			return { ...s, maxVram };
+		});
+	};
+
 	const startServer = async (confirmed = false) => {
 		if (!mainModel) {
 			toast("请先选择模型", true);
@@ -302,6 +338,10 @@ export function Dashboard() {
 		}
 		if (!familyConfig) {
 			toast("无法识别模型类型", true);
+			return;
+		}
+		if (familyConfig.unsupported) {
+			toast(familyConfig.unsupported, true);
 			return;
 		}
 		if (missingRequirements.length > 0) {
@@ -510,14 +550,18 @@ export function Dashboard() {
 						<span
 							className={cn(
 								"check-detail",
-								modelReady && missingRequirements.length > 0 && "warn",
+								modelReady &&
+									(missingRequirements.length > 0 || familyUnsupported) &&
+									"warn",
 							)}
 						>
 							{!modelReady
 								? "随主模型检测"
-								: missingRequirements.length > 0
-									? `缺 ${missingRequirements.length} 项`
-									: "齐备"}
+								: familyUnsupported
+									? "暂不支持"
+									: missingRequirements.length > 0
+										? `缺 ${missingRequirements.length} 项`
+										: "齐备"}
 						</span>
 					</button>
 				</div>
@@ -545,10 +589,18 @@ export function Dashboard() {
 							</span>
 						</div>
 					)}
-					{mainModel && familyConfig && missingRequirements.length > 0 && (
+					{mainModel &&
+						familyConfig &&
+						missingRequirements.length > 0 &&
+						!familyUnsupported && (
+							<div className="validation-summary" role="alert">
+								还缺 {missingRequirements.length} 个必需配置：
+								{missingRequirements.join("、")}
+							</div>
+						)}
+					{mainModel && familyConfig?.unsupported && (
 						<div className="validation-summary" role="alert">
-							还缺 {missingRequirements.length} 个必需配置：
-							{missingRequirements.join("、")}
+							{familyConfig.unsupported}
 						</div>
 					)}
 					{mainModel && familyConfig && (
@@ -564,6 +616,7 @@ export function Dashboard() {
 							disabled={
 								!mainModel ||
 								!familyConfig ||
+								familyUnsupported ||
 								starting ||
 								switchingModel ||
 								missingRequirements.length > 0
@@ -777,7 +830,9 @@ export function Dashboard() {
 											}}
 											options={Object.entries(FAMILY_CONFIG).map(([k, v]) => ({
 												value: k,
-												label: v.name,
+												label: v.unsupported
+													? `${v.name}（暂不支持）`
+													: v.name,
 											}))}
 										/>
 										{familyConfig && (
@@ -991,6 +1046,79 @@ export function Dashboard() {
 						</div>
 					</div>
 					<div className="form-row" style={{ marginTop: 8 }}>
+						<label className="form-label" htmlFor="dashboard-max-vram-mode">
+							显存预算（--max-vram）
+						</label>
+						{/* form-row 是块级布局，Select 触发器 width:100%——联动输入框必须与
+						    Select 包进同一个 flex 容器，否则会换行并带着 margin 错位。 */}
+						<div className="flex items-center gap-2">
+							<Select
+								id="dashboard-max-vram-mode"
+								className="flex-1"
+								value={maxVramMode}
+								onChange={setMaxVramMode}
+								options={[
+									{ value: "unset", label: "不限（默认，不传该参数）" },
+									{ value: "fixed", label: "固定预算（GiB）" },
+									{ value: "auto", label: "自动探测（保留空闲余量）" },
+									{ value: "custom", label: "按设备自定义" },
+								]}
+							/>
+							{maxVramMode === "fixed" && (
+								<NumberInput
+									id="dashboard-max-vram-fixed"
+									style={{ width: 96, flexShrink: 0 }}
+									value={Number(maxVramRaw) || 0}
+									min={0}
+									max={256}
+									step={0.5}
+									onChange={(v) =>
+										setSettings((s) => ({ ...s, maxVram: String(v) }))
+									}
+									ariaLabel="显存预算 GiB"
+								/>
+							)}
+							{maxVramMode === "auto" && (
+								<NumberInput
+									id="dashboard-max-vram-reserve"
+									style={{ width: 96, flexShrink: 0 }}
+									value={Math.abs(Number(maxVramRaw)) || 2}
+									min={0.5}
+									max={64}
+									step={0.5}
+									onChange={(v) =>
+										setSettings((s) => ({ ...s, maxVram: String(-v) }))
+									}
+									ariaLabel="保留的空闲显存 GiB"
+								/>
+							)}
+							{maxVramMode === "custom" && (
+								<input
+									id="dashboard-max-vram-custom"
+									className="input flex-1"
+									type="text"
+									style={{ minWidth: 0 }}
+									value={settings.maxVram || ""}
+									onChange={(e) =>
+										setSettings((s) => ({ ...s, maxVram: e.target.value }))
+									}
+									placeholder="例如 cuda0=6,vulkan0=4"
+									aria-label="按设备自定义显存预算"
+								/>
+							)}
+						</div>
+						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+							{maxVramMode === "unset" &&
+								"不传 --max-vram：不做图切分预算，引擎使用全部可用显存"}
+							{maxVramMode === "fixed" &&
+								"图切分分段执行的显存上限（GiB）；0 = 禁用图切分"}
+							{maxVramMode === "auto" &&
+								"自动探测空闲显存并保留指定余量（以负值传给 --max-vram）"}
+							{maxVramMode === "custom" &&
+								"按后端/设备分别指定预算（GiB），逗号分隔"}
+						</div>
+					</div>
+					<div className="form-row" style={{ marginTop: 8 }}>
 						<label className="form-label" htmlFor="dashboard-quant-type">
 							加载时量化（--type）
 						</label>
@@ -1002,14 +1130,39 @@ export function Dashboard() {
 							}
 							options={[
 								{ value: "", label: "不量化（默认）" },
-								{ value: "q4_0", label: "Q4_0" },
-								{ value: "q4_1", label: "Q4_1" },
+								// 常用 K 量化（注意：无 _S/_M 配方区分，见下方说明）
+								{ value: "q4_K", label: "Q4_K（推荐）" },
+								{ value: "q5_K", label: "Q5_K" },
+								{ value: "q6_K", label: "Q6_K" },
+								{ value: "q8_K", label: "Q8_K" },
+								{ value: "q3_K", label: "Q3_K" },
+								{ value: "q2_K", label: "Q2_K" },
+								// 传统均匀量化
+								{ value: "q8_0", label: "Q8_0" },
+								{ value: "q8_1", label: "Q8_1" },
 								{ value: "q5_0", label: "Q5_0" },
 								{ value: "q5_1", label: "Q5_1" },
-								{ value: "q8_0", label: "Q8_0" },
+								{ value: "q4_0", label: "Q4_0" },
+								{ value: "q4_1", label: "Q4_1" },
+								// IQ 系列（需 imatrix 才有可用质量）
+								{ value: "iq4_xs", label: "IQ4_XS（需 imatrix）" },
+								{ value: "iq4_nl", label: "IQ4_NL（需 imatrix）" },
+								{ value: "iq3_s", label: "IQ3_S（需 imatrix）" },
+								{ value: "iq3_xxs", label: "IQ3_XXS（需 imatrix）" },
+								{ value: "iq2_s", label: "IQ2_S（需 imatrix）" },
+								{ value: "iq2_xs", label: "IQ2_XS（需 imatrix）" },
+								{ value: "iq2_xxs", label: "IQ2_XXS（需 imatrix）" },
+								{ value: "iq1_s", label: "IQ1_S（需 imatrix）" },
+								{ value: "iq1_m", label: "IQ1_M（需 imatrix）" },
+								// 无损转换
 								{ value: "f16", label: "F16" },
+								{ value: "f32", label: "F32" },
 							]}
 						/>
+						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+							Q4_K 等 K 量化不区分 _S/_M 配方；混合精度（如视觉塔保
+							F16）需在附加启动参数写 --tensor-type-rules
+						</div>
 					</div>
 					<div className="form-row" style={{ marginTop: 8 }}>
 						<label className="form-label" htmlFor="dashboard-extra-args">

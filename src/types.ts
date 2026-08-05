@@ -14,6 +14,8 @@ export interface ModelConfigSnapshot {
   extraArgs: string;
   offloadCpu: boolean;
   quantType: string;
+  /** Raw --max-vram value; empty/absent = 启动时不传该参数。 */
+  maxVram?: string;
   maxQueueSize: number;
 }
 
@@ -28,6 +30,8 @@ export interface Settings {
   extraArgs: string;
   offloadCpu: boolean;
   quantType: string;
+  /** Raw --max-vram value（"6" / "-2" / "cuda0=6,vulkan0=4"）；空 = 不传。 */
+  maxVram?: string;
   /** Fallback queue size when server doesn't report max_queue_size. Default 4. */
   maxQueueSize: number;
   /** Port sd-server is launched on and proxied through. Default 1234. */

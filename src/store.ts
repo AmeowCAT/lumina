@@ -123,6 +123,7 @@ export const useStore = create<StoreState>((set, get) => ({
     extraArgs: "",
     offloadCpu: false,
     quantType: "",
+    maxVram: "",
     maxQueueSize: 4,
     sdPort: DEFAULT_SD_PORT,
     modelSnapshots: {},

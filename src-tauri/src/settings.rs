@@ -28,6 +28,9 @@ pub struct Settings {
     pub offload_cpu: bool,
     #[serde(default)]
     pub quant_type: String,
+    /// Raw --max-vram spec; empty = 启动时不传该参数。
+    #[serde(default)]
+    pub max_vram: String,
     #[serde(default = "default_max_queue_size")]
     pub max_queue_size: u32,
     /// Port sd-server listens on. Configurable from the dashboard; older
@@ -53,6 +56,7 @@ impl Default for Settings {
             extra_args: String::new(),
             offload_cpu: false,
             quant_type: String::new(),
+            max_vram: String::new(),
             max_queue_size: default_max_queue_size(),
             sd_port: default_sd_port(),
             model_snapshots: HashMap::new(),
@@ -79,6 +83,9 @@ pub struct ModelConfigSnapshot {
     pub offload_cpu: bool,
     #[serde(default)]
     pub quant_type: String,
+    /// Raw --max-vram spec; empty = 启动时不传该参数。
+    #[serde(default)]
+    pub max_vram: String,
     #[serde(default = "default_max_queue_size")]
     pub max_queue_size: u32,
 }

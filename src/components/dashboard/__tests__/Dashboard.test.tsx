@@ -108,6 +108,27 @@ describe("Dashboard onboarding validation", () => {
     );
   });
 
+  it("blocks startup for an unsupported family with the reason shown", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("minimax-h3-ref2va"));
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+
+    // 检查单保持 NO-GO：不叠加"缺组件"，只显示暂不支持原因。
+    expect(
+      await screen.findByText(
+        "Ref2VA 的参考视频/音频输入尚未经 sd-server 开放（仅 sd-cli 可用），请改用 FL2VA 变体"
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/还缺/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
+    // 家族下拉中 unsupported 家族带"（暂不支持）"后缀。
+    expect(screen.getByLabelText("识别类型")).toHaveTextContent(
+      "MiniMax-H3 (Ref2VA)（暂不支持）"
+    );
+    expect(mocks.startServer).not.toHaveBeenCalled();
+  });
+
   it("restores the latest snapshot when a configured model is selected", async () => {
     const configured = {
       ...settings,
@@ -269,6 +290,102 @@ describe("Dashboard onboarding validation", () => {
         null,
         expect.objectContaining({ model: "/models/main.safetensors" }),
         8188
+      )
+    );
+  });
+
+  it("omits --max-vram unless a budget mode is chosen", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() => expect(mocks.startServer).toHaveBeenCalled());
+    const args = mocks.startServer.mock.calls[0][3];
+    expect(args).not.toHaveProperty("max-vram");
+  });
+
+  it("passes a fixed --max-vram budget to sd-server", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+    await pickOption("显存预算（--max-vram）", "固定预算（GiB）");
+
+    const budget = screen.getByLabelText("显存预算 GiB");
+    // 联动输入框与模式下拉必须在同一行（同一 flex 父容器）——此前各自块级
+    // 换行 + margin 造成异常缩进的回归守卫。
+    expect(budget.parentElement).toBe(
+      screen.getByLabelText("显存预算（--max-vram）").parentElement
+    );
+    await userEvent.clear(budget);
+    await userEvent.type(budget, "7.5");
+    fireEvent.blur(budget);
+    await waitFor(() => expect(budget).toHaveValue(7.5));
+
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "HiDream-O1",
+        null,
+        expect.objectContaining({ "max-vram": "7.5" }),
+        1234
+      )
+    );
+  });
+
+  it("passes a negative --max-vram for the auto-reserve mode", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+    await pickOption("显存预算（--max-vram）", "自动探测（保留空闲余量）");
+
+    const reserve = screen.getByLabelText("保留的空闲显存 GiB");
+    await userEvent.clear(reserve);
+    await userEvent.type(reserve, "3");
+    fireEvent.blur(reserve);
+    await waitFor(() => expect(reserve).toHaveValue(3));
+
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "HiDream-O1",
+        null,
+        expect.objectContaining({ "max-vram": "-3" }),
+        1234
+      )
+    );
+  });
+
+  it("passes per-device --max-vram assignments through verbatim", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+    await pickOption("显存预算（--max-vram）", "按设备自定义");
+
+    const custom = screen.getByLabelText("按设备自定义显存预算");
+    await userEvent.type(custom, "cuda0=6,vulkan0=4");
+
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "HiDream-O1",
+        null,
+        expect.objectContaining({ "max-vram": "cuda0=6,vulkan0=4" }),
+        1234
       )
     );
   });

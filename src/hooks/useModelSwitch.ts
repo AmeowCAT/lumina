@@ -61,6 +61,9 @@ export function useModelSwitch() {
     const family = snapshot?.familyOverride || (await api.detectFamily(modelPath));
     const familyConfig = FAMILY_CONFIG[family];
     if (!familyConfig) throw new Error("无法识别模型类型");
+    if (familyConfig.unsupported) {
+      throw new Error(familyConfig.unsupported);
+    }
     let runtime = snapshot || settings;
     if (inferLegacyPidFormat && family === "pid" && !runtime.vaeFormat) {
       runtime = { ...runtime, vaeFormat: inferPidVaeFormat(modelPath) };
@@ -136,6 +139,7 @@ export function useModelSwitch() {
         extraArgs: settings.extraArgs,
         offloadCpu: settings.offloadCpu,
         quantType: settings.quantType,
+        maxVram: settings.maxVram,
         maxQueueSize: settings.maxQueueSize,
       });
       if (previousPath && previousPath !== modelPath) {

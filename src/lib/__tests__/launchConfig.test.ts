@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { alignVideoFrames, FAMILY_CONFIG } from "../../config/families";
+import {
+  alignSizeUp,
+  alignVideoFrames,
+  FAMILY_CONFIG,
+  VIDEO_FRAME_MAX,
+  VIDEO_FRAME_PRESETS,
+} from "../../config/families";
 import type { LaunchRuntime } from "../launchConfig";
 import {
   buildLaunchConfig,
@@ -35,6 +41,30 @@ describe("alignVideoFrames", () => {
     expect(alignVideoFrames("ltx", 41)).toBe(41);
   });
 
+  it("aligns MiniMax-H3 upward to 17k+5 with a floor of 5", () => {
+    // 上游 align_video_frames：max(frames,5) 后递增到 %17==5（src/stable-diffusion.cpp）。
+    for (const family of ["minimax-h3-fl2va", "minimax-h3-ref2va"]) {
+      expect(alignVideoFrames(family, 5)).toBe(5);
+      expect(alignVideoFrames(family, 1)).toBe(5);
+      expect(alignVideoFrames(family, 6)).toBe(22);
+      expect(alignVideoFrames(family, 56)).toBe(56);
+      // 与其他家族相反：向上而不是向下取整（50 → 56，不是 39）。
+      expect(alignVideoFrames(family, 50)).toBe(56);
+      expect(alignVideoFrames(family, 57)).toBe(73);
+      // 15 秒 @24fps 的 360 帧向上对齐为 362（17×21+5）。
+      expect(alignVideoFrames(family, 360)).toBe(362);
+    }
+  });
+
+  it("keeps MiniMax-H3 frame presets on the 17k+5 grid and within the slider cap", () => {
+    const presets = VIDEO_FRAME_PRESETS["minimax-h3-fl2va"];
+    expect(presets).toContain(362); // 15 秒档必须直达
+    for (const frames of presets) {
+      expect(alignVideoFrames("minimax-h3-fl2va", frames)).toBe(frames);
+      expect(frames).toBeLessThanOrEqual(VIDEO_FRAME_MAX["minimax-h3-fl2va"]);
+    }
+  });
+
   it("leaves unaligned families alone", () => {
     // AnimateDiff 的 8/16/24/32 预设正是因为它不走对齐路径。
     for (const frames of [8, 16, 24, 32]) {
@@ -49,6 +79,33 @@ describe("alignVideoFrames", () => {
   });
 });
 
+// 对齐基数 = vae_scale_factor × diffusion_model_down_factor（MiniMax-H3 为 32），
+// 上游 align_image_size 向上进位（src/stable-diffusion.cpp）。
+describe("alignSizeUp", () => {
+  it("aligns MiniMax-H3 dimensions up to a multiple of 32", () => {
+    for (const family of ["minimax-h3-fl2va", "minimax-h3-ref2va"]) {
+      expect(alignSizeUp(family, 864)).toBe(864);
+      expect(alignSizeUp(family, 480)).toBe(480);
+      // 通用视频预设里会被静默改动的尺寸：720 → 736、1080 → 1088。
+      expect(alignSizeUp(family, 720)).toBe(736);
+      expect(alignSizeUp(family, 1080)).toBe(1088);
+      expect(alignSizeUp(family, 833)).toBe(864);
+    }
+  });
+
+  it("leaves families without a spatial multiple alone", () => {
+    expect(alignSizeUp("wan-t2v", 1080)).toBe(1080);
+    expect(alignSizeUp("sd", 720)).toBe(720);
+    expect(alignSizeUp("custom", 833)).toBe(833);
+  });
+
+  it("handles degenerate input", () => {
+    expect(alignSizeUp("minimax-h3-fl2va", 0)).toBe(0);
+    expect(alignSizeUp("minimax-h3-fl2va", -32)).toBe(-32);
+    expect(alignSizeUp("minimax-h3-fl2va", Number.NaN)).toBeNaN();
+  });
+});
+
 const runtime: LaunchRuntime = {
   backend: "cuda0",
   refImagePreset: "",
@@ -56,6 +113,7 @@ const runtime: LaunchRuntime = {
   extraArgs: "",
   offloadCpu: false,
   quantType: "",
+  maxVram: "",
 };
 
 describe("launch configuration", () => {
@@ -120,6 +178,93 @@ describe("launch configuration", () => {
         "diffusion-fa": true,
       })
     );
+  });
+
+  it("builds MiniMax-H3 FL2VA component arguments in video mode", () => {
+    const result = buildLaunchConfig({
+      family: "minimax-h3-fl2va",
+      modelPath: "/models/minimax_h3_fl2va-Q4_K_M.gguf",
+      components: {
+        vae: "/models/minimax_h3_video_vae_fp16.safetensors",
+        audio_vae: "/models/minimax_h3_audio_vae_fp32.safetensors",
+        llm: "/models/qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
+      },
+      runtime,
+    });
+
+    expect(result.missing).toEqual([]);
+    expect(result.mode).toBe("vid_gen");
+    expect(result.args).toEqual(
+      expect.objectContaining({
+        "diffusion-model": "/models/minimax_h3_fl2va-Q4_K_M.gguf",
+        vae: "/models/minimax_h3_video_vae_fp16.safetensors",
+        "audio-vae": "/models/minimax_h3_audio_vae_fp32.safetensors",
+        llm: "/models/qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
+        "diffusion-fa": true,
+      })
+    );
+  });
+
+  it("treats the MiniMax-H3 audio VAE as optional but requires the rest", () => {
+    const withoutAudio = buildLaunchConfig({
+      family: "minimax-h3-fl2va",
+      modelPath: "/models/minimax_h3_fl2va-Q4_K_M.gguf",
+      components: {
+        vae: "/models/minimax_h3_video_vae_fp16.safetensors",
+        llm: "/models/qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
+      },
+      runtime,
+    });
+    expect(withoutAudio.missing).toEqual([]);
+    expect(withoutAudio.args["audio-vae"]).toBeUndefined();
+
+    const withoutVae = buildLaunchConfig({
+      family: "minimax-h3-fl2va",
+      modelPath: "/models/minimax_h3_fl2va-Q4_K_M.gguf",
+      components: { llm: "/models/qwen3vl_32b_minimax_h3-Q4_K_M.gguf" },
+      runtime,
+    });
+    expect(withoutVae.missing).toContain("视频 VAE");
+  });
+
+  it("marks MiniMax-H3 Ref2VA unsupported while FL2VA stays launchable", () => {
+    expect(FAMILY_CONFIG["minimax-h3-fl2va"].unsupported).toBeUndefined();
+    expect(FAMILY_CONFIG["minimax-h3-ref2va"].unsupported).toBeTruthy();
+    expect(FAMILY_CONFIG["minimax-h3-fl2va"].mode).toBe("vid");
+    expect(FAMILY_CONFIG["minimax-h3-ref2va"].mode).toBe("vid");
+    // 官方推荐参数（docs/minimax_h3.md）：864×480、56 帧、24 fps、cfg 1.0。
+    expect(FAMILY_CONFIG["minimax-h3-fl2va"].genDefaults).toEqual(
+      expect.objectContaining({
+        width: 864,
+        height: 480,
+        video_frames: 56,
+        fps: 24,
+      })
+    );
+  });
+
+  it("passes --max-vram through for every supported spec shape", () => {
+    for (const maxVram of ["6", "6.5", "0", "-2", "cuda0=6,vulkan0=4"]) {
+      const result = buildLaunchConfig({
+        family: "hidream",
+        modelPath: "/models/hidream.safetensors",
+        components: {},
+        runtime: { ...runtime, maxVram },
+      });
+      expect(result.args["max-vram"]).toBe(maxVram);
+    }
+  });
+
+  it("omits --max-vram when unset or blank", () => {
+    for (const maxVram of ["", "   ", undefined]) {
+      const result = buildLaunchConfig({
+        family: "hidream",
+        modelPath: "/models/hidream.safetensors",
+        components: {},
+        runtime: { ...runtime, maxVram },
+      });
+      expect(result.args).not.toHaveProperty("max-vram");
+    }
   });
 
   it("infers every PiD VAE layout variant", () => {
