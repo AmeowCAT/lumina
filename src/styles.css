@@ -946,8 +946,10 @@
   }
 
   /* ── Toast ────────────────────────────────────────────── */
+  /* 左下：右上挡参数/队列按钮，右下挡 dock 的生成按钮，左上挡工作区
+     tabs；左下仅与队列抽屉（模态、临时）重叠，4s/12s 自动消失可接受。 */
   .toast-container {
-    position: fixed; top: 60px; right: 14px; z-index: 400;
+    position: fixed; bottom: 14px; left: 14px; z-index: 400;
     display: flex; flex-direction: column; gap: 8px;
   }
   .toast {
@@ -1337,6 +1339,8 @@
   .header-logo .brand-en { display: none }
   .output-main { padding: 44px 10px 200px }
   .prompt-dock { width: calc(100% - 16px); bottom: 8px }
+  /* 窄窗口 dock 近全宽，toast 抬到它上方避免盖住提示词输入区 */
+  .toast-container { bottom: 216px; left: 8px; max-width: calc(100% - 16px) }
   .param-chips .generate-btn { min-width: 0; flex: 1 1 100% }
   .params-sheet { width: 100% }
   .job-id { display: none }

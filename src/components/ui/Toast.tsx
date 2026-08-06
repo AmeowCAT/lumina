@@ -12,9 +12,9 @@ export function ToastContainer() {
           <motion.div
             key={t.id}
             layout
-            initial={{ opacity: 0, x: 28, scale: 0.97 }}
+            initial={{ opacity: 0, x: -28, scale: 0.97 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 28, scale: 0.97, transition: { duration: 0.14 } }}
+            exit={{ opacity: 0, x: -28, scale: 0.97, transition: { duration: 0.14 } }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
             className={cn("toast", t.error && "error")}
             role={t.error ? "alert" : "status"}
