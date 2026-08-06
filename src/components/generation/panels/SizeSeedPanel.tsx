@@ -31,9 +31,15 @@ interface Props {
   qwenLayers: number | undefined;
   limits: Limits | undefined;
   sizePresets: SizePresetGroup[];
+  /** 当前尺寸相对基准尺寸的倍率（无基准时为 1） */
+  sizeScale?: number;
   framePresets: number[] | undefined;
   framePresetsLabel: string;
   onUpdate: (path: string, v: unknown) => void;
+  /** 尺寸缩放滑块（仅 vid_gen 渲染）：按倍率等比缩放宽高 */
+  onSizeScale?: (scale: number) => void;
+  /** 预设/手动设定尺寸后调用，把缩放基准锚定为新尺寸 */
+  onSizeBaseReset?: (w: number, h: number) => void;
   onSeedEdit: (raw: string) => void;
   onRandomSeed: () => void;
   /** 参数 chip 深链:召唤 Sheet 时强制展开本面板 */
@@ -53,9 +59,12 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
   qwenLayers,
   limits,
   sizePresets,
+  sizeScale,
   framePresets,
   framePresetsLabel,
   onUpdate,
+  onSizeScale,
+  onSizeBaseReset,
   onSeedEdit,
   onRandomSeed,
   forceOpen,
@@ -84,6 +93,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
                   onClick={() => {
                     onUpdate("width", w);
                     onUpdate("height", h);
+                    onSizeBaseReset?.(w, h);
                   }}
                 >
                   {l}
@@ -100,7 +110,10 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
         <NumberInput
           id="generation-width"
           value={width}
-          onChange={(value) => onUpdate("width", value)}
+          onChange={(value) => {
+            onUpdate("width", value);
+            onSizeBaseReset?.(value, height);
+          }}
           min={limits?.min_width || 64}
           max={limits?.max_width || 4096}
           step={64}
@@ -113,7 +126,10 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
         <NumberInput
           id="generation-height"
           value={height}
-          onChange={(value) => onUpdate("height", value)}
+          onChange={(value) => {
+            onUpdate("height", value);
+            onSizeBaseReset?.(width, value);
+          }}
           min={limits?.min_height || 64}
           max={limits?.max_height || 4096}
           step={64}
@@ -125,6 +141,17 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
           </div>
         )}
       </div>
+      {mode === "vid_gen" && onSizeScale && (
+        <Slider
+          label="尺寸缩放"
+          value={sizeScale ?? 1}
+          onChange={onSizeScale}
+          min={0}
+          max={2}
+          step={0.05}
+          hint="相对基准尺寸（初始图片/上次设定）等比缩放，1 为不变"
+        />
+      )}
       <div className="form-row" style={{ marginTop: 8 }}>
         <label className="form-label" htmlFor="generation-seed">
           种子

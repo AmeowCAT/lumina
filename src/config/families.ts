@@ -1,4 +1,4 @@
-import type { GenMode, ServerArgs } from "../types";
+import type { GenMode, Limits, ServerArgs } from "../types";
 
 // ── Display name maps (sampler / scheduler indices come from capabilities) ──
 export const SAMPLER_NAMES: Record<string, string> = {
@@ -283,6 +283,30 @@ export function alignSizeUp(family: string, dim: number): number {
 	const multiple = SIZE_SPATIAL_ALIGN[family];
 	if (!multiple || !Number.isFinite(dim) || dim <= 0) return dim;
 	return Math.ceil(dim / multiple) * multiple;
+}
+
+/**
+ * 把基准宽高按 `scale` 等比缩放：各维**就近**对齐到家族空间基数
+ * （无对齐要求时退化为 16，与上游 `align_image_size` 的常规基数一致），
+ * 再 clamp 到 limits。与 `alignSizeUp` 的向上对齐不同，就近取整让
+ * 缩放结果更贴合用户拖到的比例；剩余偏差由引擎对齐（及面板提示）兜底。
+ */
+export function scaleSize(
+	family: string,
+	baseW: number,
+	baseH: number,
+	scale: number,
+	limits?: Limits,
+): { w: number; h: number } {
+	const multiple = SIZE_SPATIAL_ALIGN[family] ?? 16;
+	const scaleDim = (base: number, min: number, max: number) => {
+		const v = Math.max(multiple, Math.round((base * scale) / multiple) * multiple);
+		return Math.min(max, Math.max(min, v));
+	};
+	return {
+		w: scaleDim(baseW, limits?.min_width || 64, limits?.max_width || 4096),
+		h: scaleDim(baseH, limits?.min_height || 64, limits?.max_height || 4096),
+	};
 }
 
 const F = (

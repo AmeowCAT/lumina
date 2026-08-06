@@ -3,6 +3,7 @@ import {
   alignSizeUp,
   alignVideoFrames,
   FAMILY_CONFIG,
+  scaleSize,
   VIDEO_FRAME_MAX,
   VIDEO_FRAME_PRESETS,
 } from "../../config/families";
@@ -103,6 +104,45 @@ describe("alignSizeUp", () => {
     expect(alignSizeUp("minimax-h3-fl2va", 0)).toBe(0);
     expect(alignSizeUp("minimax-h3-fl2va", -32)).toBe(-32);
     expect(alignSizeUp("minimax-h3-fl2va", Number.NaN)).toBeNaN();
+  });
+});
+
+// 尺寸缩放滑块：相对基准等比缩放，就近对齐到家族空间基数（缺省 16），
+// 再 clamp 到 limits——与 alignSizeUp 的向上对齐刻意不同，拖动 0.95×
+// 不应得到比 1× 还大的尺寸。
+describe("scaleSize", () => {
+  it("returns the base size at 1×", () => {
+    expect(scaleSize("wan-i2v", 832, 480, 1)).toEqual({ w: 832, h: 480 });
+  });
+
+  it("scales proportionally and rounds to the nearest multiple of 16", () => {
+    // 864×480 的 0.5× = 432×240 → 就近 16 对齐仍是 432×240。
+    expect(scaleSize("wan-i2v", 864, 480, 0.5)).toEqual({ w: 432, h: 240 });
+    // 1.5× = 1296×720 → 1296/16=81、720/16=45，天然满足。
+    expect(scaleSize("wan-i2v", 864, 480, 1.5)).toEqual({ w: 1296, h: 720 });
+    // 0.95× = 820.8×456 → 就近 816×464（而非向上 832×464）。
+    expect(scaleSize("wan-i2v", 864, 480, 0.95)).toEqual({ w: 816, h: 464 });
+  });
+
+  it("rounds MiniMax-H3 to the nearest multiple of 32", () => {
+    // 0.9× = 777.6×432 → 就近 32 对齐为 768×448。
+    expect(scaleSize("minimax-h3-fl2va", 864, 480, 0.9)).toEqual({ w: 768, h: 448 });
+  });
+
+  it("clamps to limits at the slider extremes", () => {
+    const limits = {
+      min_width: 256,
+      max_width: 1920,
+      min_height: 256,
+      max_height: 1080,
+    };
+    expect(scaleSize("wan-i2v", 864, 480, 0, limits)).toEqual({ w: 256, h: 256 });
+    expect(scaleSize("wan-i2v", 864, 480, 2, limits)).toEqual({ w: 1728, h: 960 });
+    expect(scaleSize("wan-i2v", 1440, 810, 2, limits)).toEqual({ w: 1920, h: 1080 });
+  });
+
+  it("falls back to the built-in floor of 64 without limits", () => {
+    expect(scaleSize("wan-i2v", 320, 240, 0)).toEqual({ w: 64, h: 64 });
   });
 });
 

@@ -7,6 +7,7 @@ import {
   FAMILY_CONFIG,
   VIDEO_FRAME_PRESETS,
   SIZE_PRESETS,
+  scaleSize,
 } from "../../config/families";
 import {
   buildRequestBody,
@@ -208,6 +209,13 @@ export function GenerationUI() {
   }, [currentGen?.id, clearProgress]);
   const maxQueue = caps?.limits?.max_queue_size || settings.maxQueueSize || 4;
   const sizePresets = SIZE_PRESETS[mode];
+
+  // 尺寸缩放滑块的基准尺寸：由初始图片检测、预设/手动修改设定；缩放时
+  // width/height = scaleSize(base)。null 表示尚未锚定（滑块显示 1×，
+  // 首次拖动时以当前尺寸为基准）。家族/模式切换后基准失效，避免跨
+  // 家族的旧尺寸污染比例。
+  const [sizeBase, setSizeBase] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => setSizeBase(null), [family, mode]);
 
   // Initialize / switch params from caps defaults + persisted family defaults.
   // MUST depend on `caps` too: caps load asynchronously, and without it this
@@ -611,6 +619,8 @@ export function GenerationUI() {
           ...merged,
         });
         if ((merged.seed as number) >= 0) setSeedRandom(false);
+        // 历史图尺寸取代当前尺寸，缩放基准随之失效（滑块回到 1×）。
+        setSizeBase(null);
         toast("已从历史图片恢复参数");
       } catch {
         toast("参数恢复失败", true);
@@ -634,9 +644,31 @@ export function GenerationUI() {
       const ah = align(h, minH, maxH);
       update("width", aw);
       update("height", ah);
+      // 锚定缩放基准：之后拖动尺寸缩放滑块以图片尺寸为 1×。
+      setSizeBase({ w: aw, h: ah });
       toast(`已应用图片尺寸 ${aw}×${ah}`);
     },
     [caps?.limits, update, toast]
+  );
+
+  // 尺寸缩放滑块：相对基准尺寸（通常为初始图片尺寸）等比缩放宽高，
+  // 结果就近对齐到家族空间基数并 clamp 到 limits。
+  const handleSizeScale = useCallback(
+    (scale: number) => {
+      if (!params) return;
+      const base = sizeBase ?? { w: params.width, h: params.height };
+      if (!sizeBase) setSizeBase(base);
+      const { w, h } = scaleSize(family, base.w, base.h, scale, caps?.limits);
+      update("width", w);
+      update("height", h);
+    },
+    [params, sizeBase, family, caps?.limits, update]
+  );
+
+  // 预设/手动修改尺寸后，缩放基准随之重置（滑块回到 1×）。
+  const handleSizeBaseReset = useCallback(
+    (w: number, h: number) => setSizeBase({ w, h }),
+    []
   );
 
   const handleSeedEdit = useCallback(
@@ -696,6 +728,18 @@ export function GenerationUI() {
   if (!caps || !params) return null;
   const sp = params.sample_params;
   const hsp = params.high_noise_sample_params;
+  // 滑块显示值：当前尺寸相对基准的几何平均倍率（宽高可能单独被改过），
+  // 无基准时恒为 1×；超出滑块量程时钉在端点。
+  const sizeScale =
+    sizeBase && sizeBase.w > 0 && sizeBase.h > 0
+      ? Math.min(
+          2,
+          Math.max(
+            0,
+            Math.sqrt((params.width / sizeBase.w) * (params.height / sizeBase.h))
+          )
+        )
+      : 1;
   const negativeVisible =
     showNegative || !!(params.negative_prompt && params.negative_prompt.trim());
   const showDistilled = DISTILL_FAMILIES.includes(family);
@@ -869,9 +913,12 @@ export function GenerationUI() {
               qwenLayers={params.qwen_image_layers}
               limits={caps.limits}
               sizePresets={sizePresets}
+              sizeScale={sizeScale}
               framePresets={VIDEO_FRAME_PRESETS[family]}
               framePresetsLabel={`${FAMILY_CONFIG[family]?.name || "视频"} 帧数快捷项`}
               onUpdate={update}
+              onSizeScale={handleSizeScale}
+              onSizeBaseReset={handleSizeBaseReset}
               onSeedEdit={handleSeedEdit}
               onRandomSeed={randomSeed}
               forceOpen={sheetTarget === "size"}
