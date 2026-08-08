@@ -502,53 +502,13 @@
   /* ── 输出区 / 画布:全屏工作室,结果是主角 ─────────────── */
   .output-area {
     position: relative; flex: 1; display: flex; flex-direction: column;
-    overflow: hidden; background: var(--color-bg); min-width: 0;
-  }
-  /* 环境光雾:两团虹紫/紫罗兰在 26s/34s 双轨道永不停止地漂移。
-     纯 transform 动画,合成器执行,零 JS。 */
-  .output-area::before, .output-area::after {
-    content: ""; position: absolute; pointer-events: none;
-    border-radius: 50%; z-index: 0;
-  }
-  .output-area::before {
-    width: 62%; height: 55%; left: -12%; top: -18%;
-    background: radial-gradient(closest-side, rgb(217 164 65 / 0.11), transparent 70%);
-    animation: drift-a 26s ease-in-out infinite;
-  }
-  .output-area::after {
-    width: 55%; height: 50%; right: -10%; bottom: -15%;
-    background: radial-gradient(closest-side, rgb(130 173 160 / 0.07), transparent 70%);
-    animation: drift-b 34s ease-in-out infinite;
-  }
-  @keyframes drift-a {
-    0%, 100% { transform: translate(-5%, -3%) scale(1) }
-    50% { transform: translate(6%, 4%) scale(1.09) }
-  }
-  @keyframes drift-b {
-    0%, 100% { transform: translate(5%, 2%) scale(1.05) }
-    50% { transform: translate(-6%, -5%) scale(0.95) }
-  }
-  /* 梦境态:生成进行中,画布苏醒——三层极光加速显色 */
-  .studio-aurora { position: absolute; inset: 0; pointer-events: none; z-index: 0 }
-  .studio-aurora .aur {
-    position: absolute; border-radius: 50%;
-    opacity: 0; transition: opacity 1.2s ease;
-  }
-  .output-area.dreaming .studio-aurora .aur { opacity: 1 }
-  .studio-aurora .a1 {
-    width: 58%; height: 52%; left: 4%; top: -14%;
-    background: radial-gradient(closest-side, rgb(217 164 65 / 0.22), transparent 70%);
-    animation: drift-a 13s ease-in-out infinite;
-  }
-  .studio-aurora .a2 {
-    width: 50%; height: 48%; right: 0%; bottom: -10%;
-    background: radial-gradient(closest-side, rgb(245 215 142 / 0.13), transparent 70%);
-    animation: drift-b 17s ease-in-out infinite;
-  }
-  .studio-aurora .a3 {
-    width: 40%; height: 40%; left: 32%; top: 30%;
-    background: radial-gradient(closest-side, rgb(217 164 65 / 0.14), transparent 70%);
-    animation: drift-a 21s ease-in-out infinite reverse;
+    overflow: hidden; min-width: 0;
+    background: var(--color-bg);
+    /* 工作室点阵:1px 细点 28px 等距平铺,~4.5% 透明度。
+       纯静态标尺质感,像暗房/摄影棚的背景刻度,不干扰看图。 */
+    background-image: radial-gradient(circle, rgb(255 255 255 / 0.045) 1px, transparent 1.5px);
+    background-size: 28px 28px;
+    background-position: center;
   }
   /* 画布边缘浮动 chrome:工作区切换(左上)与参数/队列(右上) */
   .canvas-float { position: absolute; top: 12px; z-index: 15; display: flex; gap: 8px; align-items: center }
@@ -1315,8 +1275,8 @@
 
 /* ── 动效偏好 / 触屏 / 响应式 ─────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  .status-dot, .spinner, .progress-bar-fill, .output-area::before, .output-area::after,
-  .studio-aurora .aur, .job-status.generating, .header-dream, .section-flash,
+  .status-dot, .spinner, .progress-bar-fill,
+  .job-status.generating, .header-dream, .section-flash,
   .param-chips .generate-btn::after { animation: none }
   *, *::before, *::after {
     transition-duration: 0.01ms !important;

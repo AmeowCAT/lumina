@@ -763,12 +763,7 @@ export function GenerationUI() {
         onOpenDashboard={openDashboard}
       />
       <div className="main">
-        <div className={cn("output-area", currentGen && "dreaming")}>
-          <div className="studio-aurora" aria-hidden="true">
-            <span className="aur a1" />
-            <span className="aur a2" />
-            <span className="aur a3" />
-          </div>
+        <div className="output-area">
           <ProgressBar />
           <div className="canvas-float left">
             <div className="mode-tabs" role="tablist" aria-label="工作区视图">
