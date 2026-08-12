@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -153,6 +153,51 @@ describe("Dashboard onboarding validation", () => {
     expect(screen.getByLabelText("处理预设")).toHaveTextContent("Krea2 Edit 768");
     expect(screen.getByLabelText("附加启动参数")).toHaveValue("--threads 8");
     expect(screen.getByLabelText("最大队列数量")).toHaveValue(7);
+  });
+
+  it("records component config on change and restores it after switching away and back", async () => {
+    // 回归：快照曾只在启动成功后保存，且切换路径的防抖保存会随 Dashboard
+    // 卸载被丢弃——"选中后组件配置没有记录并沿用"的根因。这里验证：
+    // 组件变更即记录快照；切到别的模型再切回时组件配置被恢复。
+    const baseFile = scanFor("flux").files[0];
+    const twoModels: ScanResult = {
+      ...scanFor("flux"),
+      count: 4,
+      families: {
+        "/models/a.safetensors": "flux",
+        "/models/b.safetensors": "flux",
+      },
+      files: [
+        { ...baseFile, name: "a.safetensors", stem: "a", path: "/models/a.safetensors" },
+        { ...baseFile, name: "b.safetensors", stem: "b", path: "/models/b.safetensors" },
+        { ...baseFile, name: "ae1.sft", stem: "ae1", path: "/models/ae1.sft", category: "vae" },
+        { ...baseFile, name: "ae2.sft", stem: "ae2", path: "/models/ae2.sft", category: "vae" },
+      ],
+    };
+    mocks.scanModels.mockResolvedValue(twoModels);
+    render(<Dashboard />);
+
+    await pickOption("主模型", "a.safetensors (1.0 GB)");
+    // 两个 VAE 候选：自动补选不生效，组件初始为空。
+    expect(useStore.getState().components).toEqual({});
+
+    // 用户在组件面板选择 VAE → 快照立即记录当前模型配置。
+    act(() =>
+      useStore.getState().setComponents(() => ({ vae: "/models/ae1.sft" }))
+    );
+    await waitFor(() => {
+      const snap =
+        useStore.getState().settings.modelSnapshots["/models/a.safetensors"];
+      expect(snap?.components).toEqual({ vae: "/models/ae1.sft" });
+    });
+
+    // 切到 b（无快照、组件清空）再切回 a：配置被恢复。
+    await pickOption("主模型", "b.safetensors (1.0 GB)");
+    expect(useStore.getState().components).toEqual({});
+    await pickOption("主模型", "a.safetensors (1.0 GB)");
+    await waitFor(() =>
+      expect(useStore.getState().components).toEqual({ vae: "/models/ae1.sft" })
+    );
   });
 
 	it("echoes a custom --backend value in the preset select", async () => {

@@ -34,6 +34,60 @@ async fn effective_port(state: &AppState) -> u16 {
     }
 }
 
+/// 判断 `dir` 是否等于或在 `root` 之内（词法比较，Windows 下不区分大小写，
+/// 先做 `..` 组件归一化——纯前缀比较会被 `D:/out/../evil` 绕过）。
+/// `root` 为空时恒为 false。save_output / read_file_b64 是 webview 可调用的
+/// 任意读写入口，收敛到用户配置的输出目录子树（对抗性审查 C）。
+fn dir_is_within(dir: &str, root: &str) -> bool {
+    let norm = |s: &str| {
+        // 词法归一化：折叠 "."、弹出 ".."，再统一分隔符与大小写。
+        let replaced = s.replace('\\', "/");
+        let mut parts: Vec<&str> = Vec::new();
+        for comp in replaced.split('/') {
+            match comp {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                c => parts.push(c),
+            }
+        }
+        let joined = parts.join("/");
+        // Windows 与 macOS 默认文件系统都不区分大小写，统一小写比较；
+        // Linux 保持大小写敏感。
+        if cfg!(windows) || cfg!(target_os = "macos") {
+            joined.to_ascii_lowercase()
+        } else {
+            joined
+        }
+    };
+    let root = norm(root.trim());
+    if root.is_empty() {
+        return false;
+    }
+    let dir = norm(dir.trim());
+    dir == root || dir.starts_with(&format!("{}/", root))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dir_is_within;
+
+    #[test]
+    fn dir_is_within_rejects_escapes() {
+        assert!(dir_is_within("D:/out", "D:/out"));
+        assert!(dir_is_within("D:/out/sub", "D:/out"));
+        assert!(dir_is_within("D:/out/sub/deep", "D:/out"));
+        // 兄弟前缀目录不算在内
+        assert!(!dir_is_within("D:/out2", "D:/out"));
+        // `..` 逃逸被词法归一化拦下
+        assert!(!dir_is_within("D:/out/../evil", "D:/out"));
+        // 空 root 一律拒绝
+        assert!(!dir_is_within("D:/out", ""));
+        assert!(!dir_is_within("", "D:/out"));
+    }
+}
+
 // ── sd-server lifecycle ───────────────────────────────────────────────
 
 #[tauri::command]
@@ -156,8 +210,13 @@ async fn load_settings(
 #[tauri::command]
 async fn save_settings(
     state: State<'_, AppState>,
-    settings: settings::Settings,
+    mut settings: settings::Settings,
 ) -> Result<(), String> {
+    // 运行中的子进程端口以内存为准：前端携带的 Settings 快照可能还是旧端口
+    // （保存防抖），直接落盘会覆盖刚更新的值，stop 后代理会连错端口。
+    if let Some(port) = state.server.lock().await.active_port() {
+        settings.sd_port = port;
+    }
     settings.save().map_err(|e| e.to_string())?;
     *state.settings.lock().await = settings;
     *state.settings_warning.lock().await = None;
@@ -186,11 +245,21 @@ async fn pick_file() -> Result<Option<String>, String> {
 
 #[tauri::command]
 async fn save_output(
+    state: State<'_, AppState>,
     b64: String,
     ext: String,
     name: String,
     dir: String,
 ) -> Result<save::SaveResult, save::SaveCommandError> {
+    // 该命令是 webview 可调用的任意写入口：目录必须位于配置的输出目录内，
+    // 防止被注入脚本写到任意位置（对抗性审查 C）。
+    let output_dir = state.settings.lock().await.output_dir.clone();
+    if !dir_is_within(&dir, &output_dir) {
+        return Err(save::SaveCommandError {
+            code: "save_dir_not_allowed",
+            message: "输出目录必须位于已配置的输出目录内".into(),
+        });
+    }
     let inner =
         tauri::async_runtime::spawn_blocking(move || save::save_output(&b64, &ext, &name, &dir))
             .await
@@ -238,7 +307,16 @@ async fn list_output_files(dir: String) -> Result<Vec<serde_json::Value>, String
 }
 
 #[tauri::command]
-async fn read_file_b64(path: String) -> Result<String, String> {
+async fn read_file_b64(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    // 与 save_output 对等：任意路径读取同样收敛到输出目录内（对抗性审查 C）。
+    // 历史画廊/恢复参数只用输出目录下的文件。
+    let output_dir = state.settings.lock().await.output_dir.clone();
+    if !dir_is_within(&path, &output_dir) {
+        return Err("文件必须位于已配置的输出目录内".into());
+    }
     use base64::Engine;
     use std::fs;
     tauri::async_runtime::spawn_blocking(move || {

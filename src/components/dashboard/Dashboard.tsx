@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { api } from "../../api";
 import { useStore } from "../../store";
+import type { Settings } from "../../types";
 import { FAMILY_CONFIG, PID_VAE_FORMATS } from "../../config/families";
 import {
 	DEFAULT_SD_PORT,
@@ -16,6 +17,7 @@ import {
 	findModelField,
 	inferPidVaeFormat,
 	persistFamilyDefaults,
+	validateMaxVramSpec,
 } from "../../lib/launchConfig";
 import { Panel } from "../ui/Panel";
 import { IC } from "../ui/Icons";
@@ -23,6 +25,7 @@ import { Logo } from "../ui/Logo";
 import { NumberInput } from "../ui/NumberInput";
 import { Select } from "../ui/Select";
 import { Toggle } from "../ui/Toggle";
+import { TwoTapButton } from "../ui/TwoTapButton";
 import { useModelSwitch } from "../../hooks/useModelSwitch";
 import { cn } from "../ui/cn";
 
@@ -89,10 +92,17 @@ export function Dashboard() {
 			});
 	}, [toast]);
 
+	// 卸载时冲刷未落盘的设置。防抖（400ms）期间的变更——典型如切换模型
+	// 成功后写入的模型快照——会随 Dashboard 卸载（切回生成界面）被
+	// clearTimeout 丢弃：这正是"启动成功出图了、快照却没记录"的根因。
+	const pendingSettingsSave = useRef<Settings | null>(null);
+
 	useEffect(() => {
 		if (!settingsLoaded.current) return;
 		// 防抖：路径输入框每敲一个字符都会触发本 effect，不能每次都写盘。
+		pendingSettingsSave.current = settings;
 		const t = setTimeout(() => {
+			pendingSettingsSave.current = null;
 			setSettingsState("saving");
 			api
 				.saveSettings(settings)
@@ -104,6 +114,16 @@ export function Dashboard() {
 		}, 400);
 		return () => clearTimeout(t);
 	}, [settings]);
+
+	// 卸载时冲刷未落盘的设置（pendingSettingsSave 非空说明防抖定时器还没
+	// 触发过）。fire-and-forget：invoke 在组件卸载后仍会完成。
+	useEffect(() => {
+		return () => {
+			const pending = pendingSettingsSave.current;
+			pendingSettingsSave.current = null;
+			if (pending) void api.saveSettings(pending).catch(() => {});
+		};
+	}, []);
 
 	useEffect(() => {
 		const requestId = ++scanRequest.current;
@@ -243,6 +263,20 @@ export function Dashboard() {
 		if (p) setSettings((s) => ({ ...s, [key]: p }));
 	};
 
+	/** 当前模型的启动配置快照（与历史字段保持一致）。 */
+	const buildSnapshot = () => ({
+		familyOverride,
+		components: { ...components },
+		backend: settings.backend,
+		refImagePreset: settings.refImagePreset,
+		vaeFormat: settings.vaeFormat || "",
+		extraArgs: settings.extraArgs,
+		offloadCpu: settings.offloadCpu,
+		quantType: settings.quantType,
+		maxVram: settings.maxVram || "",
+		maxQueueSize: settings.maxQueueSize,
+	});
+
 	const selectMainModel = (path: string) => {
 		setPendingSwitch(null);
 		setMaxVramModePick(null);
@@ -279,25 +313,36 @@ export function Dashboard() {
 
 	const saveModelSnapshot = () => {
 		if (!mainModel) return;
+		const current = useStore.getState().settings;
+		const next: Settings = {
+			...current,
+			modelSnapshots: {
+				...(current.modelSnapshots || {}),
+				[mainModel]: buildSnapshot(),
+			},
+		};
+		setSettings(() => next);
+		// 立即落盘，不等 400ms 防抖：切换模型路径中本函数之后紧跟
+		// setDashboardOpen(false)（Dashboard 卸载），防抖定时器会被卸载
+		// 清理掉，快照整个丢失（RedCraft-V3 一直没进快照的直接原因）。
+		void api.saveSettings(next).catch(() => {});
+	};
+
+	// 主模型选中/组件配置/家族覆盖变化即记录当前模型快照：旧设计只在启动
+	// 成功后记录，用户配置了组件但没启动（或启动失败）就切换/关闭时，
+	// 配置永远丢失——"选中后组件配置没有记录并沿用"的另一半根因。
+	useEffect(() => {
+		if (!mainModel || !settingsLoaded.current) return;
 		setSettings((current) => ({
 			...current,
 			modelSnapshots: {
 				...(current.modelSnapshots || {}),
-				[mainModel]: {
-					familyOverride,
-					components: { ...components },
-					backend: current.backend,
-					refImagePreset: current.refImagePreset,
-					vaeFormat: current.vaeFormat || "",
-					extraArgs: current.extraArgs,
-					offloadCpu: current.offloadCpu,
-					quantType: current.quantType,
-					maxVram: current.maxVram || "",
-					maxQueueSize: current.maxQueueSize,
-				},
+				[mainModel]: buildSnapshot(),
 			},
 		}));
-	};
+		// 只依赖这三者：settings 本身每帧变化（后端/端口等），不必跟随。
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [mainModel, components, familyOverride]);
 
 	// 端口输入允许中途处于空/越界状态，落到启动与展示时统一夹回合法区间。
 	const sdPort = normalizeSdPort(settings.sdPort);
@@ -346,6 +391,13 @@ export function Dashboard() {
 		}
 		if (missingRequirements.length > 0) {
 			toast("缺少必需配置: " + missingRequirements.join("、"), true);
+			return;
+		}
+		// --max-vram 自由文本预校验：非法 spec 会让 sd-server 启动即退，
+		// 在这里给出可读错误而不是事后翻日志（对抗性审查 A3）。
+		const maxVramError = validateMaxVramSpec(settings.maxVram || "");
+		if (maxVramError) {
+			toast("显存预算（--max-vram）格式无效：" + maxVramError, true);
 			return;
 		}
 		if (serverStatus?.reachable) {
@@ -437,6 +489,14 @@ export function Dashboard() {
 
 	const running = serverStatus?.running ?? false;
 	const external = serverStatus?.external ?? false;
+	// 停止服务器 = 卸载模型：进行中/排队中的任务会随服务器内存一起蒸发，
+	// 存在活动任务时必须两段式确认（对抗性审查 B3）。
+	const activeJobsCount = jobs.filter(
+		(job) =>
+			job.status === "queued" ||
+			job.status === "generating" ||
+			job.status === "unknown",
+	).length;
 	// 安全灯 orb 的四种活法:灭(未运行)/闪烁(启动中)/长明(就绪)/警示(失败)
 	const orbState = running
 		? serverStatus?.phase === "failed"
@@ -647,9 +707,16 @@ export function Dashboard() {
 							)}
 						</button>
 						{running && !external && (
-							<button className="btn btn-danger" onClick={stopServer}>
-								{IC.power} 停止
-							</button>
+							<TwoTapButton
+								className="btn btn-danger"
+								label="停止服务器"
+								armedLabel={`确认停止（${activeJobsCount} 个任务将丢失）`}
+								armedTitle="停止服务器会卸载模型并丢失进行中的任务，再次点击确认"
+								needsConfirm={activeJobsCount > 0}
+								onConfirm={() => void stopServer()}
+								idle={<>{IC.power} 停止</>}
+								armed="确认?"
+							/>
 						)}
 					</div>
 				</div>

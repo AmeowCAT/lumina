@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import { DEFAULT_SD_PORT, formatError } from "../../lib/utils";
+import { TwoTapButton } from "./TwoTapButton";
 
 /**
  * 底部可折叠的服务器日志面板。sd-server 的 stdout/stderr 由后端逐行捕获、
@@ -13,11 +14,18 @@ export function LogPanel() {
   const clearLogs = useStore((s) => s.clearLogs);
   const toast = useStore((s) => s.toast);
   const serverStatus = useStore((s) => s.serverStatus);
+  const jobs = useStore((s) => s.jobs);
   const [open, setOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyId = useId();
   const external = serverStatus?.external ?? false;
+  // 停止服务器 = 卸载模型：进行中/排队中的任务会随服务器内存一起蒸发，
+  // 存在活动任务时必须两段式确认（对抗性审查 B3）。
+  const activeCount = jobs.filter(
+    (j) =>
+      j.status === "queued" || j.status === "generating" || j.status === "unknown"
+  ).length;
 
   useEffect(() => {
     if (open && bodyRef.current) {
@@ -76,14 +84,19 @@ export function LogPanel() {
               清空
             </button>
             {!external && (
-              <button
+              <TwoTapButton
                 className="log-stop"
-                aria-label="停止服务器"
-                onClick={onStop}
+                label="停止服务器"
+                armedLabel={`确认停止（${activeCount} 个任务将丢失）`}
+                armedTitle="停止服务器会卸载模型并丢失进行中的任务，再次点击确认"
+                needsConfirm={activeCount > 0}
+                onConfirm={() => {
+                  if (!stopping) void onStop();
+                }}
                 disabled={stopping}
-              >
-                {stopping ? "停止中…" : "停止服务"}
-              </button>
+                idle={stopping ? "停止中…" : "停止服务"}
+                armed="确认?"
+              />
             )}
           </>
         )}

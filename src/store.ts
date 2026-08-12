@@ -91,6 +91,8 @@ interface StoreState {
   lastProgress: boolean;
   appendLog: (text: string) => void;
   updateProgress: (text: string) => void;
+  /** 按帧批量落日志：App 级聚合高频 server-log 事件后一次写入。 */
+  flushLogs: (lines: string[], progress: string | null) => void;
   clearLogs: () => void;
 
   // 生成进度（解析 stdout 的 step X/Y 行）
@@ -102,6 +104,35 @@ interface StoreState {
 }
 
 let toastSeq = 0;
+
+/** 解析 "step X/Y" 进度行；Y>0 时返回 (step, total)，否则 null。 */
+function parseStepProgress(text: string): { step: number; total: number } | null {
+  const m = text.match(/step\s+(\d+)\s*\/\s*(\d+)/i);
+  if (!m) return null;
+  const step = parseInt(m[1]);
+  const total = parseInt(m[2]);
+  if (!(total > 0)) return null;
+  return { step, total };
+}
+
+/** 进度行合并：若上一行也是进度行（\r 原地刷新）则覆盖，否则追加。 */
+function mergeProgressLine(
+  logs: string[],
+  lastProgress: boolean,
+  text: string
+): { logs: string[]; lastProgress: boolean } {
+  if (lastProgress && logs.length > 0) {
+    const next = logs.slice();
+    next[next.length - 1] = text;
+    return { logs: next, lastProgress: true };
+  }
+  return { logs: [...logs, text], lastProgress: true };
+}
+
+/** 日志数组封顶：到 2000 条裁到 1500，避免无限增长。 */
+function capLogs(logs: string[]): string[] {
+  return logs.length >= 2000 ? logs.slice(-1500) : logs;
+}
 
 export const useStore = create<StoreState>((set, get) => ({
   toasts: [],
@@ -156,10 +187,16 @@ export const useStore = create<StoreState>((set, get) => ({
       const n: GenParams = { ...s.params };
       let cur = n as unknown as Record<string, unknown>;
       for (let i = 0; i < k.length - 1; i++) {
-        if (cur[k[i]] == null || typeof cur[k[i]] !== "object" || Array.isArray(cur[k[i]])) {
+        const existing = cur[k[i]];
+        if (existing == null || typeof existing !== "object") {
+          // 缺失的中间节点补空对象；已存在的对象/数组都浅拷贝后继续下行。
+          // 旧实现对数组也替换成 {}，经数组路径（如 lora.0.multiplier）
+          // 更新会静默破坏数据（对抗性审查 B6）。
           cur[k[i]] = {};
+        } else if (Array.isArray(existing)) {
+          cur[k[i]] = [...existing];
         } else {
-          cur[k[i]] = { ...(cur[k[i]] as Record<string, unknown>) };
+          cur[k[i]] = { ...(existing as Record<string, unknown>) };
         }
         cur = cur[k[i]] as Record<string, unknown>;
       }
@@ -203,36 +240,62 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
   updateProgress: (text) =>
     set((s) => {
-      // 解析 "step X/Y" 格式用于进度条；Y>0 时设置进度。
-      const m = text.match(/step\s+(\d+)\s*\/\s*(\d+)/i);
-      if (m) {
-        const step = parseInt(m[1]);
-        const total = parseInt(m[2]);
-        if (total > 0) {
+      const parsed = parseStepProgress(text);
+      if (parsed) {
+        const now = Date.now();
+        const startedAt =
+          parsed.step <= 1 ||
+          s.progressTotal !== parsed.total ||
+          s.progressStartedAt <= 0
+            ? now
+            : s.progressStartedAt;
+        const merged = mergeProgressLine(s.logs, s.lastProgress, text);
+        return {
+          logs: capLogs(merged.logs),
+          lastProgress: merged.lastProgress,
+          progressStep: parsed.step,
+          progressTotal: parsed.total,
+          progressStartedAt: startedAt,
+        };
+      }
+      const merged = mergeProgressLine(s.logs, s.lastProgress, text);
+      return { logs: capLogs(merged.logs), lastProgress: merged.lastProgress };
+    }),
+  flushLogs: (lines, progress) =>
+    set((s) => {
+      let logs = s.logs.slice();
+      let lastProgress = s.lastProgress;
+      for (const text of lines) {
+        logs.push(text);
+        lastProgress = false;
+      }
+      let progressStep = s.progressStep;
+      let progressTotal = s.progressTotal;
+      let progressStartedAt = s.progressStartedAt;
+      if (progress != null && progress.trim() !== "") {
+        const parsed = parseStepProgress(progress);
+        if (parsed) {
           const now = Date.now();
-          const startedAt =
-            step <= 1 || s.progressTotal !== total || s.progressStartedAt <= 0
+          progressStartedAt =
+            parsed.step <= 1 ||
+            progressTotal !== parsed.total ||
+            progressStartedAt <= 0
               ? now
-              : s.progressStartedAt;
-          const logs = s.logs.slice();
-          if (s.lastProgress && logs.length > 0) logs[logs.length - 1] = text;
-          else logs.push(text);
-          return {
-            logs: logs.length >= 2000 ? logs.slice(-1500) : logs,
-            lastProgress: true,
-            progressStep: step,
-            progressTotal: total,
-            progressStartedAt: startedAt,
-          };
+              : progressStartedAt;
+          progressStep = parsed.step;
+          progressTotal = parsed.total;
         }
+        const merged = mergeProgressLine(logs, lastProgress, progress);
+        logs = merged.logs;
+        lastProgress = merged.lastProgress;
       }
-      // 进度条（\r 刷新）：若上一条也是进度行则覆盖它，否则另起新行。
-      if (s.lastProgress && s.logs.length > 0) {
-        const logs = s.logs.slice();
-        logs[logs.length - 1] = text;
-        return { logs };
-      }
-      return { logs: [...s.logs, text], lastProgress: true };
+      return {
+        logs: capLogs(logs),
+        lastProgress,
+        progressStep,
+        progressTotal,
+        progressStartedAt,
+      };
     }),
   clearLogs: () => set({ logs: [], lastProgress: false }),
 
@@ -253,7 +316,10 @@ try {
 } catch {
   /* ignore */
 }
-useStore.subscribe((s) => {
+// 只在该字段真正变化时写盘：旧实现订阅全局状态、每次变化（含每敲一个
+// 字符、每条日志）都同步 setItem 同一个值（对抗性审查 B6）。
+useStore.subscribe((s, prev) => {
+  if (prev && s.seedRandom === prev.seedRandom) return;
   try {
     localStorage.setItem(SEED_KEY, s.seedRandom ? "true" : "false");
   } catch {

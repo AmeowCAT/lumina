@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use std::env;
+use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -67,6 +68,9 @@ pub struct ServerManager {
     port: Option<u16>,
     last_error: Option<String>,
     started_at: Option<u64>,
+    /// Windows: KILL_ON_JOB_CLOSE 作业对象，随 child 一起创建/清理。
+    #[cfg(windows)]
+    job: Option<JobGuard>,
 }
 
 fn format_num(n: &serde_json::Number) -> String {
@@ -110,21 +114,54 @@ fn split_args(input: &str) -> Result<Vec<String>> {
     Ok(tokens)
 }
 
+/// sd-server 参数中"值是文件路径"的参数名（与上游 common.cpp 的 ArgOptions
+/// 对齐）。只有这些键（以及 -dir/_dir 结尾的目录键）才做存在性校验——
+/// 旧的启发式（值含 '/'、'\\' 或带扩展名）会把 `1.5` 之类的数值误判为路径
+/// 并要求其存在（对抗性审查 C）。
+const PATH_VALUE_ARGS: &[&str] = &[
+    "model",
+    "diffusion-model",
+    "high-noise-diffusion-model",
+    "uncond-diffusion-model",
+    "vae",
+    "taesd",
+    "clip_l",
+    "clip_g",
+    "clip_vision",
+    "t5xxl",
+    "llm",
+    "llm_vision",
+    "audio-vae",
+    "embeddings-connectors",
+    "control-net",
+    "photo-maker",
+    "pulid-weights",
+    "motion-module",
+    "ip-adapter",
+    "lora-model-dir",
+    "embd-dir",
+    "hires-upscalers-dir",
+];
+
+fn is_path_arg(key: &str) -> bool {
+    key.ends_with("-dir") || key.ends_with("_dir") || PATH_VALUE_ARGS.contains(&key)
+}
+
 fn validate_path_arg(key: &str, value: &str) -> Result<()> {
+    let is_dir_arg = key.ends_with("-dir") || key.ends_with("_dir");
+    if !is_path_arg(key) {
+        return Ok(());
+    }
     let path = Path::new(value);
-    let looks_like_path = key.ends_with("-dir")
-        || key.ends_with("_dir")
-        || path.is_absolute()
-        || value.contains('/')
-        || value.contains('\\')
-        || path.extension().is_some();
-    if !looks_like_path {
+    // 相对路径以 sd-server 的工作目录（exe 所在目录）为基准解析，GUI 以自身
+    // CWD 检查存在性会误报（基准不一致）——相对路径放行，只校验绝对路径。
+    if !path.is_absolute() {
         return Ok(());
     }
     if !path.exists() {
         anyhow::bail!("--{} path does not exist: {}", key, value);
     }
-    if (key.ends_with("-dir") || key.ends_with("_dir")) && !path.is_dir() {
+    if is_dir_arg && !path.is_dir() {
         anyhow::bail!("--{} expects a directory: {}", key, value);
     }
     Ok(())
@@ -141,18 +178,37 @@ fn build_args(args: &serde_json::Value, port: u16) -> Result<Vec<String>> {
         for (key, val) in obj {
             if key == "extra_args" {
                 if let Some(s) = val.as_str() {
-                    for t in split_args(s)? {
+                    let tokens = split_args(s)?;
+                    for (i, t) in tokens.iter().enumerate() {
                         // The launcher owns the listen address: it proxies every
                         // API call to `port`, so an override buried in the extra
                         // args would silently point sd-server somewhere the GUI
-                        // never talks to.
-                        if t == "--listen-port" || t == "--listen-ip" {
+                        // never talks to.  Also reject the `--flag=value` form —
+                        // a literal comparison alone could be bypassed.
+                        let listen_flag = t == "--listen-port"
+                            || t == "--listen-ip"
+                            || t.starts_with("--listen-port=")
+                            || t.starts_with("--listen-ip=");
+                        if listen_flag {
                             anyhow::bail!(
                                 "附加启动参数不能包含 {}，请在控制台的“启动端口”中修改",
                                 t
                             );
                         }
-                        out.push(t);
+                        // 路径类参数与结构化参数同样做存在性校验：拼错的路径
+                        // 会让 sd-server 启动即退，提前拦截并给出可读错误
+                        // （对抗性审查 A3）。
+                        if let Some(key_name) = t.strip_prefix("--") {
+                            if let Some((k, inline)) = key_name.split_once('=') {
+                                validate_path_arg(k, inline)?;
+                            } else if is_path_arg(key_name)
+                                && i + 1 < tokens.len()
+                                && !tokens[i + 1].starts_with("--")
+                            {
+                                validate_path_arg(key_name, &tokens[i + 1])?;
+                            }
+                        }
+                        out.push(t.clone());
                     }
                 }
                 continue;
@@ -234,6 +290,28 @@ fn resolve_executable(exe_path: &str) -> Result<PathBuf> {
     } else {
         let path = PathBuf::from(input);
         if path.is_file() {
+            // 显式指向文件时要求文件名是 sd-server（或其变体，如
+            // sd-server-cuda.exe）：settings.json 的 exe_dir 被完全信任，
+            // 防止把任意可执行文件当 sd-server 启动（对抗性审查 C）。
+            // 允许 sd-server 前缀，避免破坏"重命名二进制"的老配置
+            // （与 backend 预探测回归同类的教训：校验宁可宽、不可堵）。
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            let lower = name.to_ascii_lowercase();
+            let ok = if cfg!(windows) {
+                lower.starts_with("sd-server")
+            } else {
+                name.starts_with("sd-server")
+            };
+            if !ok {
+                anyhow::bail!(
+                    "{} 不是 sd-server（文件名为 {}，应以 sd-server 开头）",
+                    path.display(),
+                    name
+                );
+            }
             path
         } else if path.is_dir() {
             path.join(binary_name)
@@ -266,6 +344,217 @@ fn now_epoch_seconds() -> u64 {
         .as_secs()
 }
 
+/// 收窄 embd-dir：上游 `build_embedding_map`（common.cpp）会把 embd-dir 下所有
+/// `.gguf/.safetensors/.pt/.ckpt` 文件的 stem 注册为 embedding 键。指向整个
+/// 模型目录时，模型权重文件本身也会被注册进去（对抗性审查 A2）。仅在专用
+/// `embeddings/` 子目录**实际包含 embedding 类文件**时才改指子目录——避免
+/// 破坏扁平布局用户恰好有同名无关目录的老配置（重审教训：宁可宽、不可堵）。
+fn refine_component_dirs(args: &mut serde_json::Value) {
+    let Some(obj) = args.as_object_mut() else { return };
+    let Some(embd) = obj.get("embd-dir").and_then(|v| v.as_str()) else { return };
+    let base = Path::new(embd);
+    if !base.is_dir() {
+        return;
+    }
+    for candidate in ["embeddings", "embedding"] {
+        let dir = base.join(candidate);
+        if !dir.is_dir() {
+            continue;
+        }
+        let has_embedding_files = fs::read_dir(&dir)
+            .map(|entries| {
+                entries.flatten().any(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| {
+                            matches!(
+                                ext.to_ascii_lowercase().as_str(),
+                                "gguf" | "safetensors" | "pt" | "ckpt"
+                            )
+                        })
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        if has_embedding_files {
+            obj.insert(
+                "embd-dir".into(),
+                serde_json::Value::String(dir.to_string_lossy().into_owned()),
+            );
+        }
+        break;
+    }
+}
+
+/// 探测 sd-server 编译进了哪些 ggml 后端（`--list-devices` 打印
+/// "name<TAB>description" 后退出 0）。返回 None 表示二进制不支持该参数
+/// （旧版本）或探测失败——此时跳过校验，维持旧行为。
+fn probe_backend_devices(exe: &Path) -> Option<String> {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("--list-devices");
+    cmd.current_dir(exe.parent().unwrap_or_else(|| Path::new(".")));
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// 从 backend spec 提取需要校验的设备名 token。上游
+/// `sd_parse_backend_assignment`（ggml_extend_backend.cpp）的格式：
+/// 逗号分段，`key=value` 中 **value 是后端名**（key 是模块名
+/// all/default/*/te/clip/llm/...），无 `=` 的段本身就是后端名。
+/// 只校验 value / 裸 token；key 侧的非法模块名由上游启动时报出。
+fn backend_spec_tokens(spec: &str) -> Vec<String> {
+    spec.split(',')
+        .filter_map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                return None;
+            }
+            Some(match part.split_once('=') {
+                Some((_, value)) => value.trim().to_string(),
+                None => part.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// 不经设备列表校验的 token：通用 token（上游 is_default_backend_token /
+/// "gpu"）以及设备名不含 registry 名的后端（Metal/BLAS）。这些交给上游
+/// 解析，探测只拦"明显不存在的设备"（对抗性审查 A3）。
+const UNPROBABLE_BACKEND_TOKENS: &[&str] =
+    &["", "default", "auto", "gpu", "cpu", "metal", "blas"];
+
+/// spec 里是否存在需要探测的设备 token。
+fn backend_spec_needs_probe(spec: &str) -> bool {
+    backend_spec_tokens(spec).iter().any(|token| {
+        !UNPROBABLE_BACKEND_TOKENS.contains(&token.to_ascii_lowercase().as_str())
+    })
+}
+
+/// 模拟上游 sd_backend_resolve_name 的宽松匹配（不区分大小写、token 为
+/// 设备名前缀；反向前缀一并接受以容忍设备名差异）。复合 spec
+/// （`all=cuda0,te=cpu`）逐 value 校验，未命中的 token 汇总报错。
+fn find_backend_error(spec: &str, devices_output: &str) -> Option<String> {
+    let names: Vec<String> = devices_output
+        .lines()
+        .filter_map(|line| line.split('\t').next())
+        .map(|n| n.trim().to_ascii_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
+    let mut missing: Vec<String> = Vec::new();
+    for raw in backend_spec_tokens(spec) {
+        let token = raw.to_ascii_lowercase();
+        if token.is_empty() || UNPROBABLE_BACKEND_TOKENS.contains(&token.as_str()) {
+            continue;
+        }
+        let matched = names
+            .iter()
+            .any(|name| name == &token || name.starts_with(&token) || token.starts_with(name));
+        if !matched {
+            missing.push(raw);
+        }
+    }
+    if missing.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "backend 设备 {} 不在已编译的后端设备中（可用：{}）；请改用已编译的后端或重新编译 sd-server",
+            missing.join(", "),
+            if names.is_empty() { "无".into() } else { names.join(", ") }
+        ))
+    }
+}
+
+/// Windows Job Object：把 sd-server 挂进带 KILL_ON_JOB_CLOSE 的作业对象。
+/// GUI 正常退出前会主动 kill；若 GUI 崩溃/被任务管理器强杀/断电，作业句柄
+/// 随进程关闭，OS 兜底终止 sd-server——否则孤儿进程会长期占用显存
+/// （对抗性审查 C）。挂接失败（如父进程已在受限作业中）时静默降级。
+#[cfg(windows)]
+struct JobGuard {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(windows)]
+impl JobGuard {
+    /// 用 pid 经 OpenProcess 取进程句柄（tokio Child 不暴露 as_raw_handle，
+    /// 而 AssignProcessToJobObject 需要真实句柄）。挂接失败静默降级。
+    fn attach(pid: u32) -> Option<Self> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JobObjectExtendedLimitInformation,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+        };
+        unsafe {
+            let name: Vec<u16> = format!("lumina-sd-server-{}", pid)
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            let job = CreateJobObjectW(std::ptr::null(), name.as_ptr());
+            if job.is_null() {
+                return None;
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) == 0
+            {
+                CloseHandle(job);
+                return None;
+            }
+            let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            if process.is_null() {
+                CloseHandle(job);
+                return None;
+            }
+            let assigned = AssignProcessToJobObject(job, process);
+            CloseHandle(process);
+            if assigned == 0 {
+                CloseHandle(job);
+                return None;
+            }
+            Some(Self { handle: job })
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for JobGuard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        unsafe {
+            CloseHandle(self.handle);
+        }
+    }
+}
+
+// HANDLE 是裸指针（*mut c_void），不自动实现 Send/Sync。JobGuard 只经
+// ServerManager 的 tokio Mutex 访问、Drop 只执行一次 CloseHandle，
+// 跨线程移动/共享是安全的。
+#[cfg(windows)]
+unsafe impl Send for JobGuard {}
+#[cfg(windows)]
+unsafe impl Sync for JobGuard {}
+
 impl ServerManager {
     pub fn new() -> Self {
         Self {
@@ -275,6 +564,8 @@ impl ServerManager {
             port: None,
             last_error: None,
             started_at: None,
+            #[cfg(windows)]
+            job: None,
         }
     }
 
@@ -300,12 +591,19 @@ impl ServerManager {
     }
 
     /// Forget everything tied to a child process that is no longer running.
+    /// On Windows the Job handle is dropped here — if the child is somehow
+    /// still alive (kill issued but not yet reaped), KILL_ON_JOB_CLOSE makes
+    /// the OS finish the job as the handle closes.
     fn clear_child_state(&mut self) {
         self.child = None;
         self.model.clear();
         self.executable.clear();
         self.port = None;
         self.started_at = None;
+        #[cfg(windows)]
+        {
+            self.job = None;
+        }
     }
 
     /// Non-blocking liveness check; reaps the child if it has exited.
@@ -367,8 +665,14 @@ impl ServerManager {
                 return Err(error).context("wait for sd-server termination");
             }
             Err(_) => {
-                self.last_error = Some("timed out waiting for sd-server to stop".into());
-                anyhow::bail!("timed out waiting for sd-server to stop");
+                // start_kill 是 TerminateProcess/SIGKILL，进程不可抗拒；超时
+                // 说明它陷在不可中断的内核态。释放跟踪状态让下次 start 的
+                // 端口检查给出真实原因（"端口被占用"），而不是永远卡在
+                // "停止不下来"（对抗性审查 C）。
+                self.last_error =
+                    Some("timed out waiting for sd-server to stop; termination was forced".into());
+                self.clear_child_state();
+                anyhow::bail!("sd-server 未在 10 秒内退出，已强制终止；如端口仍被占用请稍后重试");
             }
         }
         self.clear_child_state();
@@ -392,7 +696,35 @@ impl ServerManager {
         // Validate the new launch completely before unloading the current model.
         let port = validate_port(port)?;
         let exe = resolve_executable(exe_path)?;
-        let cmd_args = build_args(&args, port)?;
+        let mut args_json = args;
+        refine_component_dirs(&mut args_json);
+        let backend_spec = args_json
+            .get("backend")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_default();
+        let cmd_args = build_args(&args_json, port)?;
+
+        // backend 预探测（对抗性审查 A3）：设备型 token（cuda0/rocm/...）在
+        // 二进制未编译对应后端时会让 sd-server 启动即退。先跑 `--list-devices`
+        // 给出可读错误；复合 spec（all=cuda0,te=cpu）按 value 侧逐 token 校验。
+        // 旧版二进制不支持该参数时（探测返回 None）跳过校验。
+        if backend_spec_needs_probe(&backend_spec) {
+            let exe_for_probe = exe.clone();
+            let probe = tokio::time::timeout(
+                Duration::from_secs(20),
+                tokio::task::spawn_blocking(move || probe_backend_devices(&exe_for_probe)),
+            )
+            .await
+            .ok()
+            .and_then(|join| join.unwrap_or(None));
+            if let Some(output) = probe {
+                if let Some(error) = find_backend_error(&backend_spec, &output) {
+                    anyhow::bail!(error);
+                }
+            }
+        }
+
         self.stop().await?;
 
         // A listener that is not our previous child would make the new process
@@ -440,12 +772,19 @@ impl ServerManager {
         spawn_log_reader(app.clone(), child.stdout.take());
         spawn_log_reader(app.clone(), child.stderr.take());
 
+        #[cfg(windows)]
+        let job = JobGuard::attach(pid);
+
         self.child = Some(child);
         self.model = model_name.to_string();
         self.executable = exe.to_string_lossy().to_string();
         self.port = Some(port);
         self.started_at = Some(now_epoch_seconds());
         self.last_error = None;
+        #[cfg(windows)]
+        {
+            self.job = job;
+        }
 
         // Post-spawn health check: wait a short grace period then verify the
         // process hasn't already exited.  Catches immediate crashes (bad model
@@ -509,6 +848,16 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
+/// 日志文本清洗：剥离 ANSI 序列并移除其余控制字符（保留 \t）。sd-server
+/// 会回显用户输入的 prompt/文件名，其中混入的控制字符（\r、\x1b 之外的
+/// C0 序列）可伪造进度行/日志行（对抗性审查 C）；行拆分后不应再残留 \r。
+fn sanitize_log_text(s: &str) -> String {
+    strip_ansi(s)
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .collect()
+}
+
 // ── Log pipeline ───────────────────────────────────────────────────────
 
 /// Process a single line (terminated by `\n`, or the final flush at EOF) and
@@ -528,7 +877,7 @@ fn emit_line(app: &AppHandle, line: &str) {
         if t.is_empty() {
             continue;
         }
-        let clean = strip_ansi(t);
+        let clean = sanitize_log_text(t);
         if clean.is_empty() {
             continue;
         }
@@ -620,7 +969,7 @@ where
                         if let Some(pos) = pending.rfind('\r') {
                             let after_cr = pending[pos..].trim_start_matches('\r');
                             if !after_cr.is_empty() {
-                                let clean = strip_ansi(after_cr);
+                                let clean = sanitize_log_text(after_cr);
                                 if !clean.is_empty() {
                                     let _ = app.emit(
                                         "server-log",
@@ -704,6 +1053,62 @@ mod tests {
 
         let args = serde_json::json!({ "extra_args": "--listen-ip 0.0.0.0" });
         assert!(build_args(&args, 1234).is_err());
+
+        // `--flag=value` 等价形式同样必须被拦截，不能被字面量比较绕过。
+        let args = serde_json::json!({ "extra_args": "--listen-port=9000" });
+        assert!(build_args(&args, 1234).is_err());
+        let args = serde_json::json!({ "extra_args": "--listen-ip=0.0.0.0" });
+        assert!(build_args(&args, 1234).is_err());
+    }
+
+    #[test]
+    fn build_args_does_not_treat_numeric_values_as_paths() {
+        // 旧启发式会把 1.5 之类带点数值误判为路径并要求其存在。
+        let args = serde_json::json!({ "cfg-scale": 1.5, "eta": 0.5 });
+        let out = build_args(&args, DEFAULT_SD_PORT).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                "--listen-port",
+                "1234",
+                "--listen-ip",
+                "127.0.0.1",
+                "--cfg-scale",
+                "1.5",
+                "--eta",
+                "0.5",
+            ]
+        );
+    }
+
+    #[test]
+    fn sanitize_log_text_strips_controls_but_keeps_tabs_and_text() {
+        assert_eq!(sanitize_log_text("a\tb"), "a\tb");
+        assert_eq!(sanitize_log_text("x\x1b[31mred\x1b[0m"), "xred");
+        assert_eq!(sanitize_log_text("bad\x07bell\x0b"), "badbell");
+        assert_eq!(sanitize_log_text("中文 日志"), "中文 日志");
+    }
+
+    #[test]
+    fn backend_spec_validation_splits_key_value_assignments() {
+        let devices = "CUDA0\tNVIDIA GeForce RTX\nCPU\tGeneric CPU\n";
+        // 复合 spec：只校验 value 侧（cuda0），cpu 是通用 token 跳过。
+        assert!(find_backend_error("all=cuda0,te=cpu", devices).is_none());
+        // value 侧设备不存在时报错，且错误信息包含该 token。
+        let err = find_backend_error("all=cuda9,te=cpu", devices).unwrap();
+        assert!(err.contains("cuda9"));
+        // 裸 token 前缀匹配（rocm → ROCM0）。
+        assert!(find_backend_error("rocm", "ROCM0\tAMD\nCPU\tx\n").is_none());
+        // 多段 spec 中任一 value 未命中即报错。
+        assert!(find_backend_error("cuda0,te=vulkan0", devices).is_some());
+        // 通用/不可探测 token 不拦截。
+        assert!(find_backend_error("gpu", "").is_none());
+        assert!(find_backend_error("all=metal,te=cpu", devices).is_none());
+        // 探测开关：通用 token 无需探测，设备 token 需要。
+        assert!(!backend_spec_needs_probe(""));
+        assert!(!backend_spec_needs_probe("gpu"));
+        assert!(!backend_spec_needs_probe("all=metal,te=cpu"));
+        assert!(backend_spec_needs_probe("all=cuda0,te=cpu"));
     }
 
     #[test]

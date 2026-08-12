@@ -196,6 +196,39 @@ export function inferPidVaeFormat(modelPath: string): string {
   return "";
 }
 
+const MAX_VRAM_DEVICE_RE = /^[A-Za-z0-9_.+-]+$/;
+const MAX_VRAM_NUM_RE = /^-?\d+(\.\d+)?$/;
+
+/** 预校验 --max-vram 原始 spec（上游 ggml_graph_cut 解析失败会让 sd-server
+ * 启动即退，GUI 提前拦截给出可读错误）。返回错误消息或 null。
+ * 合法形态：单值 "6" / "-2"（自动探测保留余量），或逗号分隔的
+ * "设备=数值" 列表（如 "cuda0=6,vulkan0=4"）。 */
+export function validateMaxVramSpec(raw: string): string | null {
+  const spec = raw.trim();
+  if (!spec) return null;
+  if (!spec.includes("=")) {
+    if (!MAX_VRAM_NUM_RE.test(spec)) {
+      return "应为数字（GiB）或负的保留余量，如 6 或 -2";
+    }
+    return null;
+  }
+  const parts = spec.split(",");
+  for (const part of parts) {
+    const p = part.trim();
+    const eq = p.indexOf("=");
+    if (eq <= 0) return `设备分配项格式应为 设备=数值：${p || "（空项）"}`;
+    const device = p.slice(0, eq).trim();
+    const value = p.slice(eq + 1).trim();
+    if (!MAX_VRAM_DEVICE_RE.test(device)) {
+      return `设备名包含非法字符：${device}`;
+    }
+    if (!MAX_VRAM_NUM_RE.test(value)) {
+      return `设备 ${device} 的预算应为数字（GiB），如 ${device}=6`;
+    }
+  }
+  return null;
+}
+
 export function requiredInputLabel(input: RequiredInput): string {
   switch (input) {
     case "ref_images":

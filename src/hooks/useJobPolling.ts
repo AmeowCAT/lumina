@@ -1,15 +1,32 @@
 import { useEffect, useRef } from "react";
 import { api } from "../api";
-import { useStore } from "../store";
+import { useStore, type ResultEntry } from "../store";
 import type { Job } from "../types";
-import { extractApiError, formatError } from "../lib/utils";
+import { extractApiError, formatError, MAX_RESULTS } from "../lib/utils";
 
 const POLL_FAILURE_THRESHOLD = 3;
+/** 单次任务查询的软超时：底层 invoke 无法中断，超时后放弃本轮结果继续
+ * 下一个任务，避免一个挂起的请求把整个轮询停摆（对抗性审查 B3）。
+ * Rust 侧 reqwest 另有 30s 硬超时兜底。 */
+const POLL_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
+  return Promise.race([
+    p,
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), ms)),
+  ]);
+}
+
+/**
+ * 已领过结果的任务 id。模块级单例（而非 hook ref）：轮询逻辑挂在 App 级
+ * 常驻运行（切到控制台也继续轮询/自动保存），GenerationUI 需要访问同一个
+ * 集合来做"删除任务后不再重复收货"的判断。
+ */
+export const processedJobs = new Set<string>();
 
 export function useJobPolling() {
   const pollBusy = useRef(false);
   const jobsRef = useRef(useStore.getState().jobs);
-  const processedJobs = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const unsub = useStore.subscribe((s) => {
@@ -27,12 +44,21 @@ export function useJobPolling() {
       );
       if (!active.length) return;
       pollBusy.current = true;
+      // 服务器重启会让所有陈旧任务同时 404/410——逐条弹 toast 会形成风暴，
+      // 这里聚合成单条提示（对抗性审查 B3）。
+      const expired: string[] = [];
       try {
         for (const job of active) {
           try {
-            const { status, body } = await api.sdcppJob(job.id);
+            const res = await withTimeout(api.sdcppJob(job.id), POLL_TIMEOUT_MS);
+            if (res === "timeout") {
+              recordPollFailure(job.id, "查询超时");
+              continue;
+            }
+            const { status, body } = res;
             const store = useStore.getState();
             if (status === 404 || status === 410) {
+              expired.push(job.id);
               store.setJobs((j) =>
                 j.map((x) =>
                   x.id === job.id
@@ -40,7 +66,6 @@ export function useJobPolling() {
                     : x
                 )
               );
-              store.toast("任务已失效（服务器重启或任务过期）", true);
               continue;
             }
             if (status !== 200) {
@@ -61,12 +86,12 @@ export function useJobPolling() {
                   : x
               )
             );
-            if (d.status === "completed" && d.result && !processedJobs.current.has(d.id)) {
-              processedJobs.current.add(d.id);
+            if (d.status === "completed" && d.result && !processedJobs.has(d.id)) {
+              processedJobs.add(d.id);
               const result = d.result;
               const autoSave = !!store.settings.outputDir;
-              store.setResults((r) => [
-                {
+              store.setResults((r) => {
+                const entry: ResultEntry = {
                   jobId: d.id,
                   mode: d.kind,
                   result,
@@ -74,9 +99,10 @@ export function useJobPolling() {
                   completedAt: Date.now(),
                   config: cfg,
                   saveStatus: autoSave ? "saving" : "not_configured",
-                },
-                ...r,
-              ]);
+                };
+                // 结果内存上限：最新在前，超出丢弃最旧（对抗性审查 B5）。
+                return [entry, ...r].slice(0, MAX_RESULTS);
+              });
               if (autoSave) {
                 void saveResult(result, d.id).then((summary) => {
                   const latest = useStore.getState();
@@ -112,39 +138,19 @@ export function useJobPolling() {
       } finally {
         pollBusy.current = false;
       }
+      if (expired.length > 0) {
+        useStore
+          .getState()
+          .toast(
+            `${expired.length} 个任务已失效（服务器重启或任务过期）`,
+            true
+          );
+      }
     }, 2000);
     return () => clearInterval(iv);
   }, []);
 
-  const retrySave = async (jobId: string) => {
-    const store = useStore.getState();
-    const entry = store.results.find((result) => result.jobId === jobId);
-    if (!entry) return;
-    store.setResults((results) =>
-      results.map((result) =>
-        result.jobId === jobId
-          ? { ...result, saveStatus: "saving", saveError: undefined }
-          : result
-      )
-    );
-    const summary = await saveResult(entry.result, jobId);
-    useStore.getState().setResults((results) =>
-      results.map((result) =>
-        result.jobId === jobId
-          ? {
-              ...result,
-              saveStatus: summary.status,
-              savePaths: summary.paths,
-              saveError: summary.error,
-            }
-          : result
-      )
-    );
-    if (summary.status === "saved") useStore.getState().toast("自动保存重试成功");
-    else useStore.getState().toast(`保存重试失败：${summary.error}`, true);
-  };
-
-  return { processedJobs, retrySave };
+  return { processedJobs };
 }
 
 function recordPollFailure(id: string, message: string) {
@@ -214,4 +220,34 @@ export async function saveResult(
     paths,
     error: errors.join("；") || "没有可保存的输出数据",
   };
+}
+
+/** 自动保存重试（ResultsGrid 的"重试保存"按钮）。模块级函数，供
+ * GenerationUI 经稳定引用转发给 memo 子组件。 */
+export async function retrySave(jobId: string): Promise<void> {
+  const store = useStore.getState();
+  const entry = store.results.find((result) => result.jobId === jobId);
+  if (!entry) return;
+  store.setResults((results) =>
+    results.map((result) =>
+      result.jobId === jobId
+        ? { ...result, saveStatus: "saving", saveError: undefined }
+        : result
+    )
+  );
+  const summary = await saveResult(entry.result, jobId);
+  useStore.getState().setResults((results) =>
+    results.map((result) =>
+      result.jobId === jobId
+        ? {
+            ...result,
+            saveStatus: summary.status,
+            savePaths: summary.paths,
+            saveError: summary.error,
+          }
+        : result
+    )
+  );
+  if (summary.status === "saved") useStore.getState().toast("自动保存重试成功");
+  else useStore.getState().toast(`保存重试失败：${summary.error}`, true);
 }

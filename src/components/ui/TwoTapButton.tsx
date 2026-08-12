@@ -16,6 +16,7 @@ export function TwoTapButton({
   idle,
   armed,
   timeout = 3500,
+  disabled = false,
 }: {
   label: string;
   armedLabel: string;
@@ -26,6 +27,7 @@ export function TwoTapButton({
   idle: ReactNode;
   armed: ReactNode;
   timeout?: number;
+  disabled?: boolean;
 }) {
   const [isArmed, setIsArmed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -43,6 +45,7 @@ export function TwoTapButton({
       className={cn(className, isArmed && "armed")}
       aria-label={isArmed ? armedLabel : label}
       title={isArmed ? (armedTitle ?? armedLabel) : label}
+      disabled={disabled}
       onClick={() => {
         if (!needsConfirm || isArmed) {
           disarm();

@@ -86,6 +86,39 @@ fn sanitize_component(value: &str) -> Option<String> {
     Some(if reserved { format!("_{}", cleaned) } else { cleaned })
 }
 
+/// 以 `create_new` 写入，同名已存在时追加 `_1`/`_2`…序号而不是截断覆盖：
+/// 用户输出目录里已有的同名文件不能被静默覆盖（对抗性审查 C）。返回实际
+/// 写入的路径。
+fn write_with_suffix(dir: &std::path::Path, name: &str, ext: &str, data: &[u8]) -> Result<std::path::PathBuf> {
+    use std::io::Write;
+    for i in 0..100 {
+        let candidate = if i == 0 {
+            format!("{}.{}", name, ext)
+        } else {
+            format!("{}_{}.{}", name, i, ext)
+        };
+        let path = dir.join(&candidate);
+        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(data)?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    // 同名文件已存在 100 个的极端情况：回落时间戳名做最后一次尝试，仍冲突
+    // 则报错（宁可失败也不覆盖未知文件）。
+    let fallback = format!("sdcpp_{}_{}.{}", chrono_like_ts(), name, ext);
+    let path = dir.join(&fallback);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    file.write_all(data)?;
+    Ok(path)
+}
+
 /// Decodes a base64 payload (with optional `data:...;base64,` prefix) and writes
 /// it to `<dir>/<name>.<ext>`. sd-server itself never persists outputs, so this
 /// is the launcher's responsibility — mirrors the webui `/api/save` endpoint.
@@ -105,8 +138,7 @@ pub fn save_output(b64: &str, ext: &str, name: &str, dir: &str) -> Result<String
     let ext = sanitize_component(ext).unwrap_or_else(|| "png".into());
     let name = sanitize_component(name)
         .unwrap_or_else(|| format!("sdcpp_{}", chrono_like_ts()));
-    let path = dir_path.join(format!("{}.{}", name, ext));
-    fs::write(&path, data)?;
+    let path = write_with_suffix(&dir_path, &name, &ext, &data)?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -258,6 +290,25 @@ mod tests {
         );
         assert!(written_path.is_file());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_output_does_not_overwrite_an_existing_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-dup-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        // 1x1 transparent PNG.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+        let first = save_output(png, "png", "dup", dir.to_str().unwrap()).unwrap();
+        let second = save_output(png, "png", "dup", dir.to_str().unwrap()).unwrap();
+        assert_ne!(first, second, "existing file must not be overwritten");
+        assert!(second.ends_with("dup_1.png"), "second write got {}", second);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

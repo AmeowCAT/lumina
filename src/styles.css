@@ -1038,7 +1038,10 @@
     height: 190px; overflow-y: auto; padding: 6px 12px;
     background: var(--color-well); border-top: 1px solid var(--color-line);
   }
-  .log-line { font-size: 10.5px; line-height: 1.55; color: var(--color-fg2); white-space: pre-wrap; word-break: break-word }
+  .log-line { font-size: 10.5px; line-height: 1.55; color: var(--color-fg2); white-space: pre-wrap; word-break: break-word;
+    /* 展开时最多渲染 2000 行：视口外的行跳过布局/绘制，高频日志流下避免
+       大面积 DOM diff（对抗性审查）。WebView2/Chromium 支持。 */
+    content-visibility: auto; contain-intrinsic-size: auto 17px; }
   .log-empty { font-size: 10.5px; color: var(--color-muted); padding: 8px 0 }
 
   /* ── Dashboard / 发射检查单:左仪表栏(状态+GO检查+启动坞) + 右配置流 ── */

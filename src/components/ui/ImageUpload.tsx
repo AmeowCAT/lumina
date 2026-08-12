@@ -17,6 +17,18 @@ function processFile(
   });
 }
 
+// 同屏可能同时挂载多个 ImageUpload（初始图/蒙版/Control/IP-Adapter/结束帧）。
+// 若每个实例各自注册 document 级 paste 监听，一次 Ctrl+V 会命中全部监听器，
+// 同一张图被无感写入所有槽位（对抗性审查 B1）。这里改为"最后交互的实例"
+// 独占粘贴：模块级记录最后指针进入/聚焦的实例；未交互过则回落到第一个
+// 挂载的实例（初始图），保持单槽位时的旧行为。
+let lastActiveUploadId: string | null = null;
+let firstUploadId: string | null = null;
+
+function pasteTarget(): string | null {
+  return lastActiveUploadId ?? firstUploadId;
+}
+
 export function ImageUpload({
   label,
   value,
@@ -49,9 +61,20 @@ export function ImageUpload({
     [onChange, onSizeDetected]
   );
 
-  // 全局 Ctrl+V 粘贴图片（仅在焦点不在文本输入时触发）
+  // 挂载顺序即注册顺序：第一个挂载的实例成为粘贴兜底目标（初始图槽位）。
+  useEffect(() => {
+    if (!firstUploadId) firstUploadId = inputId;
+    return () => {
+      if (firstUploadId === inputId) firstUploadId = null;
+      if (lastActiveUploadId === inputId) lastActiveUploadId = null;
+    };
+  }, [inputId]);
+
+  // 全局 Ctrl+V 粘贴图片（仅在焦点不在文本输入时触发）。多实例同屏时只有
+  // "最后交互的实例"（见 pasteTarget）处理本次粘贴，避免一图写入全部槽位。
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      if (pasteTarget() !== inputId) return;
       const el = document.activeElement;
       const tag = el?.tagName?.toLowerCase();
       if (tag === "input" || tag === "textarea" || (el as HTMLElement)?.isContentEditable) return;
@@ -70,10 +93,18 @@ export function ImageUpload({
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, []);
+  }, [inputId]);
 
   return (
-    <div className="form-row">
+    <div
+      className="form-row"
+      onPointerEnter={() => {
+        lastActiveUploadId = inputId;
+      }}
+      onFocusCapture={() => {
+        lastActiveUploadId = inputId;
+      }}
+    >
       <div id={labelId} className="form-label">
         {label}
       </div>

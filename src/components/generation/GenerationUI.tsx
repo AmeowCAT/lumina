@@ -10,12 +10,14 @@ import {
   scaleSize,
 } from "../../config/families";
 import {
+  b64ToDataUrl,
   buildRequestBody,
   deepClone,
   deepMerge,
   extractApiError,
   formatError,
   LINGBOT_PROMPT_TEMPLATE,
+  MAX_JOBS,
   sdcppMetadataToGenParams,
   validateLingbotPrompt,
 } from "../../lib/utils";
@@ -40,7 +42,7 @@ import { LoraPanel } from "./panels/LoraPanel";
 import { HiresPanel } from "./panels/HiresPanel";
 import { OutputPanel } from "./panels/OutputPanel";
 import { useBlobUrlCache } from "../../hooks/useBlobUrlCache";
-import { useJobPolling } from "../../hooks/useJobPolling";
+import { processedJobs, retrySave } from "../../hooks/useJobPolling";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 
 // 引擎 seed 是 int64；取 JS 安全整数上限 2^53-1，覆盖完整的 64 位种子空间。
@@ -103,6 +105,9 @@ export function GenerationUI() {
   const setDashboardOpen = useStore((s) => s.setDashboardOpen);
 
   const [submitting, setSubmitting] = useState(false);
+  // 同步锁：setState 生效要等一次渲染，键盘连发（Ctrl+Enter 按住重复触发）
+  // 与双击可能在同帧内两次进入 handleGenerate；ref 在首次 await 前同步上锁。
+  const submittingRef = useRef(false);
   const [lightboxItem, setLightboxItem] = useState<LightboxItem | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<"results" | "history">("results");
   const [queueOpen, setQueueOpen] = useState(false);
@@ -119,14 +124,11 @@ export function GenerationUI() {
   const closeLightbox = useCallback(() => setLightboxItem(null), []);
 
   const blobCache = useBlobUrlCache();
-  const polling = useJobPolling();
   // hooks 返回的函数身份随每次渲染变化，直接传给 memo 子组件会让 memo 失效
   // （这是旧版整树重渲染的根源之一）。用 ref 转发包出身份稳定的回调,
   // 调用时仍指向最新闭包,行为完全等价。
   const blobRef = useRef(blobCache);
   blobRef.current = blobCache;
-  const pollingRef = useRef(polling);
-  pollingRef.current = polling;
   const getVideoUrl = useCallback(
     (jobId: string, b64: string, mime: string) =>
       blobRef.current.getVideoUrl(jobId, b64, mime),
@@ -136,11 +138,12 @@ export function GenerationUI() {
     (b64: string, fmt: string) => blobRef.current.getImageUrl(b64, fmt),
     []
   );
-  const retrySave = useCallback(
-    (jobId: string) => pollingRef.current.retrySave(jobId),
+  // 轮询已上移至 App 级常驻（切到控制台也继续收货/自动保存）；这里的
+  // retrySave 是模块级函数，经稳定身份转发保持 memo 子组件 props 稳定。
+  const retrySaveStable = useCallback(
+    (jobId: string) => void retrySave(jobId),
     []
   );
-  const processedJobs = polling.processedJobs;
   const imageSnapshots = useRef<Record<GenMode, GenImages>>({
     img_gen: {
       initImage: null,
@@ -295,7 +298,7 @@ export function GenerationUI() {
 
   const handleGenerate = useCallback(async () => {
     if (!caps || !params) return;
-    if (submitting) return;
+    if (submittingRef.current) return;
     if (family === "lingbot-video") {
       const promptError = validateLingbotPrompt(params.prompt || "");
       if (promptError) {
@@ -322,6 +325,9 @@ export function GenerationUI() {
       toast("请先提供: " + missingInputs.join("、"), true);
       return;
     }
+    // 锁必须在所有早退检查之后上：否则"缺少输入"这类 return 会让锁
+    // 永久保持 true，后续生成全部静默失效（重审抓出的 bug）。
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       let activeParams = params;
@@ -342,24 +348,26 @@ export function GenerationUI() {
       const body = buildRequestBody(mode, activeParams, images);
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
       if (status === 202) {
-        setJobs((j) => [
-          {
-            ...(respBody as Job),
-            config: {
-              mode,
-              params: deepClone(activeParams),
-              // 图片输入一并快照（字符串引用共享，无额外内存拷贝），
-              // "应用此配置"才能完整复现 img2img/inpaint 任务。
-              // 两个数组必须拷贝，否则后续增删会改写已提交任务的快照。
-              images: {
-                ...images,
-                refImages: [...images.refImages],
-                controlFrames: [...images.controlFrames],
+        setJobs((j) =>
+          [
+            {
+              ...(respBody as Job),
+              config: {
+                mode,
+                params: deepClone(activeParams),
+                // 图片输入一并快照（字符串引用共享，无额外内存拷贝），
+                // "应用此配置"才能完整复现 img2img/inpaint 任务。
+                // 两个数组必须拷贝，否则后续增删会改写已提交任务的快照。
+                images: {
+                  ...images,
+                  refImages: [...images.refImages],
+                  controlFrames: [...images.controlFrames],
+                },
               },
             },
-          },
-          ...j,
-        ]);
+            ...j,
+          ].slice(0, MAX_JOBS)
+        );
         // 提交成功即收起参数 Sheet,把画布让给显影过程。
         setSheetOpen(false);
       } else if (status === 429) {
@@ -370,6 +378,7 @@ export function GenerationUI() {
     } catch (e) {
       toast("网络错误: " + formatError(e), true);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }, [
@@ -403,12 +412,15 @@ export function GenerationUI() {
 
   const resetToDefaults = useCallback(() => {
     if (!caps || !params) return;
-    const base = deepClone(caps.defaults_by_mode[mode]);
+    // 防御：某 mode 在 capabilities 中无默认值时 deepClone(undefined) 会抛
+    // SyntaxError（JSON.parse(undefined)），这里回落空对象（对抗性审查 B6）。
+    const defaults = caps.defaults_by_mode?.[mode];
+    const base = defaults ? deepClone(defaults) : ({} as Partial<GenParams>);
     const cfg = FAMILY_CONFIG[family];
     const recommended = cfg ? familyDefaults(cfg, mode) : undefined;
-    const merged = recommended
-      ? deepMerge(base, deepClone(recommended))
-      : base;
+    const merged = (recommended
+      ? deepMerge(base as GenParams, deepClone(recommended))
+      : base) as GenParams;
     merged.prompt = params.prompt || "";
     merged.negative_prompt = params.negative_prompt || "";
     setParams(merged);
@@ -422,9 +434,20 @@ export function GenerationUI() {
       try {
         const { status, body } = await api.sdcppCancel(id);
         if (status === 200) {
+          // 服务端返回取消后的最新作业对象：排队任务会被置 cancelled，但
+          // 已完成/失败的任务返回 200 且状态不变——按返回体如实更新，而不是
+          // 无条件把本地置为 cancelled（对抗性审查 A4）。
+          const s = (body as { status?: unknown })?.status;
           setJobs((j) =>
-            j.map((x) => (x.id === id ? { ...x, status: "cancelled" } : x))
+            j.map((x) =>
+              x.id === id && typeof s === "string"
+                ? { ...x, status: s as Job["status"] }
+                : x
+            )
           );
+          if (typeof s === "string" && s !== "cancelled") {
+            toast("该任务已结束，无需取消");
+          }
         } else if (status === 409) {
           // sd-server 不支持中断生成中的任务（capabilities.cancel_generating=false）
           toast("任务正在生成，暂不支持中断", true);
@@ -462,7 +485,7 @@ export function GenerationUI() {
         toast("已从列表移除；该任务正在生成，无法中断，将在后台跑完");
       }
       blobRef.current.revokeVideoUrl(id);
-      processedJobs.current.delete(id);
+      processedJobs.delete(id);
       setJobs((j) => j.filter((x) => x.id !== id));
       setResults((r) => {
         const removed = r.find((x) => x.jobId === id);
@@ -472,7 +495,7 @@ export function GenerationUI() {
         return r.filter((x) => x.jobId !== id);
       });
     },
-    [processedJobs, setJobs, setResults, toast]
+    [setJobs, setResults, toast]
   );
 
   // 清空整个队列（取消所有可取消的任务）。
@@ -499,7 +522,21 @@ export function GenerationUI() {
     async (jobId: string, imageIndex?: number) => {
       const job = useStore.getState().jobs.find((j) => j.id === jobId);
       if (job && (job.status === "queued" || job.status === "generating")) {
-        await api.sdcppCancel(jobId).catch(() => {});
+        // 取消失败不能静默吞掉：服务器侧任务会继续占用队列槽位（表现为之后
+        // 莫名的 429"队列已满"）。失败时如实提示，本地记录仍按用户意图删除
+        // （对抗性审查 B4）。
+        try {
+          const cancelled = await api.sdcppCancel(jobId);
+          if (cancelled.status !== 200) {
+            toast(
+              "服务器侧任务未能取消：" +
+                extractApiError(cancelled.body, cancelled.status),
+              true
+            );
+          }
+        } catch (e) {
+          toast("取消失败，任务可能仍在服务器队列中：" + formatError(e), true);
+        }
       }
       let removedWholeEntry = imageIndex == null;
       setResults((entries) =>
@@ -528,11 +565,11 @@ export function GenerationUI() {
       );
       if (removedWholeEntry) {
         blobRef.current.revokeVideoUrl(jobId);
-        processedJobs.current.delete(jobId);
+        processedJobs.delete(jobId);
         setJobs((current) => current.filter((entry) => entry.id !== jobId));
       }
     },
-    [processedJobs, setJobs, setResults]
+    [setJobs, setResults, toast]
   );
 
   // 从某任务/结果记录恢复生成配置：写入 localStorage 后切 mode，
@@ -592,10 +629,16 @@ export function GenerationUI() {
     [toast]
   );
 
-  // 结果图用作 img2img 初始图片。
+  // 结果图用作 img2img 初始图片。src 可以是完整 dataURL（历史画廊读文件后
+  // 构造）或原始 base64（结果网格传入 b64_json + 输出格式）。统一转成
+  // dataURL 存入 initImage：blob: URL 只在本页面生命周期内有效（切回控制台
+  // 即被 revoke），且 sd-server 无法解码 blob: 协议（对抗性审查 B2）。
   const useAsInit = useCallback(
-    (src: string) => {
-      setImage("initImage", src);
+    (src: string, fmt?: string) => {
+      const dataUrl = src.startsWith("data:")
+        ? src
+        : b64ToDataUrl(src, fmt ? `image/${fmt}` : "image/png");
+      setImage("initImage", dataUrl);
       if (mode !== "img_gen") setMode("img_gen");
       toast("已设为初始图片，可在「图片输入」面板中调整");
     },
@@ -616,7 +659,12 @@ export function GenerationUI() {
         setParams({
           width: (merged.width as number) || params.width,
           height: (merged.height as number) || params.height,
-          seed: merged.seed as number,
+          // 元数据缺 seed 时 merged.seed 为 undefined，直接写入会产生 NaN
+          // 并渲染进输入框（对抗性审查 B6）；回落当前值。
+          seed:
+            typeof merged.seed === "number" && Number.isFinite(merged.seed)
+              ? merged.seed
+              : params.seed,
           prompt: (merged.prompt as string) || params.prompt,
           negative_prompt: (merged.negative_prompt as string) || params.negative_prompt,
           sample_params: (merged.sample_params as GenParams["sample_params"]) || params.sample_params,
@@ -680,7 +728,16 @@ export function GenerationUI() {
   const handleSeedEdit = useCallback(
     (raw: string) => {
       setSeedRandom(false);
-      update("seed", raw === "" ? 0 : parseInt(raw) || 0);
+      const trimmed = raw.trim();
+      // parseInt 会把 "1e3" 解析成 1、"123abc" 解析成 123（静默错误种子）；
+      // Number 严格解析，非法输入回落 0，并钳制到安全整数范围。负数保留
+      // （提交时 seed<0 会重新掷随机种子）。
+      const n = Number(trimmed);
+      const seed =
+        trimmed === "" || !Number.isFinite(n)
+          ? 0
+          : Math.max(-MAX_SEED, Math.min(MAX_SEED, Math.trunc(n)));
+      update("seed", seed);
     },
     [setSeedRandom, update]
   );
@@ -819,7 +876,7 @@ export function GenerationUI() {
                 onApplyConfig={applyConfig}
                 onDownload={download}
                 onRemove={removeResult}
-                onRetrySave={retrySave}
+                onRetrySave={retrySaveStable}
                 onUseAsInit={useAsInit}
                 getVideoUrl={getVideoUrl}
                 getImageUrl={getImageUrl}

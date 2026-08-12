@@ -1,6 +1,16 @@
 use anyhow::{anyhow, Result};
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// 元数据解析的单文件大小上限：list_output_files 会对目录里每个 png/webp
+/// 整读解析，数 GB 的文件会直接 OOM（对抗性审查 C）。超限的文件跳过解析
+/// （仍出现在画廊里，只是没有参数徽标）。
+const MAX_METADATA_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// 输出目录遍历上限：visited 防 symlink 环（a→b→a 会无限循环），总量上限
+/// 防止输出目录被塞进巨树时卡死 GUI。
+const MAX_TRAVERSED_DIRS: usize = 200;
+const MAX_LISTED_FILES: usize = 5000;
 
 fn read_be_u32(buf: &[u8], off: usize) -> u32 {
     u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
@@ -39,7 +49,13 @@ fn parse_webp_xmp(xmp: &str) -> Option<serde_json::Value> {
 /// `embed_image_metadata` output). Returns the JSON value, or None if no
 /// metadata was found / the file is not a valid PNG.
 pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
-    let data = fs::read(Path::new(path))?;
+    let path = Path::new(path);
+    if let Ok(metadata) = fs::metadata(path) {
+        if metadata.len() > MAX_METADATA_FILE_BYTES {
+            return Err(anyhow!("file too large for metadata parsing"));
+        }
+    }
+    let data = fs::read(path)?;
     if data.len() < 33 {
         return Err(anyhow!("file too small to be PNG"));
     }
@@ -79,7 +95,13 @@ pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
 /// (`embed_image_metadata` output). Returns the JSON value, or None if no
 /// metadata was found / the file is not a valid WebP.
 pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
-    let data = fs::read(Path::new(path))?;
+    let path = Path::new(path);
+    if let Ok(metadata) = fs::metadata(path) {
+        if metadata.len() > MAX_METADATA_FILE_BYTES {
+            return Err(anyhow!("file too large for metadata parsing"));
+        }
+    }
+    let data = fs::read(path)?;
     if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" {
         return Err(anyhow!("not a valid WebP"));
     }
@@ -110,15 +132,30 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
     }
     let mut entries = Vec::new();
     let mut dirs = vec![base.to_path_buf()];
+    // visited 按规范化路径去重：`is_dir()` 跟随 symlink，a→b→a 的环会导致
+    // 无限循环（对抗性审查 C）。canonicalize 失败时退回原始路径。
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut traversed = 0usize;
     while let Some(d) = dirs.pop() {
+        let key = d.canonicalize().unwrap_or_else(|_| d.clone());
+        if !visited.insert(key) {
+            continue;
+        }
+        traversed += 1;
+        if traversed > MAX_TRAVERSED_DIRS {
+            break;
+        }
         if let Ok(read_dir) = fs::read_dir(&d) {
             for entry in read_dir.flatten() {
                 let p = entry.path();
                 if p.is_dir() {
-                    if dirs.len() < 50 {
+                    if dirs.len() < 50 && traversed < MAX_TRAVERSED_DIRS {
                         dirs.push(p);
                     }
                     continue;
+                }
+                if entries.len() >= MAX_LISTED_FILES {
+                    break;
                 }
                 let ext = p
                     .extension()
@@ -143,7 +180,11 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
                     "modified": modified,
                     "ext": ext,
                 });
-                let parsed = if ext == "png" {
+                // 超大文件跳过元数据解析（parse_* 内同样有上限兜底，这里
+                // 提前判断省一次整读）。
+                let parsed = if meta.len() > MAX_METADATA_FILE_BYTES {
+                    Ok(None)
+                } else if ext == "png" {
                     parse_png_metadata(&path_str)
                 } else if ext == "webp" {
                     parse_webp_metadata(&path_str)

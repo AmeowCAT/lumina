@@ -65,10 +65,33 @@ export const HistoryGallery = memo(function HistoryGallery({
     load();
   }, [load]);
 
+  const dateStr = (secs: number) => {
+    return new Date(secs * 1000).toLocaleString();
+  };
+
   const srcMap = useMemo(() => {
     const m = new Map<string, string>();
     for (const f of files) {
       m.set(f.path, convertFileSrc(f.path));
+    }
+    return m;
+  }, [files]);
+
+  // 搜索文本一次性预计算：旧实现每次键击对每个文件 JSON.stringify(metadata)
+  // 过滤，上千文件时明显卡顿（对抗性审查）。这里只随 files 变化重建。
+  const searchIndex = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of files) {
+      m.set(
+        f.path,
+        [
+          f.name,
+          dateStr(f.modified),
+          f.metadata ? JSON.stringify(f.metadata) : "",
+        ]
+          .join(" ")
+          .toLocaleLowerCase()
+      );
     }
     return m;
   }, [files]);
@@ -139,23 +162,14 @@ export const HistoryGallery = memo(function HistoryGallery({
     }
   };
 
-  const dateStr = (secs: number) => {
-    return new Date(secs * 1000).toLocaleString();
-  };
-
   const imgFiles = files.filter((f) =>
     ["png", "jpg", "jpeg", "webp"].includes(f.ext)
   );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredFiles = normalizedQuery
     ? imgFiles.filter((file) => {
-        const searchable = [
-          file.name,
-          dateStr(file.modified),
-          file.metadata ? JSON.stringify(file.metadata) : "",
-        ]
-          .join(" ")
-          .toLocaleLowerCase();
+        const searchable =
+          searchIndex.get(file.path) || file.name.toLocaleLowerCase();
         return searchable.includes(normalizedQuery);
       })
     : imgFiles;

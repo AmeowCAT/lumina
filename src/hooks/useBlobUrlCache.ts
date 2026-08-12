@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useStore } from "../store";
 import { b64ToBlobUrl } from "../lib/utils";
+
+function rawKey(b64: string): string {
+  return b64.includes(",") ? b64.split(",")[1] : b64;
+}
 
 export function useBlobUrlCache() {
   const videoUrlCache = useRef<Map<string, string>>(new Map());
@@ -49,6 +54,46 @@ export function useBlobUrlCache() {
     videoUrlCache.current.clear();
     imageUrlCache.current.forEach((u) => URL.revokeObjectURL(u));
     imageUrlCache.current.clear();
+  }, []);
+
+  // 剪枝：缓存只保留当前 results/jobs 仍引用的条目，已从 store 移除的
+  // 结果其 blob URL 一并 revoke，避免缓存 Map 随结果增删单调增长
+  // （对抗性审查 B5——结果数组本身有上限，这里让缓存同步收缩）。
+  useEffect(() => {
+    const unsub = useStore.subscribe((s) => {
+      const live = new Set<string>();
+      for (const r of s.results) {
+        if (r.result?.b64_json) live.add(rawKey(r.result.b64_json));
+        r.result?.images?.forEach((img) => {
+          if (img.b64_json) live.add(rawKey(img.b64_json));
+        });
+      }
+      for (const j of s.jobs) {
+        if (j.result?.b64_json) live.add(rawKey(j.result.b64_json));
+        j.result?.images?.forEach((img) => {
+          if (img.b64_json) live.add(rawKey(img.b64_json));
+        });
+      }
+      const jobIds = new Set([
+        ...s.results.map((r) => r.jobId),
+        ...s.jobs.map((j) => j.id),
+      ]);
+      for (const key of [...imageUrlCache.current.keys()]) {
+        if (!live.has(key)) {
+          const url = imageUrlCache.current.get(key);
+          if (url) URL.revokeObjectURL(url);
+          imageUrlCache.current.delete(key);
+        }
+      }
+      for (const key of [...videoUrlCache.current.keys()]) {
+        if (!jobIds.has(key)) {
+          const url = videoUrlCache.current.get(key);
+          if (url) URL.revokeObjectURL(url);
+          videoUrlCache.current.delete(key);
+        }
+      }
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {

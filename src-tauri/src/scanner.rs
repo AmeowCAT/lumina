@@ -9,6 +9,11 @@ use std::time::Instant;
 const MAX_DEPTH: usize = 3;
 const MAX_WARNINGS: usize = 100;
 const SAFETENSORS_INDEX_SUFFIX: &str = ".safetensors.index.json";
+/// 扫描出的模型文件数量上限：单目录百万条目会全部进内存并序列化到前端，
+/// 卡死 GUI（对抗性审查 C）。超限截断并在警告里说明。
+const MAX_SCAN_FILES: usize = 5000;
+/// Safetensors 索引文件大小上限：数 GB 的 index JSON 整读会 OOM。
+const MAX_INDEX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +142,19 @@ fn normalized_existing_path(path: &Path) -> PathBuf {
 }
 
 fn safetensors_index_info(path: &Path, context: &mut ScanContext) -> Option<SafetensorsIndexInfo> {
+    // 大小上限先行：超大索引文件不整读（对抗性审查 C）。
+    if fs::metadata(path)
+        .map(|m| m.len() > MAX_INDEX_FILE_BYTES)
+        .unwrap_or(false)
+    {
+        context.stats.read_errors += 1;
+        context.warn(
+            "index_too_large",
+            path,
+            "Safetensors 索引超过 64MB，已跳过",
+        );
+        return None;
+    }
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) => {
@@ -167,7 +185,7 @@ fn safetensors_index_info(path: &Path, context: &mut ScanContext) -> Option<Safe
         return None;
     };
 
-    let mut shards = HashSet::new();
+    let mut shards: Vec<PathBuf> = Vec::new();
     for value in weight_map.values() {
         let Some(shard) = value.as_str() else {
             context.stats.entry_errors += 1;
@@ -175,7 +193,7 @@ fn safetensors_index_info(path: &Path, context: &mut ScanContext) -> Option<Safe
             return None;
         };
         let shard_path = PathBuf::from(shard);
-        shards.insert(if shard_path.is_absolute() {
+        shards.push(if shard_path.is_absolute() {
             shard_path
         } else {
             path.parent().unwrap_or(Path::new("")).join(shard_path)
@@ -187,9 +205,25 @@ fn safetensors_index_info(path: &Path, context: &mut ScanContext) -> Option<Safe
         return None;
     }
 
+    let index_dir = path.parent().unwrap_or(Path::new(""));
+    let canonical_index_dir = index_dir
+        .canonicalize()
+        .unwrap_or_else(|_| index_dir.to_path_buf());
     let mut size_bytes = 0u64;
     let mut shard_paths = HashSet::new();
     for shard in shards {
+        // 索引可用绝对路径引用模型目录之外的文件：外部 shard 不计入模型
+        // 大小、不进去重集合（对抗性审查 C）。
+        if let Ok(canonical) = shard.canonicalize() {
+            if !canonical.starts_with(&canonical_index_dir) {
+                context.warn(
+                    "index_shard_outside",
+                    &shard,
+                    "Safetensors shard 位于索引目录之外，已忽略",
+                );
+                continue;
+            }
+        }
         match fs::metadata(&shard) {
             Ok(metadata) if metadata.is_file() => {
                 size_bytes += metadata.len();
@@ -210,6 +244,11 @@ fn safetensors_index_info(path: &Path, context: &mut ScanContext) -> Option<Safe
                 return None;
             }
         }
+    }
+    if shard_paths.is_empty() {
+        context.stats.entry_errors += 1;
+        context.warn("index_invalid", path, "Safetensors 索引没有可用的 shard");
+        return None;
     }
     Some(SafetensorsIndexInfo {
         size_mb: size_bytes as f64 / 1024.0 / 1024.0,
@@ -274,6 +313,18 @@ fn walk(
     context.stats.directories_scanned += 1;
 
     for entry in entries {
+        // 文件数量上限：单目录百万条目会拖垮 GUI（对抗性审查 C）。
+        if out.len() >= MAX_SCAN_FILES {
+            if !context.truncated {
+                context.truncated = true;
+                context.warn(
+                    "entry_limit",
+                    dir,
+                    format!("文件数量超过扫描上限 {}，已截断", MAX_SCAN_FILES),
+                );
+            }
+            break;
+        }
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -450,6 +501,17 @@ pub fn scan_models(dir: &str) -> Result<ScanResult> {
                 dir.clone()
             }
         };
+        // canonicalize 后的结构化目录必须仍在 base 之内：`loras -> ..` 之类
+        // 的符号链接会把扫描范围扩大到模型目录之外（对抗性审查 C）。
+        if !canonical.starts_with(&base) {
+            context.truncated = true;
+            context.warn(
+                "dir_outside_base",
+                &canonical,
+                "结构化目录经符号链接指向模型目录之外，已跳过",
+            );
+            continue;
+        }
         skip.insert(canonical.clone());
         walk(
             &canonical,

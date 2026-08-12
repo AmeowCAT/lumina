@@ -152,6 +152,19 @@ export function b64ToBlobUrl(b64: string, mime: string): string {
   return URL.createObjectURL(new Blob([u], { type: mime }));
 }
 
+/** 原始 base64（可含 data: 前缀）→ dataURL。结果图用作 img2img 输入时必须
+ * 转成 dataURL 而非 blob: URL——blob: 只在本页面生命周期内有效（切回控制台
+ * 即被 revoke），且 sd-server 无法解码 blob: 协议。 */
+export function b64ToDataUrl(b64: string, mime: string): string {
+  const raw = b64.includes(",") ? b64.split(",")[1] : b64;
+  return `data:${mime};base64,${raw}`;
+}
+
+/** 结果 / 任务记录的内存上限：每条记录持有 base64，无上限会在长会话中
+ * 耗尽内存（对抗性审查 B5）。超出时丢弃最旧的记录，blob 缓存随之剪枝。 */
+export const MAX_RESULTS = 60;
+export const MAX_JOBS = 300;
+
 export function fmtSize(mb: number): string {
   if (mb >= 1024) return (mb / 1024).toFixed(1) + " GB";
   if (mb >= 1) return Math.round(mb) + " MB";
@@ -363,9 +376,15 @@ export function buildRequestBody(
     scheduler: noDefault(sp?.scheduler),
     guidance: {
       txt_cfg: sp?.guidance?.txt_cfg,
-      distilled_guidance: sp?.guidance?.distilled_guidance ?? 0,
     },
   };
+  // 仅在显式提供数值时才发送 distilled_guidance：`?? 0` 会在参数缺失时
+  // 用 0 覆盖服务端默认值（持久化参数过期时可达）。
+  const distilled = sp?.guidance?.distilled_guidance;
+  if (distilled != null && Number.isFinite(distilled)) {
+    (sampleParams.guidance as Record<string, unknown>).distilled_guidance =
+      distilled;
+  }
   const betaArgs = buildBetaSchedulerArgs(sp);
   if (betaArgs) sampleParams.extra_sample_args = betaArgs;
   const b: Record<string, unknown> = {
@@ -437,7 +456,9 @@ export function buildRequestBody(
         path: l.path,
         multiplier: l.multiplier ?? 1.0,
       };
-      if (mode === "vid_gen") e.is_high_noise = !!l.is_high_noise;
+      // 上游 img/vid 两种模式的解析器都读取 is_high_noise；只在其为 true
+      // 时发送（false 与省略等价），避免 img 模式丢掉已配置的高噪声标记。
+      if (l.is_high_noise) e.is_high_noise = true;
       return e;
     });
 
@@ -461,7 +482,10 @@ export function buildRequestBody(
     b.cache_mode = params.cache_mode;
     if (params.cache_option) b.cache_option = params.cache_option;
     if (params.scm_mask) b.scm_mask = params.scm_mask;
-    b.scm_policy_dynamic = params.scm_policy_dynamic !== false;
+    // scm_policy_dynamic 不发送：上游 from_json_str（common.cpp）只解析
+    // cache_mode/cache_option/scm_mask，该键在请求体中会被静默忽略——
+    // 真正的开关是服务端启动参数 --scm-policy。capabilities 的默认值里
+    // 仍会携带该键，但发送它只会制造"已生效"的假象。
   }
 
   if (mode === "vid_gen" && params.high_noise_sample_params) {

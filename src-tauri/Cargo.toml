@@ -23,3 +23,8 @@ anyhow = "1"
 dirs = "5"
 log = "0.4"
 env_logger = "0.11"
+
+# Windows: sd-server 子进程挂进 KILL_ON_JOB_CLOSE 作业对象，GUI 崩溃/被强杀
+# 时由 OS 兜底终止，避免孤儿进程占显存（对抗性审查 C）。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

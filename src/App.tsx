@@ -6,6 +6,7 @@ import { Dashboard } from "./components/dashboard/Dashboard";
 import { GenerationUI } from "./components/generation/GenerationUI";
 import { LogPanel } from "./components/ui/LogPanel";
 import { ToastContainer } from "./components/ui/Toast";
+import { useJobPolling } from "./hooks/useJobPolling";
 
 type Phase = "checking" | "dashboard" | "running";
 
@@ -18,6 +19,12 @@ export default function App() {
   const setMode = useStore((s) => s.setMode);
   const toast = useStore((s) => s.toast);
   const lastCapsSync = useRef(0);
+  const lastCapsErrorToast = useRef(0);
+
+  // 任务轮询挂在整个 App 生命周期（而非 GenerationUI）：切到控制台改设置
+  // 期间任务仍在服务器上跑，停止轮询会让完成的结果无人收货、随服务器
+  // 停止永久丢失（对抗性审查 B3）。
+  useJobPolling();
 
   useEffect(() => {
     let alive = true;
@@ -72,7 +79,13 @@ export default function App() {
                 toast(label);
               }
             } catch {
-              /* server still loading */
+              // 服务器可达但能力信息反复失败：给用户可见的提示（30s 节流），
+              // 而不是静默卡在控制台（对抗性审查 B6）。
+              const now = Date.now();
+              if (now - lastCapsErrorToast.current > 30_000) {
+                lastCapsErrorToast.current = now;
+                toast("无法获取服务器能力信息，服务器可能仍在加载", true);
+              }
             }
           }
           // Only enter running once caps are available — otherwise GenerationUI
@@ -103,23 +116,43 @@ export default function App() {
   }, [dashboardOpen, serverStatus?.reachable]);
 
   // 订阅 sd-server 的 stdout/stderr 日志流，推入 store 供内置日志面板展示。
-  // `\r` 分隔（进度条）→ updateProgress 原地刷新最后一行；
-  // `\n` 分隔（普通日志）→ appendLog 追加新行。
+  // `\r` 分隔（进度条）→ 进度行原地刷新最后一行；`\n` 分隔（普通日志）→ 追加。
+  // 生成期间每步都会触发事件：按 requestAnimationFrame 聚合成一次 store
+  // 写入（flushLogs），避免每个事件都触发一次与日志行数成正比的重渲染。
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
+    const pendingLines: string[] = [];
+    let pendingProgress: string | null = null;
+    let rafId: number | null = null;
+    const flush = () => {
+      rafId = null;
+      const lines = pendingLines.splice(0);
+      const progress = pendingProgress;
+      pendingProgress = null;
+      useStore.getState().flushLogs(lines, progress);
+    };
     listen<{ type: string; text: string }>("server-log", (e) => {
       const p = e.payload;
-      if (p.type === "progress") useStore.getState().updateProgress(p.text);
-      else useStore.getState().appendLog(p.text);
+      if (p.type === "progress") pendingProgress = p.text;
+      else pendingLines.push(p.text);
+      if (rafId == null) rafId = requestAnimationFrame(flush);
     }).then((f) => {
-      if (disposed) f();
-      else unlisten = f;
+      if (disposed) {
+        f();
+        if (rafId != null) cancelAnimationFrame(rafId);
+      } else {
+        unlisten = f;
+      }
     });
     return () => {
       disposed = true;
       unlisten?.();
       unlisten = null;
+      if (rafId != null) {
+        cancelAnimationFrame(rafId);
+        flush();
+      }
     };
   }, []);
 
