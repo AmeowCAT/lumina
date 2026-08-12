@@ -108,24 +108,18 @@ describe("Dashboard onboarding validation", () => {
     );
   });
 
-  it("blocks startup for an unsupported family with the reason shown", async () => {
+  it("half-supports MiniMax-H3 Ref2VA without an unsupported banner", async () => {
     mocks.scanModels.mockResolvedValue(scanFor("minimax-h3-ref2va"));
     render(<Dashboard />);
 
     await pickOption("主模型", "main.safetensors (1.0 GB)");
 
-    // 检查单保持 NO-GO：不叠加"缺组件"，只显示暂不支持原因。
-    expect(
-      await screen.findByText(
-        "Ref2VA 的参考视频/音频输入尚未经 sd-server 开放（仅 sd-cli 可用），请改用 FL2VA 变体"
-      )
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/还缺/)).not.toBeInTheDocument();
+    // 半支持：不再显示"暂不支持"横幅，家族下拉也没有"（暂不支持）"后缀。
+    expect(screen.queryByText(/暂不支持/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("识别类型")).not.toHaveTextContent("暂不支持");
+    // 检查单退回常规组件缺口把关（Ref2VA 需要视频 VAE + LLM，此处只给了主模型）。
+    expect(await screen.findByRole("alert")).toHaveTextContent("还缺");
     expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
-    // 家族下拉中 unsupported 家族带"（暂不支持）"后缀。
-    expect(screen.getByLabelText("识别类型")).toHaveTextContent(
-      "MiniMax-H3 (Ref2VA)（暂不支持）"
-    );
     expect(mocks.startServer).not.toHaveBeenCalled();
   });
 

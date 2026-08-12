@@ -80,6 +80,7 @@ interface Props {
   refImages: string[];
   controlFrames: string[];
   controlFramesSupported: boolean;
+  refImagesSupported: boolean;
   strength: number | undefined;
   controlStrength: number | undefined;
   ipAdapterStrength: number | undefined;
@@ -112,6 +113,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   refImages,
   controlFrames,
   controlFramesSupported,
+  refImagesSupported,
   strength,
   controlStrength,
   ipAdapterStrength,
@@ -213,7 +215,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           hint="数值越高，偏离初始图的幅度越大；越低则越稳定"
         />
       )}
-      {features.ref_images && mode === "img_gen" && (
+      {refImagesSupported && (
         <MultiImageRow
           label={
             "参考图片" +

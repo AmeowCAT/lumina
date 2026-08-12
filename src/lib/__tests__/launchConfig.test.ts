@@ -267,11 +267,14 @@ describe("launch configuration", () => {
     expect(withoutVae.missing).toContain("视频 VAE");
   });
 
-  it("marks MiniMax-H3 Ref2VA unsupported while FL2VA stays launchable", () => {
-    expect(FAMILY_CONFIG["minimax-h3-fl2va"].unsupported).toBeUndefined();
-    expect(FAMILY_CONFIG["minimax-h3-ref2va"].unsupported).toBeTruthy();
-    expect(FAMILY_CONFIG["minimax-h3-fl2va"].mode).toBe("vid");
-    expect(FAMILY_CONFIG["minimax-h3-ref2va"].mode).toBe("vid");
+  it("treats MiniMax-H3 Ref2VA as half-supported with ref_images required", () => {
+    const ref2va = FAMILY_CONFIG["minimax-h3-ref2va"];
+    // 半支持：不再整族封锁，参考图像为 vid_gen 必需输入。
+    expect(ref2va.unsupported).toBeUndefined();
+    expect(ref2va.requiredInputsByMode).toEqual({ vid_gen: ["ref_images"] });
+    expect(ref2va.mode).toBe("vid");
+    // FL2VA 无需参考输入。
+    expect(FAMILY_CONFIG["minimax-h3-fl2va"].requiredInputsByMode).toBeUndefined();
     // 官方推荐参数（docs/minimax_h3.md）：864×480、56 帧、24 fps、cfg 1.0。
     expect(FAMILY_CONFIG["minimax-h3-fl2va"].genDefaults).toEqual(
       expect.objectContaining({

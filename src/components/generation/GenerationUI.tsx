@@ -180,6 +180,11 @@ export function GenerationUI() {
       : "";
   const [detectedFamily, setDetectedFamily] = useState("custom");
   const family = activeFamilyOverride || detectedFamily;
+  // MiniMax-H3 Ref2VA 半支持：vid_gen 协议已接受 ref_images（参考图像条件），
+  // 但 capabilities 的 vid_gen features 未广告 ref_images，按家族声明判定。
+  const refImagesSupported =
+    (mode === "img_gen" && !!features.ref_images) ||
+    !!FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images");
   useEffect(() => {
     if (activeFamilyOverride) return;
     const p = caps?.model?.path || caps?.model?.name || "";
@@ -303,13 +308,14 @@ export function GenerationUI() {
       return;
     }
     const submittedControlFrames = controlFramesSupported ? controlFrames : [];
+    const submittedRefImages = refImagesSupported ? refImages : [];
     const missingInputs = missingRequiredInputs(FAMILY_CONFIG[family], mode, {
       initImage,
       maskImage,
       controlImage,
       ipAdapterImage,
       endImage,
-      refImages,
+      refImages: submittedRefImages,
       controlFrames: submittedControlFrames,
     });
     if (missingInputs.length > 0) {
@@ -330,7 +336,7 @@ export function GenerationUI() {
         controlImage,
         ipAdapterImage,
         endImage,
-        refImages,
+        refImages: submittedRefImages,
         controlFrames: submittedControlFrames,
       };
       const body = buildRequestBody(mode, activeParams, images);
@@ -869,7 +875,7 @@ export function GenerationUI() {
               features.control_image ||
               features.ip_adapter_image ||
               features.end_image ||
-              features.ref_images ||
+              refImagesSupported ||
               controlFramesSupported) && (
               <ImageInputsPanel
                 features={features}
@@ -883,6 +889,7 @@ export function GenerationUI() {
                 refImages={refImages}
                 controlFrames={controlFrames}
                 controlFramesSupported={controlFramesSupported}
+                refImagesSupported={refImagesSupported}
                 strength={params.strength}
                 controlStrength={params.control_strength}
                 ipAdapterStrength={params.ip_adapter_strength}

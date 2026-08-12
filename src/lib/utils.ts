@@ -407,8 +407,9 @@ export function buildRequestBody(
   if (mode === "img_gen" && images.ipAdapterImage)
     b.ip_adapter_image = images.ipAdapterImage;
   if (mode === "vid_gen" && images.endImage) b.end_image = images.endImage;
-  if (mode === "img_gen" && images.refImages?.length)
-    b.ref_images = images.refImages;
+  // 参考图同时服务于 img_gen（Kontext/PiD 等）与声明支持的 vid 家族
+  // （MiniMax-H3 Ref2VA）。调用方按家族能力裁剪后再传入，此处不按 mode 硬过滤。
+  if (images.refImages?.length) b.ref_images = images.refImages;
   // VACE 条件帧：顺序即条件帧顺序，上游按请求顺序保留。
   if (mode === "vid_gen" && images.controlFrames?.length)
     b.control_frames = images.controlFrames;

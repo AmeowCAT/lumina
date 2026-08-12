@@ -268,6 +268,21 @@ describe("buildRequestBody", () => {
     expect(body.init_image).toBe("data:image/png;base64,init");
   });
 
+  // MiniMax-H3 Ref2VA 半支持：调用方按家族能力裁剪后传入，vid_gen 请求体
+  // 不再按 mode 丢弃参考图。
+  it("includes ref_images in vid_gen requests", () => {
+    const body = buildRequestBody("vid_gen", baseParams, {
+      initImage: null,
+      maskImage: null,
+      controlImage: null,
+      ipAdapterImage: null,
+      endImage: null,
+      refImages: ["data:image/png;base64,ref"],
+      controlFrames: [],
+    });
+    expect(body.ref_images).toEqual(["data:image/png;base64,ref"]);
+  });
+
   it("omits clip_skip when -1", () => {
     const p: GenParams = { ...baseParams, clip_skip: -1 };
     const body = buildRequestBody("img_gen", p, {} as GenImages);

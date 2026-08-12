@@ -745,13 +745,13 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 		},
 		"minimax-h3-ref2va": {
 			name: "MiniMax-H3 (Ref2VA)",
-			hint: "参考条件音视频生成（Ref2VA）",
+			hint: "参考图像条件音视频生成；参考视频/音频仍仅 sd-cli 可用",
 			mode: "vid",
-			// sd-server 的 JSON 协议目前只接受 ref_images，Ref2VA 的参考视频/音频
-			// 仅有 sd-cli 通道（examples/cli/main.cpp 本地加载 WAV/帧目录）。
-			// 待上游 server 开放后移除 unsupported 并补参考输入 UI。
-			unsupported:
-				"Ref2VA 的参考视频/音频输入尚未经 sd-server 开放（仅 sd-cli 可用），请改用 FL2VA 变体",
+			// 半支持：sd-server 的 JSON 协议已接受 ref_images（参考图像条件可完整
+			// 走 HTTP），但参考视频/音频仅有 sd-cli 通道（examples/cli/main.cpp
+			// 本地加载 WAV/帧目录），故参考图设为必需输入，避免 ref2va 权重被
+			// 无参考条件裸跑。待上游 server 开放视频/音频参考后再升级。
+			requiredInputsByMode: { vid_gen: ["ref_images"] },
 			fields: [
 				F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
 				F("vae", "视频 VAE", "vae", "vae"),
