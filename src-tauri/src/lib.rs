@@ -422,6 +422,28 @@ async fn read_file_b64(
     .map_err(|e| e.to_string())?
 }
 
+/// 删除历史画廊中的单个输出文件。与 save_output / read_file_b64 对等：
+/// 任意删除入口同样收敛到输出目录内，且必须是文件（目录/目录本身拒删）。
+#[tauri::command]
+async fn delete_output_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let output_dir = state.settings.lock().await.output_dir.clone();
+    if !dir_is_within(&path, &output_dir) {
+        return Err("文件必须位于已配置的输出目录内".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = std::path::Path::new(&path);
+        if !p.is_file() {
+            return Err("只能删除输出目录内的文件".into());
+        }
+        std::fs::remove_file(p).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ── sd-server API passthrough ─────────────────────────────────────────
 
 /// Filter the `loras` list in the capabilities JSON so that when a
@@ -517,6 +539,18 @@ pub fn run() {
             settings: Mutex::new(loaded_settings.settings),
             settings_warning: Mutex::new(loaded_settings.warning),
         })
+        // 窗口状态记忆:退出时保存尺寸/位置/最大化,启动时恢复。
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 单实例:第二个实例启动时聚焦已有主窗口——双开会争抢同一个
+        // sd-server 端口并互相误判"外部服务器"。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        // 系统通知(生成完成/失败等;权限由前端按需请求)。
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             start_server,
             stop_server,
@@ -532,6 +566,7 @@ pub fn run() {
             parse_png_metadata,
             list_output_files,
             read_file_b64,
+            delete_output_file,
             sdcpp_capabilities,
             sdcpp_submit,
             sdcpp_job,

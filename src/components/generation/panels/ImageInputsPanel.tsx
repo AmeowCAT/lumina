@@ -1,11 +1,14 @@
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { Features, GenMode } from "../../../types";
 import { FAMILY_CONFIG } from "../../../config/families";
+import { useStore } from "../../../store";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { ImageUpload } from "../../ui/ImageUpload";
 import { IC } from "../../ui/Icons";
 import { readFileAsDataUrl } from "../../../lib/utils";
+
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 /** 多图输入行：缩略图 + 逐个删除 + 追加。参考图片与 VACE 条件帧共用。 */
 function MultiImageRow({
@@ -19,6 +22,9 @@ function MultiImageRow({
   onChange: (updater: (r: string[]) => string[]) => void;
   addLabel: string;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+  const toast = useStore((s) => s.toast);
   return (
     <div className="form-row">
       <div className="form-label">{label}</div>
@@ -30,36 +36,57 @@ function MultiImageRow({
           >
             <img src={img} alt="" className="h-full w-full object-cover" />
             <button
-              className="upload-remove"
-              style={{ top: 2, right: 2, width: 16, height: 16 }}
+              className="upload-remove upload-remove-sm"
+              aria-label={`移除第 ${i + 1} 张`}
               onClick={() => onChange((r) => r.filter((_, j) => j !== i))}
             >
               {IC.x}
             </button>
           </div>
         ))}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="sr-only"
+          tabIndex={-1}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = "";
+            if (!files.length) return;
+            const invalid = files
+              .map((f) =>
+                !f.type.startsWith("image/")
+                  ? `${f.name}（非图片格式）`
+                  : f.size > MAX_UPLOAD_BYTES
+                    ? `${f.name}（超过 100MB）`
+                    : null
+              )
+              .filter((x): x is string => !!x);
+            if (invalid.length) {
+              toast(`已跳过 ${invalid.length} 个无效文件：${invalid.join("、")}`, true);
+            }
+            const valid = files.filter(
+              (f) => f.type.startsWith("image/") && f.size <= MAX_UPLOAD_BYTES
+            );
+            if (!valid.length) return;
+            // 条件帧顺序即上游条件帧顺序：显式按文件名排序，
+            // 不依赖浏览器的 FileList 顺序。
+            valid.sort((a, b) => a.name.localeCompare(b.name));
+            Promise.all(valid.map(readFileAsDataUrl)).then((urls) =>
+              onChange((p) => [...p, ...urls])
+            );
+            // 文件对话框是原生模态：关闭后把焦点还给追加按钮
+            requestAnimationFrame(() => addBtnRef.current?.focus());
+          }}
+        />
         <button
+          ref={addBtnRef}
           type="button"
           aria-label={addLabel}
           className="grid h-14 w-14 cursor-pointer place-items-center rounded-md border border-dashed border-line2 bg-transparent text-muted transition-colors hover:border-accent hover:text-accent-hi"
-          onClick={() => {
-            const inp = document.createElement("input");
-            inp.type = "file";
-            inp.accept = "image/*";
-            // 条件帧常常需要一次选入整段序列，允许多选后按文件名顺序追加。
-            inp.multiple = true;
-            inp.onchange = (e) => {
-              const files = Array.from((e.target as HTMLInputElement).files || []);
-              if (!files.length) return;
-              // 条件帧顺序即上游条件帧顺序：显式按文件名排序，
-              // 不依赖浏览器的 FileList 顺序。
-              files.sort((a, b) => a.name.localeCompare(b.name));
-              Promise.all(files.map(readFileAsDataUrl)).then((urls) =>
-                onChange((p) => [...p, ...urls])
-              );
-            };
-            inp.click();
-          }}
+          onClick={() => inputRef.current?.click()}
         >
           {IC.plus}
         </button>

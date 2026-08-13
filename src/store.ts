@@ -12,10 +12,23 @@ import type {
   Settings,
 } from "./types";
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface ToastEntry {
   id: number;
   msg: string;
   error: boolean;
+  action?: ToastAction;
+}
+
+/** 单张图片/视频保存到输出目录的状态 */
+export interface ImageSaveState {
+  status: "saving" | "saved" | "failed";
+  path?: string;
+  error?: string;
 }
 
 export interface ResultEntry {
@@ -25,9 +38,8 @@ export interface ResultEntry {
   created?: number;
   completedAt?: number;
   config?: JobConfig;
-  saveStatus?: "not_configured" | "saving" | "saved" | "partial" | "failed";
-  savePaths?: string[];
-  saveError?: string;
+  /** 手动保存状态:key 为图片索引字符串(视频为 "v") */
+  saves?: Record<string, ImageSaveState>;
 }
 
 /** server-log 流事件：progress（\r 原地刷新）与 line（\n 追加）按到达
@@ -37,8 +49,11 @@ export type LogEvent = { type: "line" | "progress"; text: string };
 interface StoreState {
   // toast
   toasts: ToastEntry[];
-  toast: (msg: string, error?: boolean) => void;
+  toast: (msg: string, error?: boolean, action?: ToastAction) => void;
   dismissToast: (id: number) => void;
+  /** 悬停暂停自动消失;离开后按 error 与否重新计时 */
+  pauseToasts: () => void;
+  resumeToasts: () => void;
 
   // dashboard / server
   settings: Settings;
@@ -109,6 +124,18 @@ interface StoreState {
 }
 
 let toastSeq = 0;
+/** 每个 toast 的自动消失定时器;pause 时清空、resume 时按剩余条目重建 */
+const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+/** 同屏最多 3 条:超过时先让最旧的退场(避免完成风暴刷屏) */
+const MAX_TOASTS = 3;
+
+function scheduleToastDismiss(id: number, error: boolean) {
+  const t = setTimeout(
+    () => useStore.getState().dismissToast(id),
+    error ? 12_000 : 4_000
+  );
+  toastTimers.set(id, t);
+}
 
 /** 解析 "step X/Y" 进度行；Y>0 时返回 (step, total)，否则 null。 */
 function parseStepProgress(text: string): { step: number; total: number } | null {
@@ -141,13 +168,37 @@ function capLogs(logs: string[]): string[] {
 
 export const useStore = create<StoreState>((set, get) => ({
   toasts: [],
-  toast: (msg, error = false) => {
+  toast: (msg, error = false, action) => {
     const id = ++toastSeq;
-    set((s) => ({ toasts: [...s.toasts, { id, msg, error }] }));
-    setTimeout(() => get().dismissToast(id), error ? 12_000 : 4_000);
+    set((s) => {
+      const next = [...s.toasts, { id, msg, error, action }];
+      const overflow = next.slice(0, Math.max(0, next.length - MAX_TOASTS));
+      for (const old of overflow) {
+        const t = toastTimers.get(old.id);
+        if (t) clearTimeout(t);
+        toastTimers.delete(old.id);
+      }
+      return { toasts: next.slice(-MAX_TOASTS) };
+    });
+    scheduleToastDismiss(id, error);
   },
-  dismissToast: (id) =>
-    set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  dismissToast: (id) => {
+    const t = toastTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      toastTimers.delete(id);
+    }
+    set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) }));
+  },
+  pauseToasts: () => {
+    toastTimers.forEach((t) => clearTimeout(t));
+    toastTimers.clear();
+  },
+  resumeToasts: () => {
+    for (const x of get().toasts) {
+      if (!toastTimers.has(x.id)) scheduleToastDismiss(x.id, x.error);
+    }
+  },
 
   settings: {
     exeDir: "",

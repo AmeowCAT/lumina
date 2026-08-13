@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
 
 /**
  * 任务队列右侧抽屉。保留 queue-overlay / queue-backdrop 标记类;
@@ -14,6 +15,7 @@ export function QueueDrawer({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const trapRef = useFocusTrap<HTMLDivElement>(open);
   return (
     <AnimatePresence>
       {open && [
@@ -29,9 +31,13 @@ export function QueueDrawer({
         />,
         <motion.div
           key="queue-drawer"
+          ref={(node) => {
+            trapRef.current = node;
+          }}
           className="queue-overlay"
           role="dialog"
           aria-label="任务队列"
+          tabIndex={-1}
           initial={{ x: "-100%" }}
           animate={{ x: 0 }}
           exit={{ x: "-100%" }}

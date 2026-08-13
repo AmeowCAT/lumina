@@ -241,7 +241,7 @@ describe("Dashboard onboarding validation", () => {
 						output_format: "png",
 						images: [{ index: 0, b64_json: "eA==" }],
 					},
-					saveStatus: "failed",
+					saves: { "0": { status: "failed", error: "disk full" } },
 				},
 			],
 			jobs: [],

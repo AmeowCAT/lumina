@@ -17,7 +17,7 @@ const config: JobConfig = {
 
 function renderGrid(overrides: Record<string, unknown> = {}) {
   const onRemove = vi.fn();
-  const onRetrySave = vi.fn();
+  const onSaveImage = vi.fn();
   render(
     <ResultsGrid
       results={[
@@ -29,27 +29,27 @@ function renderGrid(overrides: Record<string, unknown> = {}) {
             images: [{ index: 3, b64_json: "aW1hZ2U=" }],
           },
           config,
-          saveStatus: "failed",
-          saveError: "disk full",
+          saves: { "3": { status: "failed", error: "disk full" } },
         },
       ]}
+      generating={false}
       onLightbox={vi.fn()}
       onApplyConfig={vi.fn()}
       onDownload={vi.fn()}
       onRemove={onRemove}
-      onRetrySave={onRetrySave}
+      onSaveImage={onSaveImage}
       onUseAsInit={vi.fn()}
       getVideoUrl={() => "blob:video"}
       getImageUrl={() => "blob:image"}
       {...overrides}
     />
   );
-  return { onRemove, onRetrySave };
+  return { onRemove, onSaveImage };
 }
 
 describe("ResultsGrid", () => {
   it("arms before removing an unsaved image, then removes on confirm", () => {
-    const { onRemove } = renderGrid();
+    const { onRemove } = renderGrid({ results: [unsavedEntry("job-1")] });
     fireEvent.click(screen.getByRole("button", { name: "删除此图片" }));
     expect(onRemove).not.toHaveBeenCalled();
     fireEvent.click(
@@ -69,7 +69,7 @@ describe("ResultsGrid", () => {
             images: [{ index: 3, b64_json: "aW1hZ2U=" }],
           },
           config,
-          saveStatus: "saved",
+          saves: { "3": { status: "saved", path: "/out/a.png" } },
         },
       ],
     });
@@ -78,12 +78,30 @@ describe("ResultsGrid", () => {
   });
 
   it("announces save failures and exposes retry", () => {
-    const { onRetrySave } = renderGrid();
+    const { onSaveImage } = renderGrid();
     expect(screen.getByRole("alert").textContent).toBe("保存失败");
     fireEvent.click(screen.getByRole("button", { name: "重试保存" }));
-    expect(onRetrySave).toHaveBeenCalledWith("job-1");
+    expect(onSaveImage).toHaveBeenCalledWith("job-1", "3");
+  });
+
+  it("save-to-dir button forwards the per-image key", () => {
+    const { onSaveImage } = renderGrid({ results: [unsavedEntry("job-1")] });
+    fireEvent.click(screen.getByRole("button", { name: "保存到输出目录" }));
+    expect(onSaveImage).toHaveBeenCalledWith("job-1", "3");
   });
 });
+
+function unsavedEntry(jobId: string): ResultEntry {
+  return {
+    jobId,
+    mode: "img_gen",
+    result: {
+      output_format: "png",
+      images: [{ index: 3, b64_json: "aW1hZ2U=" }],
+    },
+    config,
+  };
+}
 
 function params(seed = 42): GenParams {
   return {
@@ -108,7 +126,6 @@ function imageEntry(jobId: string, images = 1, seed = 42): ResultEntry {
     created: 1000,
     completedAt: 4000,
     config: { mode: "img_gen", params: params(seed) } as JobConfig,
-    saveStatus: "saved",
   };
 }
 
@@ -126,15 +143,16 @@ function videoEntry(jobId: string): ResultEntry {
     created: 1000,
     completedAt: 4000,
     config: { mode: "vid_gen", params: params() } as JobConfig,
-    saveStatus: "saved",
   };
 }
 
 const baseProps = {
+  generating: false,
   onLightbox: vi.fn(),
   onApplyConfig: vi.fn(),
   onDownload: vi.fn(),
   onRemove: vi.fn(),
+  onSaveImage: vi.fn(),
   onUseAsInit: vi.fn(),
   getVideoUrl: (jobId: string, b64: string) => `blob:${jobId}/${b64}`,
   getImageUrl: (b64: string, fmt: string) => `data:image/${fmt};base64,${b64}`,
@@ -171,8 +189,14 @@ describe("ResultsGrid 聚焦区 + 瀑布流", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /查看本次生成/ }));
     expect(onLightbox).toHaveBeenCalledWith(
-      "data:image/png;base64,img-c-0",
-      "image"
+      [
+        {
+          type: "image",
+          src: "data:image/png;base64,img-c-0",
+          title: "种子 42 · 512×512",
+        },
+      ],
+      0
     );
   });
 

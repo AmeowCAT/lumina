@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listOutputFiles: vi.fn(),
   readFileB64: vi.fn(),
+  deleteOutputFile: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -15,6 +16,7 @@ vi.mock("../../../api", () => ({
   api: {
     listOutputFiles: mocks.listOutputFiles,
     readFileB64: mocks.readFileB64,
+    deleteOutputFile: mocks.deleteOutputFile,
   },
 }));
 
@@ -42,14 +44,14 @@ describe("HistoryGallery", () => {
       },
     ]);
     mocks.readFileB64.mockResolvedValue("aW1hZ2U=");
+    mocks.deleteOutputFile.mockResolvedValue(undefined);
   });
 
-  it("opens an actionable preview and restores embedded parameters", async () => {
+  it("opens a zoomable preview in the shared Lightbox and restores embedded parameters", async () => {
     const onRestoreParams = vi.fn();
     render(
       <HistoryGallery
         onRestoreParams={onRestoreParams}
-        onLightbox={vi.fn()}
       />
     );
 
@@ -59,7 +61,8 @@ describe("HistoryGallery", () => {
       })
     );
 
-    expect(screen.getByRole("dialog", { name: "历史图片：result.png" })).toBeTruthy();
+    // 统一 Lightbox:aria-label 即文件名,自带滚轮缩放与导航
+    expect(screen.getByRole("dialog", { name: "result.png" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "恢复此配置" }));
 
     await waitFor(() =>
@@ -70,12 +73,48 @@ describe("HistoryGallery", () => {
     );
   });
 
+  it("portals the shared Lightbox to document.body so it stacks above the prompt dock", async () => {
+    render(<HistoryGallery onRestoreParams={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "查看历史图片 result.png（含生成参数）",
+      })
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "result.png" });
+    expect(dialog.parentElement).toBe(document.body);
+  });
+
+  it("deletes a history image after two-tap confirmation", async () => {
+    render(<HistoryGallery onRestoreParams={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "查看历史图片 result.png（含生成参数）",
+      })
+    );
+
+    // 第一击只武装,不执行删除
+    fireEvent.click(screen.getByRole("button", { name: "删除此图片" }));
+    expect(mocks.deleteOutputFile).not.toHaveBeenCalled();
+
+    // 第二击确认:调用后端删除、关闭预览、从列表移除
+    fireEvent.click(screen.getByRole("button", { name: "确认删除该文件" }));
+    await waitFor(() =>
+      expect(mocks.deleteOutputFile).toHaveBeenCalledWith("C:/output/result.png")
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "result.png" })).toBeNull()
+    );
+    expect(screen.getByText("暂无历史图片")).toBeTruthy();
+  });
+
   it("searches embedded prompts and can use a history item as the initial image", async () => {
     const onUseAsInit = vi.fn();
     render(
       <HistoryGallery
         onRestoreParams={vi.fn()}
-        onLightbox={vi.fn()}
         onUseAsInit={onUseAsInit}
       />
     );

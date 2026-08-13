@@ -45,12 +45,27 @@ export const HeaderBar = memo(function HeaderBar({
       >
         更换模型 / 设置
       </button>
-      <div className="mode-tabs">
+      <div
+        className="mode-tabs"
+        role="tablist"
+        aria-label="生成模式"
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          const idx = supportedModes.indexOf(mode);
+          const next =
+            e.key === "ArrowRight"
+              ? (idx + 1) % supportedModes.length
+              : (idx - 1 + supportedModes.length) % supportedModes.length;
+          onSwitchMode(supportedModes[next]);
+        }}
+      >
         {supportedModes.map((m) => (
           <button
             key={m}
             role="tab"
             aria-selected={mode === m}
+            tabIndex={mode === m ? 0 : -1}
             className={cn("mode-tab", mode === m && "active")}
             onClick={() => onSwitchMode(m)}
           >

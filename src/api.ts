@@ -85,4 +85,7 @@ export const api = {
     invoke<{ path: string; name: string; size: number; modified: number; ext: string; metadata?: Record<string, unknown> }[]>("list_output_files", { dir }),
 
   readFileB64: (path: string) => invoke<string>("read_file_b64", { path }),
+
+  /** 删除历史画廊中的单个输出文件(后端校验必须位于输出目录内) */
+  deleteOutputFile: (path: string) => invoke<void>("delete_output_file", { path }),
 };

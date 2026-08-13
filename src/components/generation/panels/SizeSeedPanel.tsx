@@ -135,7 +135,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
           step={64}
         />
         {spatialMultiple && sizeWillChange && (
-          <div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+          <div className="field-hint field-hint-flush mt-0.5">
             实际生成 {alignedWidth}×{alignedHeight}（该模型按 {spatialMultiple}{" "}
             向上对齐）
           </div>
@@ -152,7 +152,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
           hint="相对基准尺寸（初始图片/上次设定）等比缩放，1 为不变"
         />
       )}
-      <div className="form-row" style={{ marginTop: 8 }}>
+      <div className="form-row mt-2">
         <label className="form-label" htmlFor="generation-seed">
           种子
         </label>
@@ -186,7 +186,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
         />
       )}
       {mode === "img_gen" && family === "qwen-image-layered" && (
-        <div className="form-row" style={{ marginTop: 8 }}>
+        <div className="form-row mt-2">
           <label className="form-label" htmlFor="qwen-image-layers">
             分层数量
           </label>
@@ -196,9 +196,9 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             onChange={(value) => onUpdate("qwen_image_layers", value)}
             min={0}
             step={1}
-            style={{ width: 80 }}
+            className="w-20"
           />
-          <div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+          <div className="field-hint field-hint-flush mt-0.5">
             最终输出数量为分层数量 + 1
           </div>
         </div>

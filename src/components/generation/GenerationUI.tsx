@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { SlidersHorizontal } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
@@ -23,7 +24,7 @@ import {
 } from "../../lib/utils";
 import { familyDefaults, missingRequiredInputs } from "../../lib/launchConfig";
 import type { GenImages, GenMode, GenParams, Job, JobConfig } from "../../types";
-import { Lightbox } from "../ui/Lightbox";
+import { Lightbox, type LightboxItem } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
 import { cn } from "../ui/cn";
 import { ResultsGrid } from "./ResultsGrid";
@@ -45,7 +46,7 @@ import { useBlobUrlCache } from "../../hooks/useBlobUrlCache";
 import {
   ingestCompletedJob,
   processedJobs,
-  retrySave,
+  saveEntryPart,
 } from "../../hooks/useJobPolling";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 
@@ -71,11 +72,6 @@ function modelSelectionMatches(reportedPath: string, selectedPath: string): bool
   const selected = normalizeModelPath(selectedPath);
   const selectedName = selected.split("/").pop() || selected;
   return reported === selected || reported.endsWith("/" + selectedName);
-}
-
-interface LightboxItem {
-  type: "image" | "video";
-  src: string;
 }
 
 export function GenerationUI() {
@@ -112,7 +108,10 @@ export function GenerationUI() {
   // 同步锁：setState 生效要等一次渲染，键盘连发（Ctrl+Enter 按住重复触发）
   // 与双击可能在同帧内两次进入 handleGenerate；ref 在首次 await 前同步上锁。
   const submittingRef = useRef(false);
-  const [lightboxItem, setLightboxItem] = useState<LightboxItem | null>(null);
+  const [lightbox, setLightbox] = useState<{
+    items: LightboxItem[];
+    index: number;
+  } | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<"results" | "history">("results");
   const [queueOpen, setQueueOpen] = useState(false);
   const [showNegative, setShowNegative] = useState(false);
@@ -122,10 +121,10 @@ export function GenerationUI() {
   const progressTotal = useStore((s) => s.progressTotal);
 
   const openLightbox = useCallback(
-    (src: string, type: "image" | "video") => setLightboxItem({ type, src }),
+    (items: LightboxItem[], index: number) => setLightbox({ items, index }),
     []
   );
-  const closeLightbox = useCallback(() => setLightboxItem(null), []);
+  const closeLightbox = useCallback(() => setLightbox(null), []);
 
   const blobCache = useBlobUrlCache();
   // hooks 返回的函数身份随每次渲染变化，直接传给 memo 子组件会让 memo 失效
@@ -142,10 +141,10 @@ export function GenerationUI() {
     (b64: string, fmt: string) => blobRef.current.getImageUrl(b64, fmt),
     []
   );
-  // 轮询已上移至 App 级常驻（切到控制台也继续收货/自动保存）；这里的
-  // retrySave 是模块级函数，经稳定身份转发保持 memo 子组件 props 稳定。
-  const retrySaveStable = useCallback(
-    (jobId: string) => void retrySave(jobId),
+  // 轮询已上移至 App 级常驻（切到控制台也继续收货）；这里的
+  // saveEntryPart 是模块级函数，经稳定身份转发保持 memo 子组件 props 稳定。
+  const saveImageStable = useCallback(
+    (jobId: string, key: string) => void saveEntryPart(jobId, key),
     []
   );
   const imageSnapshots = useRef<Record<GenMode, GenImages>>({
@@ -799,16 +798,16 @@ export function GenerationUI() {
   }, [toggleSheet]);
 
   const handleEscape = useCallback(() => {
-    if (lightboxItem) closeLightbox();
+    if (lightbox) closeLightbox();
     else if (sheetOpen) closeSheet();
     else if (queueOpen) closeQueue();
-  }, [lightboxItem, sheetOpen, queueOpen, closeLightbox, closeSheet, closeQueue]);
+  }, [lightbox, sheetOpen, queueOpen, closeLightbox, closeSheet, closeQueue]);
 
   useKeyboardShortcuts({
     onGenerate: handleGenerate,
     onRandomSeed: randomSeed,
     onEscape: handleEscape,
-    escapeActive: !!(lightboxItem || sheetOpen || queueOpen),
+    escapeActive: !!(lightbox || sheetOpen || queueOpen),
   });
 
   if (!caps || !params) return null;
@@ -852,18 +851,35 @@ export function GenerationUI() {
         <div className="output-area">
           <ProgressBar />
           <div className="canvas-float left">
-            <div className="mode-tabs" role="tablist" aria-label="工作区视图">
+            <div
+              className="mode-tabs"
+              role="tablist"
+              aria-label="工作区视图"
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                e.preventDefault();
+                setWorkspaceTab((t) =>
+                  t === "results" ? "history" : "results"
+                );
+              }}
+            >
               <button
+                id="workspace-tab-results"
                 role="tab"
                 aria-selected={workspaceTab === "results"}
+                aria-controls="workspace-panel-results"
+                tabIndex={workspaceTab === "results" ? 0 : -1}
                 className={cn("mode-tab", workspaceTab === "results" && "active")}
                 onClick={() => setWorkspaceTab("results")}
               >
                 当前结果
               </button>
               <button
+                id="workspace-tab-history"
                 role="tab"
                 aria-selected={workspaceTab === "history"}
+                aria-controls="workspace-panel-history"
+                tabIndex={workspaceTab === "history" ? 0 : -1}
                 className={cn("mode-tab", workspaceTab === "history" && "active")}
                 onClick={() => setWorkspaceTab("history")}
               >
@@ -892,27 +908,53 @@ export function GenerationUI() {
             </button>
           </div>
           <div className="output-main">
-            {workspaceTab === "results" ? (
-              <ResultsGrid
-                results={results}
-                onLightbox={openLightbox}
-                onApplyConfig={applyConfig}
-                onDownload={download}
-                onRemove={removeResult}
-                onRetrySave={retrySaveStable}
-                onUseAsInit={useAsInit}
-                getVideoUrl={getVideoUrl}
-                getImageUrl={getImageUrl}
-              />
-            ) : (
-              <div className="history-workspace">
-                <HistoryGallery
-                  onRestoreParams={restoreFromMetadata}
-                  onLightbox={openLightbox}
-                  onUseAsInit={useAsInit}
-                />
-              </div>
-            )}
+            <AnimatePresence mode="wait" initial={false}>
+              {workspaceTab === "results" ? (
+                <motion.div
+                  key="workspace-results"
+                  id="workspace-panel-results"
+                  role="tabpanel"
+                  aria-labelledby="workspace-tab-results"
+                  className="workspace-panel"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <ResultsGrid
+                    results={results}
+                    generating={!!currentGen}
+                    onLightbox={openLightbox}
+                    onApplyConfig={applyConfig}
+                    onDownload={download}
+                    onRemove={removeResult}
+                    onSaveImage={saveImageStable}
+                    onUseAsInit={useAsInit}
+                    getVideoUrl={getVideoUrl}
+                    getImageUrl={getImageUrl}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="workspace-history"
+                  id="workspace-panel-history"
+                  role="tabpanel"
+                  aria-labelledby="workspace-tab-history"
+                  className="workspace-panel"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <div className="history-workspace">
+                    <HistoryGallery
+                      onRestoreParams={restoreFromMetadata}
+                      onUseAsInit={useAsInit}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
           <PromptDock
             prompt={params.prompt || ""}
@@ -1067,7 +1109,18 @@ export function GenerationUI() {
           </ParamsSheet>
         </div>
       </div>
-      <Lightbox item={lightboxItem} onClose={closeLightbox} />
+      <AnimatePresence>
+        {lightbox && (
+          <Lightbox
+            items={lightbox.items}
+            index={lightbox.index}
+            onClose={closeLightbox}
+            onNavigate={(i) =>
+              setLightbox((s) => (s ? { ...s, index: i } : s))
+            }
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 }

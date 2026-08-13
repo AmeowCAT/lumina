@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { AnimatePresence, motion } from "motion/react";
 import { api } from "./api";
 import { useStore, type LogEvent } from "./store";
 import { Dashboard } from "./components/dashboard/Dashboard";
 import { GenerationUI } from "./components/generation/GenerationUI";
 import { LogPanel } from "./components/ui/LogPanel";
+import { Logo } from "./components/ui/Logo";
 import { ToastContainer } from "./components/ui/Toast";
 import { useJobPolling } from "./hooks/useJobPolling";
+import { useSystemIntegration } from "./hooks/useSystemIntegration";
 
 type Phase = "checking" | "dashboard" | "running";
 
@@ -25,6 +28,8 @@ export default function App() {
   // 期间任务仍在服务器上跑，停止轮询会让完成的结果无人收货、随服务器
   // 停止永久丢失（对抗性审查 B3）。
   useJobPolling();
+  // 任务栏进度等系统级集成（进度订阅内部自行收敛，不触发额外渲染）。
+  useSystemIntegration();
 
   useEffect(() => {
     let alive = true;
@@ -176,17 +181,22 @@ export default function App() {
   if (phase === "checking") {
     return (
       <div className="app">
-        <div className="dashboard dashboard-single">
-          <div className="dashboard-card" style={{ textAlign: "center" }}>
-            <span
-              className="spinner"
-              style={{ width: 32, height: 32, borderWidth: 3 }}
-            />
-            <h2 style={{ marginTop: 16 }}>连接中...</h2>
-            <p style={{ color: "var(--color-muted)", fontSize: 13 }}>
-              正在检查启动器和服务器状态
-            </p>
-          </div>
+        <div className="splash">
+          <motion.div
+            className="splash-card"
+            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <Logo size={44} />
+            <h1 className="wordmark">流光</h1>
+            <div className="hero-en">LUMINA STUDIO</div>
+            <span className="orb ready splash-orb" aria-hidden="true" />
+            <div className="splash-status" role="status">
+              <span className="spinner" />
+              <span>正在检查启动器和服务器状态</span>
+            </div>
+          </motion.div>
         </div>
         <ToastContainer />
       </div>
@@ -195,7 +205,18 @@ export default function App() {
 
   return (
     <div className="app">
-      {phase === "running" ? <GenerationUI /> : <Dashboard />}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={phase}
+          className="app-view"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        >
+          {phase === "running" ? <GenerationUI /> : <Dashboard />}
+        </motion.div>
+      </AnimatePresence>
       <LogPanel />
       <ToastContainer />
     </div>

@@ -30,7 +30,7 @@ export const HiresPanel = memo(function HiresPanel({
       />
       {hires?.enabled && (
         <>
-          <div className="form-row" style={{ marginTop: 8 }}>
+          <div className="form-row mt-2">
             <label className="form-label" htmlFor="hires-upscaler">
               放大器
             </label>

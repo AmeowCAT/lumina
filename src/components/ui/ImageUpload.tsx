@@ -1,12 +1,30 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useStore } from "../../store";
 import { IC } from "./Icons";
 import { getImageSize, readFileAsDataUrl } from "../../lib/utils";
+
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+function validateFile(file: File): string | null {
+  if (!file.type.startsWith("image/")) {
+    return `不支持的格式：${file.name}（仅限 PNG / JPG / WEBP）`;
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return `图片超过 100MB，请压缩后再试：${file.name}`;
+  }
+  return null;
+}
 
 function processFile(
   file: File,
   onChange: (v: string | null) => void,
   onSizeDetected?: (w: number, h: number) => void
-) {
+): boolean {
+  const invalid = validateFile(file);
+  if (invalid) {
+    useStore.getState().toast(invalid, true);
+    return false;
+  }
   readFileAsDataUrl(file).then((url) => {
     onChange(url);
     if (onSizeDetected) {
@@ -15,6 +33,7 @@ function processFile(
         .catch(() => {});
     }
   });
+  return true;
 }
 
 // 同屏可能同时挂载多个 ImageUpload（初始图/蒙版/Control/IP-Adapter/结束帧）。
@@ -55,8 +74,13 @@ export function ImageUpload({
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      const f = e.dataTransfer.files?.[0];
-      if (f?.type?.startsWith("image/")) processFile(f, onChange, onSizeDetected);
+      const files = Array.from(e.dataTransfer.files || []);
+      const f = files[0];
+      if (!f) return;
+      if (files.length > 1) {
+        useStore.getState().toast("该输入位仅支持一张图片，已使用第一张");
+      }
+      processFile(f, onChange, onSizeDetected);
     },
     [onChange, onSizeDetected]
   );

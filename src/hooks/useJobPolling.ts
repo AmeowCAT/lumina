@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { api } from "../api";
-import { useStore, type ResultEntry } from "../store";
+import { useStore, type ImageSaveState, type ResultEntry } from "../store";
 import type { Job } from "../types";
 import { extractApiError, formatError, MAX_RESULTS } from "../lib/utils";
+import { flashWindow, notifyIfUnfocused } from "../lib/systemIntegration";
 
 const POLL_FAILURE_THRESHOLD = 3;
 /** 单次任务查询的软超时：底层 invoke 无法中断，超时后放弃本轮结果继续
@@ -86,8 +87,12 @@ export function useJobPolling() {
               )
             );
             ingestCompletedJob(d);
-            if (d.status === "failed")
-              store.toast(`任务失败: ${extractApiError(d)}`, true);
+            if (d.status === "failed") {
+              const msg = extractApiError(d);
+              store.toast(`任务失败: ${msg}`, true);
+              flashWindow();
+              void notifyIfUnfocused("流光 · 任务失败", msg);
+            }
           } catch (e) {
             recordPollFailure(job.id, formatError(e));
           }
@@ -131,56 +136,57 @@ function recordPollFailure(id: string, message: string) {
   );
 }
 
-export interface SaveSummary {
-  status: "saved" | "partial" | "failed";
-  paths: string[];
-  error?: string;
-}
-
-export async function saveResult(
-  result: {
-    output_format?: string;
-    images?: { b64_json: string }[];
-    b64_json?: string;
-  },
-  jobId: string
-): Promise<SaveSummary> {
-  const dir = useStore.getState().settings.outputDir;
-  if (!dir) return { status: "failed", paths: [], error: "未配置输出目录" };
-  const ext = result.output_format || "png";
-  let imgs: string[] = [];
-  if (result.images) imgs = result.images.map((i) => i.b64_json);
-  else if (result.b64_json) imgs = [result.b64_json];
-  const paths: string[] = [];
-  const errors: string[] = [];
-  for (let k = 0; k < imgs.length; k++) {
-    if (!imgs[k]) continue;
-    try {
-      const saved = await api.saveOutput(
-        imgs[k],
-        ext,
-        `sdcpp_${jobId}${imgs.length > 1 ? "_" + k : ""}`,
-        dir
-      );
-      if (saved.saved && saved.path) paths.push(saved.path);
-      else errors.push(saved.reason || `第 ${k + 1} 个文件保存失败`);
-    } catch (e) {
-      errors.push(formatError(e));
+/** 单张图片/视频手动保存到输出目录。key 为图片索引字符串(视频为 "v")。
+ * 与"下载"(save-as 弹窗选路径)区分:本按钮一键落盘到配置的输出目录,
+ * 生成过程不再自动保存(用户明确要求)。 */
+export async function saveEntryPart(jobId: string, key: string): Promise<void> {
+  const store = useStore.getState();
+  const entry = store.results.find((r) => r.jobId === jobId);
+  if (!entry) return;
+  if (entry.saves?.[key]?.status === "saving") return;
+  const dir = store.settings.outputDir;
+  if (!dir) {
+    store.toast("未配置输出目录，请先到控制台设置", true);
+    return;
+  }
+  const ext = entry.result.output_format || "png";
+  const b64 =
+    key === "v"
+      ? entry.result.b64_json
+      : entry.result.images?.[Number(key)]?.b64_json;
+  if (!b64) return;
+  const name = key === "v" ? `sdcpp_${jobId}` : `sdcpp_${jobId}_${key}`;
+  const mark = (
+    status: ImageSaveState["status"],
+    extra?: Partial<ImageSaveState>
+  ) =>
+    useStore.getState().setResults((rs) =>
+      rs.map((r) =>
+        r.jobId === jobId
+          ? { ...r, saves: { ...r.saves, [key]: { status, ...extra } } }
+          : r
+      )
+    );
+  mark("saving");
+  try {
+    const saved = await api.saveOutput(b64, ext, name, dir);
+    if (saved.saved && saved.path) {
+      mark("saved", { path: saved.path });
+      useStore.getState().toast(`已保存到输出目录：${saved.path}`);
+    } else {
+      const reason = saved.reason || "未知原因";
+      mark("failed", { error: reason });
+      useStore.getState().toast(`保存失败：${reason}`, true);
     }
+  } catch (e) {
+    const msg = formatError(e);
+    mark("failed", { error: msg });
+    useStore.getState().toast(`保存失败：${msg}`, true);
   }
-  if (errors.length === 0 && paths.length > 0) return { status: "saved", paths };
-  if (paths.length > 0) {
-    return { status: "partial", paths, error: errors.join("；") };
-  }
-  return {
-    status: "failed",
-    paths,
-    error: errors.join("；") || "没有可保存的输出数据",
-  };
 }
 
 /**
- * 收割一个已完成任务的结果（进画廊 + 自动保存）。轮询循环与"取消时任务
+ * 收割一个已完成任务的结果（进画廊）。轮询循环与"取消时任务
  * 恰好已完成"两条路径共用：取消响应里的 completed 任务不会再被轮询处理
  * （轮询只跟踪 queued/generating/unknown），必须在这里直接收割，否则结果
  * 永久丢失（审查 P1）。返回是否实际收割（幂等）。
@@ -192,7 +198,14 @@ export function ingestCompletedJob(d: Job): boolean {
   const store = useStore.getState();
   processedJobs.add(d.id);
   const result = d.result;
-  const autoSave = !!store.settings.outputDir;
+  const what = result.b64_json
+    ? "视频已就绪"
+    : result.images && result.images.length > 1
+      ? `${result.images.length} 张图片就绪`
+      : "图片已就绪";
+  // 系统级提醒:失焦时闪任务栏 + 原生通知(聚焦时界面内动画已足够)
+  flashWindow();
+  void notifyIfUnfocused("流光 · 生成完成", what);
   const cfg = store.jobs.find((x) => x.id === d.id)?.config;
   store.setResults((r) => {
     const entry: ResultEntry = {
@@ -202,65 +215,10 @@ export function ingestCompletedJob(d: Job): boolean {
       created: d.created,
       completedAt: Date.now(),
       config: cfg,
-      saveStatus: autoSave ? "saving" : "not_configured",
     };
     // 结果内存上限：最新在前，超出丢弃最旧（对抗性审查 B5）。
     return [entry, ...r].slice(0, MAX_RESULTS);
   });
-  if (autoSave) {
-    void saveResult(result, d.id).then((summary) => {
-      const latest = useStore.getState();
-      latest.setResults((entries) =>
-        entries.map((entry) =>
-          entry.jobId === d.id
-            ? {
-                ...entry,
-                saveStatus: summary.status,
-                savePaths: summary.paths,
-                saveError: summary.error,
-              }
-            : entry
-        )
-      );
-      if (summary.status === "failed" || summary.status === "partial") {
-        latest.toast(
-          summary.status === "partial"
-            ? `自动保存部分失败：${summary.error}`
-            : `自动保存失败：${summary.error}`,
-          true
-        );
-      }
-    });
-  }
+  store.toast(`生成完成 · ${what}`);
   return true;
-}
-
-/** 自动保存重试（ResultsGrid 的"重试保存"按钮）。模块级函数，供
- * GenerationUI 经稳定引用转发给 memo 子组件。 */
-export async function retrySave(jobId: string): Promise<void> {
-  const store = useStore.getState();
-  const entry = store.results.find((result) => result.jobId === jobId);
-  if (!entry) return;
-  store.setResults((results) =>
-    results.map((result) =>
-      result.jobId === jobId
-        ? { ...result, saveStatus: "saving", saveError: undefined }
-        : result
-    )
-  );
-  const summary = await saveResult(entry.result, jobId);
-  useStore.getState().setResults((results) =>
-    results.map((result) =>
-      result.jobId === jobId
-        ? {
-            ...result,
-            saveStatus: summary.status,
-            savePaths: summary.paths,
-            saveError: summary.error,
-          }
-        : result
-    )
-  );
-  if (summary.status === "saved") useStore.getState().toast("自动保存重试成功");
-  else useStore.getState().toast(`保存重试失败：${summary.error}`, true);
 }

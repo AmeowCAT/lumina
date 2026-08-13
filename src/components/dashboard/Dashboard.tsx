@@ -436,9 +436,19 @@ export function Dashboard() {
 					job.status === "generating" ||
 					job.status === "unknown",
 			).length;
-			const unsavedResults = results.filter(
-				(result) => result.saveStatus !== "saved",
-			).length;
+			// 全部图片/视频都已手动保存到输出目录才算"安全保存"
+			const unsavedResults = results.filter((result) => {
+				if (result.result?.images?.length) {
+					return !result.result.images.every(
+						(img, i) =>
+							result.saves?.[String(img.index ?? i)]?.status === "saved",
+					);
+				}
+				if (result.result?.b64_json) {
+					return result.saves?.["v"]?.status !== "saved";
+				}
+				return false;
+			}).length;
 			const impacts = [
 				activeJobs > 0 ? `${activeJobs} 个活动任务` : "",
 				unsavedResults > 0 ? `${unsavedResults} 个尚未安全保存的结果` : "",
@@ -567,7 +577,7 @@ export function Dashboard() {
 					</div>
 					<div className="orb-actions">
 						{external && (
-							<span className="tag" style={{ fontSize: 11, opacity: 0.7 }}>
+							<span className="tag text-[11px] opacity-70">
 								外部进程
 							</span>
 						)}
@@ -852,7 +862,7 @@ export function Dashboard() {
 							onChange={(e) =>
 								setSettings((s) => ({ ...s, outputDir: e.target.value }))
 							}
-							placeholder="例如 D:\output（留空则不自动保存）"
+							placeholder="例如 D:\output（留空则无法一键保存）"
 						/>
 						<button
 							className="icon-btn"
@@ -862,7 +872,7 @@ export function Dashboard() {
 							{IC.folder}
 						</button>
 					</div>
-					<div className="field-hint">生成图片/视频的保存路径</div>
+					<div className="field-hint">「保存到输出目录」按钮的目标路径（不再自动保存）</div>
 				</Panel>
 				</div>
 
@@ -897,7 +907,7 @@ export function Dashboard() {
 									/>
 								</div>
 								{mainModel && detectedFamily && (
-									<div className="form-row" style={{ marginTop: 8 }}>
+									<div className="form-row mt-2">
 										<label className="form-label" htmlFor="dashboard-family">
 											识别类型
 										</label>
@@ -921,7 +931,7 @@ export function Dashboard() {
 											}))}
 										/>
 										{familyConfig && (
-											<span className="tag" style={{ marginLeft: 4 }}>
+											<span className="tag ml-1">
 												{familyConfig.hint}
 											</span>
 										)}
@@ -1007,7 +1017,7 @@ export function Dashboard() {
 												})),
 											]}
 										/>
-										<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+										<div className="field-hint field-hint-flush mt-0.5">
 											{settings.vaeFormat
 												? "必须与 PiD checkpoint 使用的 VAE latent 布局一致"
 												: "无法从文件名可靠确定，请按模型卡选择对应格式"}
@@ -1058,7 +1068,7 @@ export function Dashboard() {
 							]}
 						/>
 					</div>
-					<div className="form-row" style={{ marginTop: 8 }}>
+					<div className="form-row mt-2">
 						<label className="form-label" htmlFor="dashboard-backend-custom">
 							自定义 --backend
 						</label>
@@ -1072,7 +1082,7 @@ export function Dashboard() {
 							}
 							placeholder="例如 cuda0 或 clip=cpu,vae=cuda0,diffusion=vulkan0"
 						/>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							支持组件级分配，如 clip=cpu,diffusion=cuda0
 						</div>
 					</div>
@@ -1103,13 +1113,13 @@ export function Dashboard() {
 								{ value: "cosmos_reference", label: "Anima / Cosmos Reference" },
 							]}
 						/>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							作为 --ref-image-args preset=… 在模型启动时传给
 							sd-server；通常保持自动即可
 						</div>
 						{(detectedFamily === "krea2" ||
 							detectedFamily === "krea2-turbo") && (
-							<div className="field-hint" style={{ margin: "4px 0 0 0" }}>
+							<div className="field-hint field-hint-flush mt-1">
 								Krea2 自动模式使用 Ostris Edit；仅 lbouaraba/krea2edit
 								一类模型选择 “Krea2 Edit 768”
 							</div>
@@ -1126,11 +1136,11 @@ export function Dashboard() {
 								setSettings((s) => ({ ...s, offloadCpu: v }))
 							}
 						/>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							将部分层卸载到 CPU 以节省显存，适合低显存跑大模型
 						</div>
 					</div>
-					<div className="form-row" style={{ marginTop: 8 }}>
+					<div className="form-row mt-2">
 						<label className="form-label" htmlFor="dashboard-max-vram-mode">
 							显存预算（--max-vram）
 						</label>
@@ -1152,7 +1162,7 @@ export function Dashboard() {
 							{maxVramMode === "fixed" && (
 								<NumberInput
 									id="dashboard-max-vram-fixed"
-									style={{ width: 96, flexShrink: 0 }}
+									className="w-24 shrink-0"
 									value={Number(maxVramRaw) || 0}
 									min={0}
 									max={256}
@@ -1166,7 +1176,7 @@ export function Dashboard() {
 							{maxVramMode === "auto" && (
 								<NumberInput
 									id="dashboard-max-vram-reserve"
-									style={{ width: 96, flexShrink: 0 }}
+									className="w-24 shrink-0"
 									value={Math.abs(Number(maxVramRaw)) || 2}
 									min={0.5}
 									max={64}
@@ -1180,9 +1190,9 @@ export function Dashboard() {
 							{maxVramMode === "custom" && (
 								<input
 									id="dashboard-max-vram-custom"
-									className="input flex-1"
+									className="input flex-1 min-w-0"
 									type="text"
-									style={{ minWidth: 0 }}
+									
 									value={settings.maxVram || ""}
 									onChange={(e) =>
 										setSettings((s) => ({ ...s, maxVram: e.target.value }))
@@ -1192,7 +1202,7 @@ export function Dashboard() {
 								/>
 							)}
 						</div>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							{maxVramMode === "unset" &&
 								"不传 --max-vram：不做图切分预算，引擎使用全部可用显存"}
 							{maxVramMode === "fixed" &&
@@ -1203,7 +1213,7 @@ export function Dashboard() {
 								"按后端/设备分别指定预算（GiB），逗号分隔"}
 						</div>
 					</div>
-					<div className="form-row" style={{ marginTop: 8 }}>
+					<div className="form-row mt-2">
 						<label className="form-label" htmlFor="dashboard-quant-type">
 							加载时量化（--type）
 						</label>
@@ -1244,12 +1254,12 @@ export function Dashboard() {
 								{ value: "f32", label: "F32" },
 							]}
 						/>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							Q4_K 等 K 量化不区分 _S/_M 配方；混合精度（如视觉塔保
 							F16）需在附加启动参数写 --tensor-type-rules
 						</div>
 					</div>
-					<div className="form-row" style={{ marginTop: 8 }}>
+					<div className="form-row mt-2">
 						<label className="form-label" htmlFor="dashboard-extra-args">
 							附加启动参数
 						</label>
@@ -1263,17 +1273,17 @@ export function Dashboard() {
 							}
 							placeholder="例如 --threads 8 --mmap --stream-layers"
 						/>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							原样拼接到 sd-server 命令行，兜底所有未在界面暴露的参数
 						</div>
 					</div>
-					<div className="form-row" style={{ marginTop: 8 }}>
+					<div className="form-row mt-2">
 						<label className="form-label" htmlFor="dashboard-max-queue">
 							最大队列
 						</label>
 						<NumberInput
 							id="dashboard-max-queue"
-							style={{ width: 80 }}
+							className="w-20"
 							value={settings.maxQueueSize ?? 4}
 							min={1}
 							max={32}
@@ -1282,17 +1292,17 @@ export function Dashboard() {
 							}
 							ariaLabel="最大队列数量"
 						/>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							生成队列上限（服务器未提供时生效）
 						</div>
 					</div>
-					<div className="form-row" style={{ marginTop: 8 }}>
+					<div className="form-row mt-2">
 						<label className="form-label" htmlFor="dashboard-sd-port">
 							启动端口
 						</label>
 						<NumberInput
 							id="dashboard-sd-port"
-							style={{ width: 96 }}
+							className="w-24"
 							value={sdPort}
 							min={MIN_SD_PORT}
 							max={MAX_SD_PORT}
@@ -1301,7 +1311,7 @@ export function Dashboard() {
 							}
 							ariaLabel="sd-server 启动端口"
 						/>
-						<div className="field-hint" style={{ margin: "2px 0 0 0" }}>
+						<div className="field-hint field-hint-flush mt-0.5">
 							sd-server 监听 127.0.0.1 的端口，默认 {DEFAULT_SD_PORT}；范围{" "}
 							{MIN_SD_PORT}–{MAX_SD_PORT}
 							{running && sdPort !== serverStatus?.sdPort

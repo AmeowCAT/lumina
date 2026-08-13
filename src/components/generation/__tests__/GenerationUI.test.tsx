@@ -158,6 +158,8 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     });
     render(<GenerationUI />);
 
+    // 参数移入召唤式 Sheet：关闭时整层 inert(不可达),须先唤起再查询
+    screen.getByLabelText("打开参数面板").click();
     expect(await screen.findByRole("slider", { name: /图生视频强度/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "8 帧" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "16 帧" })).toBeTruthy();
@@ -237,6 +239,7 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     });
     render(<GenerationUI />);
 
+    screen.getByLabelText("打开参数面板").click();
     expect(
       await screen.findByRole("button", { name: "添加条件帧" })
     ).toBeTruthy();

@@ -53,7 +53,7 @@ export function NumberInput({
     <input
       id={inputId}
       type="number"
-      className={cn("input", className)}
+      className={cn("input", invalid && "invalid", className)}
       value={draft}
       min={min}
       max={max}

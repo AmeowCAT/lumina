@@ -23,7 +23,7 @@ describe("accessible UI controls", () => {
     const { rerender } = render(
       <>
         <button type="button">打开预览</button>
-        <Lightbox item={null} onClose={onClose} />
+        <Lightbox items={[]} index={0} onClose={onClose} />
       </>
     );
     const trigger = screen.getByRole("button", { name: "打开预览" });
@@ -32,7 +32,11 @@ describe("accessible UI controls", () => {
     rerender(
       <>
         <button type="button">打开预览</button>
-        <Lightbox item={{ type: "image", src: "data:image/png;base64," }} onClose={onClose} />
+        <Lightbox
+          items={[{ type: "image", src: "data:image/png;base64," }]}
+          index={0}
+          onClose={onClose}
+        />
       </>
     );
 
@@ -45,7 +49,7 @@ describe("accessible UI controls", () => {
     rerender(
       <>
         <button type="button">打开预览</button>
-        <Lightbox item={null} onClose={onClose} />
+        <Lightbox items={[]} index={0} onClose={onClose} />
       </>
     );
     await waitFor(() => expect(document.activeElement?.textContent).toBe("打开预览"));

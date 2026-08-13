@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import { DEFAULT_SD_PORT, formatError } from "../../lib/utils";
+import { IC } from "./Icons";
 import { TwoTapButton } from "./TwoTapButton";
 
 /**
@@ -104,7 +105,7 @@ export function LogPanel() {
           {logs.length}
         </span>
         <span className="log-chevron" aria-hidden="true">
-          {open ? "▼" : "▲"}
+          {IC.chev}
         </span>
       </div>
       {open && (
@@ -121,7 +122,17 @@ export function LogPanel() {
             <div className="log-empty">等待日志…</div>
           ) : (
             logs.map((l, i) => (
-              <div key={i} className="log-line">
+              <div
+                key={i}
+                className={
+                  "log-line" +
+                  (/error|failed|panic|fatal|exception/i.test(l)
+                    ? " log-err"
+                    : /warn/i.test(l)
+                      ? " log-warn"
+                      : "")
+                }
+              >
                 {l}
               </div>
             ))

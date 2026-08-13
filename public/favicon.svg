@@ -1,28 +1,28 @@
 <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="lumina-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#1a1e28"/>
-      <stop offset="1" stop-color="#0d0f14"/>
+      <stop stop-color="#221c12"/>
+      <stop offset="1" stop-color="#100d09"/>
     </linearGradient>
     <linearGradient id="lumina-flow" x1="12" y1="54" x2="52" y2="12" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#2dd4bf"/>
-      <stop offset="0.5" stop-color="#22d3ee"/>
-      <stop offset="1" stop-color="#818cf8"/>
+      <stop stop-color="#f5d78e"/>
+      <stop offset="0.5" stop-color="#d9a441"/>
+      <stop offset="1" stop-color="#b56a35"/>
     </linearGradient>
     <radialGradient id="lumina-spark" cx="0.5" cy="0.5" r="0.5">
-      <stop stop-color="#ffffff"/>
-      <stop offset="0.45" stop-color="#5eead4"/>
-      <stop offset="1" stop-color="#14b8a6" stop-opacity="0"/>
+      <stop stop-color="#fff8e6"/>
+      <stop offset="0.45" stop-color="#f5d78e"/>
+      <stop offset="1" stop-color="#d9a441" stop-opacity="0"/>
     </radialGradient>
   </defs>
   <rect width="64" height="64" rx="15" fill="url(#lumina-bg)"/>
   <rect x="0.5" y="0.5" width="63" height="63" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
   <g fill="none" stroke-linecap="round">
-    <path d="M15 47 C 22 33, 31 27, 49 17" stroke="#14b8a6" stroke-opacity="0.22" stroke-width="11"/>
+    <path d="M15 47 C 22 33, 31 27, 49 17" stroke="#d9a441" stroke-opacity="0.22" stroke-width="11"/>
     <path d="M15 47 C 22 33, 31 27, 49 17" stroke="url(#lumina-flow)" stroke-width="6"/>
     <path d="M17 53 C 27 43, 37 36, 51 29" stroke="url(#lumina-flow)" stroke-width="3.5" stroke-opacity="0.85"/>
     <path d="M22 55 C 32 50, 41 45, 53 39" stroke="url(#lumina-flow)" stroke-width="2" stroke-opacity="0.5"/>
   </g>
   <circle cx="49" cy="17" r="7" fill="url(#lumina-spark)"/>
-  <circle cx="49" cy="17" r="2.6" fill="#ffffff"/>
+  <circle cx="49" cy="17" r="2.6" fill="#fff8e6"/>
 </svg>

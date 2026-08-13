@@ -27,14 +27,14 @@ export function Logo({ size = 28 }: { size?: number }) {
           <stop offset="1" stopColor="#100d09" />
         </linearGradient>
         <linearGradient id={flow} x1="12" y1="54" x2="52" y2="12" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#f5d78e" />
-          <stop offset="0.5" stopColor="#d9a441" />
-          <stop offset="1" stopColor="#b56a35" />
+          <stop stopColor="var(--color-flow-start)" />
+          <stop offset="0.5" stopColor="var(--color-accent)" />
+          <stop offset="1" stopColor="var(--color-flow-end)" />
         </linearGradient>
         <radialGradient id={spark} cx="0.5" cy="0.5" r="0.5">
           <stop stopColor="#fff8e6" />
-          <stop offset="0.45" stopColor="#f5d78e" />
-          <stop offset="1" stopColor="#d9a441" stopOpacity="0" />
+          <stop offset="0.45" stopColor="var(--color-flow-start)" />
+          <stop offset="1" stopColor="var(--color-accent)" stopOpacity="0" />
         </radialGradient>
       </defs>
       <rect width="64" height="64" rx="15" fill={`url(#${bg})`} />
@@ -51,7 +51,7 @@ export function Logo({ size = 28 }: { size?: number }) {
       <g fill="none" strokeLinecap="round">
         <path
           d="M15 47 C 22 33, 31 27, 49 17"
-          stroke="#d9a441"
+          stroke="var(--color-accent)"
           strokeOpacity="0.22"
           strokeWidth="11"
         />

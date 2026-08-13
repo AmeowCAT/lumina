@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type { Capabilities, GenMode, Job, JobConfig } from "../../types";
+import { useStore } from "../../store";
 import { IC } from "../ui/Icons";
 
 interface Props {
@@ -32,6 +33,19 @@ function statusLabel(status: Job["status"]): string {
   }
 }
 
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
+}
+
+function elapsedLabel(created?: number, endedAt?: number): string {
+  if (!created) return "";
+  const ms = (endedAt ?? Date.now()) - created;
+  if (ms < 1000) return "";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${s % 60}s`;
+}
+
 export const JobQueue = memo(function JobQueue({
   jobs,
   activeJobs,
@@ -44,6 +58,11 @@ export const JobQueue = memo(function JobQueue({
   onClear,
   onDownload,
 }: Props) {
+  const progressStep = useStore((s) => s.progressStep);
+  const progressTotal = useStore((s) => s.progressTotal);
+  const pct =
+    progressTotal > 0 ? Math.min(100, Math.round((progressStep / progressTotal) * 100)) : 0;
+
   return (
     <div className="job-queue">
       <div className="jq-header">
@@ -66,65 +85,96 @@ export const JobQueue = memo(function JobQueue({
       {jobs.length === 0 ? (
         <div className="empty-state">暂无任务</div>
       ) : (
-        jobs.map((j) => (
-          <div key={j.id} className="job-row">
-            <span className="job-id">{j.id}</span>
-            <span className="job-mode">
-              {(j.kind || mode) === "img_gen" ? "IMG" : "VID"}
-            </span>
-            <span
-              className={`job-status ${j.status}`}
-              title={j.error?.message}
-              role={j.status === "failed" ? "alert" : "status"}
-            >
-              {statusLabel(j.status)}
-            </span>
-            <span className="job-prompt">{j.prompt || ""}</span>
-            <div className="job-actions">
-              <button
-                className="btn btn-sm"
-                title="应用此配置"
-                aria-label={`应用任务 ${j.id} 的配置`}
-                onClick={() => onApplyConfig(j.config)}
-              >
-                {IC.refresh}
-              </button>
-              {(j.status === "queued" ||
-                (j.status === "generating" &&
-                  caps?.features_by_mode?.[j.kind || mode]?.cancel_generating)) && (
-                <button
-                  className="btn btn-sm btn-danger"
-                  aria-label={`取消任务 ${j.id}`}
-                  onClick={() => onCancel(j.id)}
+        jobs.map((j) => {
+          const generating = j.status === "generating";
+          const terminal =
+            j.status === "completed" ||
+            j.status === "failed" ||
+            j.status === "cancelled";
+          const elapsed = elapsedLabel(
+            j.created,
+            terminal ? j.lastPollSuccess : undefined
+          );
+          return (
+            <div key={j.id} className="job-row-wrap">
+              <div className="job-row">
+                <span className="job-id" title={`任务 ${j.id}`}>
+                  {shortId(j.id)}
+                </span>
+                <span className="job-mode">
+                  {(j.kind || mode) === "img_gen" ? "IMG" : "VID"}
+                </span>
+                <span
+                  className={`job-status ${j.status}`}
+                  title={j.error?.message}
+                  role={j.status === "failed" ? "alert" : "status"}
                 >
-                  取消
-                </button>
-              )}
-              {j.status === "completed" && j.result && (
-                <button
-                  className="btn btn-sm"
-                  aria-label={`下载任务 ${j.id} 的结果`}
-                  onClick={() => {
-                    const img =
-                      j.result?.images?.[0]?.b64_json || j.result?.b64_json;
-                    if (img)
-                      onDownload(img, j.result?.output_format, j.result?.mime_type);
-                  }}
+                  {statusLabel(j.status)}
+                </span>
+                <span className="job-prompt">{j.prompt || ""}</span>
+                <span className="job-elapsed" aria-hidden="true">
+                  {elapsed}
+                </span>
+                <div className="job-actions">
+                  <button
+                    className="btn btn-sm"
+                    title="应用此配置"
+                    aria-label={`应用任务 ${j.id} 的配置`}
+                    onClick={() => onApplyConfig(j.config)}
+                  >
+                    {IC.refresh}
+                  </button>
+                  {(j.status === "queued" ||
+                    (generating &&
+                      caps?.features_by_mode?.[j.kind || mode]
+                        ?.cancel_generating)) && (
+                    <button
+                      className="btn btn-sm btn-danger"
+                      aria-label={`取消任务 ${j.id}`}
+                      onClick={() => onCancel(j.id)}
+                    >
+                      取消
+                    </button>
+                  )}
+                  {j.status === "completed" && j.result && (
+                    <button
+                      className="btn btn-sm"
+                      aria-label={`下载任务 ${j.id} 的结果`}
+                      onClick={() => {
+                        const img =
+                          j.result?.images?.[0]?.b64_json || j.result?.b64_json;
+                        if (img)
+                          onDownload(img, j.result?.output_format, j.result?.mime_type);
+                      }}
+                    >
+                      {IC.dl}
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-sm jq-remove"
+                    title="移除任务记录"
+                    aria-label={`移除任务 ${j.id} 的记录`}
+                    onClick={() => onRemove(j.id)}
+                  >
+                    {IC.x}
+                  </button>
+                </div>
+              </div>
+              {generating && progressTotal > 0 && (
+                <div
+                  className="job-progress"
+                  role="progressbar"
+                  aria-label="任务生成进度"
+                  aria-valuemin={0}
+                  aria-valuemax={progressTotal}
+                  aria-valuenow={Math.min(progressStep, progressTotal)}
                 >
-                  {IC.dl}
-                </button>
+                  <div className="job-progress-fill" style={{ width: `${pct}%` }} />
+                </div>
               )}
-              <button
-                className="btn btn-sm jq-remove"
-                title="移除任务记录"
-                aria-label={`移除任务 ${j.id} 的记录`}
-                onClick={() => onRemove(j.id)}
-              >
-                {IC.x}
-              </button>
             </div>
-          </div>
-        ))
+          );
+        })
       )}
     </div>
   );

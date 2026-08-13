@@ -67,7 +67,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           onUpdate("vae_tiling_params", { ...vaeTilingParams, enabled: v })
         }
       />
-      <div className="form-row" style={{ marginTop: 8 }}>
+      <div className="form-row mt-2">
         <label className="form-label" htmlFor="cache-mode">
           缓存
         </label>

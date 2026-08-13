@@ -6,11 +6,13 @@ import {
   File,
   Folder,
   Image,
+  Maximize2,
   Package,
   Play,
   Plus,
   Power,
   RotateCcw,
+  Save,
   Upload,
   X,
 } from "lucide-react";
@@ -30,4 +32,6 @@ export const IC: Record<string, ReactNode> = {
   box: <Package size={14} strokeWidth={1.8} aria-hidden="true" />,
   file: <File size={14} strokeWidth={1.8} aria-hidden="true" />,
   image: <Image size={13} strokeWidth={1.8} aria-hidden="true" />,
+  zoom: <Maximize2 size={13} strokeWidth={2} aria-hidden="true" />,
+  save: <Save size={13} strokeWidth={2} aria-hidden="true" />,
 };

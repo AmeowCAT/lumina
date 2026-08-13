@@ -1,12 +1,20 @@
 import { AnimatePresence, motion } from "motion/react";
+import { TriangleAlert } from "lucide-react";
 import { useStore } from "../../store";
 import { cn } from "./cn";
 
 export function ToastContainer() {
   const toasts = useStore((s) => s.toasts);
   const dismiss = useStore((s) => s.dismissToast);
+  const pauseToasts = useStore((s) => s.pauseToasts);
+  const resumeToasts = useStore((s) => s.resumeToasts);
   return (
-    <div className="toast-container" aria-label="通知">
+    <div
+      className="toast-container"
+      aria-label="通知"
+      onMouseEnter={pauseToasts}
+      onMouseLeave={resumeToasts}
+    >
       <AnimatePresence initial={false}>
         {toasts.map((t) => (
           <motion.div
@@ -20,10 +28,27 @@ export function ToastContainer() {
             role={t.error ? "alert" : "status"}
             aria-live={t.error ? "assertive" : "polite"}
           >
-            <span className="toast-message">
-              {t.error ? "⚠ " : ""}
-              {t.msg}
-            </span>
+            {t.error && (
+              <TriangleAlert
+                size={14}
+                strokeWidth={2.2}
+                className="toast-icon"
+                aria-hidden="true"
+              />
+            )}
+            <span className="toast-message">{t.msg}</span>
+            {t.action && (
+              <button
+                type="button"
+                className="toast-action"
+                onClick={() => {
+                  t.action!.onClick();
+                  dismiss(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
             <button
               type="button"
               className="toast-dismiss"
