@@ -290,28 +290,9 @@ fn resolve_executable(exe_path: &str) -> Result<PathBuf> {
     } else {
         let path = PathBuf::from(input);
         if path.is_file() {
-            // 显式指向文件时要求文件名是 sd-server（或其变体，如
-            // sd-server-cuda.exe）：settings.json 的 exe_dir 被完全信任，
-            // 防止把任意可执行文件当 sd-server 启动（对抗性审查 C）。
-            // 允许 sd-server 前缀，避免破坏"重命名二进制"的老配置
-            // （与 backend 预探测回归同类的教训：校验宁可宽、不可堵）。
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            let lower = name.to_ascii_lowercase();
-            let ok = if cfg!(windows) {
-                lower.starts_with("sd-server")
-            } else {
-                name.starts_with("sd-server")
-            };
-            if !ok {
-                anyhow::bail!(
-                    "{} 不是 sd-server（文件名为 {}，应以 sd-server 开头）",
-                    path.display(),
-                    name
-                );
-            }
+            // 文件名身份校验上移到 start()：先按名快速放行，名字不符再回退
+            // --list-devices 探测验证（防止把任意可执行文件当 sd-server
+            // 启动，同时不破坏"重命名二进制"的老配置——审查 P4a）。
             path
         } else if path.is_dir() {
             path.join(binary_name)
@@ -337,6 +318,31 @@ fn resolve_executable(exe_path: &str) -> Result<PathBuf> {
     Ok(executable)
 }
 
+/// 显式路径的快速身份校验：文件名以 sd-server 开头（Windows 不区分大小
+/// 写）。不匹配时由 start() 里的 `--list-devices` 探测兜底验证（审查 P4a）。
+fn exe_name_looks_like_sd_server(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    if cfg!(windows) {
+        name.to_ascii_lowercase().starts_with("sd-server")
+    } else {
+        name.starts_with("sd-server")
+    }
+}
+
+/// `--list-devices` 输出形状判定：至少一行 `name<TAB>description` 且 name
+/// 非空。只有 sd-server 系二进制支持该参数并打印该格式，任意可执行文件
+/// 被误当 sd-server 启动的概率可忽略（审查 P4a）。
+fn device_list_looks_plausible(output: &str) -> bool {
+    output.lines().any(|line| {
+        let mut parts = line.split('\t');
+        let name = parts.next().unwrap_or("").trim();
+        !name.is_empty() && parts.next().is_some()
+    })
+}
+
 fn now_epoch_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -344,16 +350,56 @@ fn now_epoch_seconds() -> u64 {
         .as_secs()
 }
 
+/// 根目录里 ≤ 该大小的 embedding 类文件视为用户真实放置的 embedding
+/// （扁平布局）；模型权重动辄数百 MB 以上，不会命中。
+const EMBEDDING_SMALL_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// 目录顶层是否存在"小"的 embedding 类文件（.gguf/.safetensors/.pt/.ckpt）。
+fn dir_has_small_embedding_files(dir: &Path) -> bool {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                let path = entry.path();
+                if !path.is_file() {
+                    return false;
+                }
+                let ok_ext = path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| {
+                        matches!(
+                            ext.to_ascii_lowercase().as_str(),
+                            "gguf" | "safetensors" | "pt" | "ckpt"
+                        )
+                    })
+                    .unwrap_or(false);
+                if !ok_ext {
+                    return false;
+                }
+                path.metadata()
+                    .map(|m| m.len() < EMBEDDING_SMALL_FILE_BYTES)
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// 收窄 embd-dir：上游 `build_embedding_map`（common.cpp）会把 embd-dir 下所有
 /// `.gguf/.safetensors/.pt/.ckpt` 文件的 stem 注册为 embedding 键。指向整个
 /// 模型目录时，模型权重文件本身也会被注册进去（对抗性审查 A2）。仅在专用
-/// `embeddings/` 子目录**实际包含 embedding 类文件**时才改指子目录——避免
-/// 破坏扁平布局用户恰好有同名无关目录的老配置（重审教训：宁可宽、不可堵）。
+/// `embeddings/` 子目录**实际包含 embedding 类文件**、且根目录**没有**小
+/// embedding 类文件时才改指子目录：根目录有真实 embedding（扁平布局）时
+/// 收窄会把它们从注册集合丢掉（上游只非递归扫描 embd-dir 顶层），此时
+/// 保持原值（审查 P4c）。
 fn refine_component_dirs(args: &mut serde_json::Value) {
     let Some(obj) = args.as_object_mut() else { return };
     let Some(embd) = obj.get("embd-dir").and_then(|v| v.as_str()) else { return };
     let base = Path::new(embd);
     if !base.is_dir() {
+        return;
+    }
+    // 扁平布局守卫：根目录存在小 embedding 文件时不收窄（审查 P4c）。
+    if dir_has_small_embedding_files(base) {
         return;
     }
     for candidate in ["embeddings", "embedding"] {
@@ -436,11 +482,27 @@ fn backend_spec_tokens(spec: &str) -> Vec<String> {
 const UNPROBABLE_BACKEND_TOKENS: &[&str] =
     &["", "default", "auto", "gpu", "cpu", "metal", "blas"];
 
+/// 单个 token 是否需要经 `--list-devices` 设备列表校验。只校验**以数字
+/// 结尾**的 token（cuda0/rocm2/vulkan1 这类带编号设备名）：上游
+/// `sd_backend_resolve_name` 除设备名外还接受 registry 名（CUDA/ROCm/
+/// Vulkan/SYCL/MUSA/OpenCL/Metal/…，大小写不敏感），这些名字不会以数字
+/// 结尾、也不出现在设备列表里，旧实现会对它们整体误报。registry 名与
+/// 其他非编号 token 交给上游启动时校验（审查 P2）。
+fn backend_token_needs_probe(token: &str) -> bool {
+    let token = token.trim();
+    if token.is_empty()
+        || UNPROBABLE_BACKEND_TOKENS.contains(&token.to_ascii_lowercase().as_str())
+    {
+        return false;
+    }
+    token.ends_with(|c: char| c.is_ascii_digit())
+}
+
 /// spec 里是否存在需要探测的设备 token。
 fn backend_spec_needs_probe(spec: &str) -> bool {
-    backend_spec_tokens(spec).iter().any(|token| {
-        !UNPROBABLE_BACKEND_TOKENS.contains(&token.to_ascii_lowercase().as_str())
-    })
+    backend_spec_tokens(spec)
+        .iter()
+        .any(|token| backend_token_needs_probe(token))
 }
 
 /// 模拟上游 sd_backend_resolve_name 的宽松匹配（不区分大小写、token 为
@@ -455,10 +517,10 @@ fn find_backend_error(spec: &str, devices_output: &str) -> Option<String> {
         .collect();
     let mut missing: Vec<String> = Vec::new();
     for raw in backend_spec_tokens(spec) {
-        let token = raw.to_ascii_lowercase();
-        if token.is_empty() || UNPROBABLE_BACKEND_TOKENS.contains(&token.as_str()) {
+        if !backend_token_needs_probe(&raw) {
             continue;
         }
+        let token = raw.trim().to_ascii_lowercase();
         let matched = names
             .iter()
             .any(|name| name == &token || name.starts_with(&token) || token.starts_with(name));
@@ -705,23 +767,42 @@ impl ServerManager {
             .unwrap_or_default();
         let cmd_args = build_args(&args_json, port)?;
 
-        // backend 预探测（对抗性审查 A3）：设备型 token（cuda0/rocm/...）在
-        // 二进制未编译对应后端时会让 sd-server 启动即退。先跑 `--list-devices`
-        // 给出可读错误；复合 spec（all=cuda0,te=cpu）按 value 侧逐 token 校验。
-        // 旧版二进制不支持该参数时（探测返回 None）跳过校验。
-        if backend_spec_needs_probe(&backend_spec) {
+        // 二进制身份与 backend 预探测共用一次 `--list-devices` 调用：
+        // - 文件名不是 sd-server 前缀时，探测输出形状（name<TAB>description）
+        //   作为身份兜底——防止把任意可执行文件当 sd-server 启动，同时允许
+        //   重命名二进制的旧配置继续工作（对抗性审查 C / 审查 P4a）。
+        // - 设备型 backend token（cuda0/rocm/...）在二进制未编译对应后端时
+        //   会让 sd-server 启动即退，先探测给出可读错误（对抗性审查 A3）。
+        // 旧版二进制不支持该参数时（探测返回 None）跳过校验、维持旧行为。
+        let name_ok = exe_name_looks_like_sd_server(&exe);
+        let need_probe = !name_ok || backend_spec_needs_probe(&backend_spec);
+        let probe_output = if need_probe {
             let exe_for_probe = exe.clone();
-            let probe = tokio::time::timeout(
+            tokio::time::timeout(
                 Duration::from_secs(20),
                 tokio::task::spawn_blocking(move || probe_backend_devices(&exe_for_probe)),
             )
             .await
             .ok()
-            .and_then(|join| join.unwrap_or(None));
-            if let Some(output) = probe {
-                if let Some(error) = find_backend_error(&backend_spec, &output) {
-                    anyhow::bail!(error);
-                }
+            .and_then(|join| join.unwrap_or(None))
+        } else {
+            None
+        };
+        if !name_ok {
+            let plausible = probe_output
+                .as_deref()
+                .map(device_list_looks_plausible)
+                .unwrap_or(false);
+            if !plausible {
+                anyhow::bail!(
+                    "{} 不是 sd-server（文件名不以 sd-server 开头，且 --list-devices 探测未返回设备列表）",
+                    exe.display()
+                );
+            }
+        }
+        if let Some(output) = &probe_output {
+            if let Some(error) = find_backend_error(&backend_spec, output) {
+                anyhow::bail!(error);
             }
         }
 
@@ -1109,6 +1190,87 @@ mod tests {
         assert!(!backend_spec_needs_probe("gpu"));
         assert!(!backend_spec_needs_probe("all=metal,te=cpu"));
         assert!(backend_spec_needs_probe("all=cuda0,te=cpu"));
+    }
+
+    #[test]
+    fn backend_probe_skips_non_numeric_registry_name_tokens() {
+        let devices = "CUDA0\tNVIDIA GeForce RTX\nCPU\tGeneric CPU\n";
+        // registry 名（上游 sd_backend_resolve_name 接受，不以数字结尾）：
+        // 旧实现会误报"不在设备列表中"，现在直接跳过交给上游（审查 P2）。
+        assert!(find_backend_error("nvidia", devices).is_none());
+        assert!(find_backend_error("cuda", devices).is_none());
+        assert!(find_backend_error("all=metal,te=cpu", devices).is_none());
+        assert!(!backend_spec_needs_probe("nvidia"));
+        assert!(!backend_spec_needs_probe("mtl"));
+        // 带编号的设备 token 仍被校验：拼错会被拦截。
+        assert!(backend_spec_needs_probe("cuda9"));
+        assert!(find_backend_error("all=cuda9,te=cpu", devices).is_some());
+        assert!(find_backend_error("cuda0,te=rocm1", devices).is_some());
+    }
+
+    #[test]
+    fn device_list_plausibility_requires_tab_separated_rows() {
+        assert!(device_list_looks_plausible(
+            "CUDA0\tNVIDIA GeForce RTX\nCPU\tGeneric CPU\n"
+        ));
+        assert!(device_list_looks_plausible("Metal\tabc\n"));
+        assert!(!device_list_looks_plausible(""));
+        assert!(!device_list_looks_plausible("no tabs here\n"));
+        assert!(!device_list_looks_plausible("\tmissing name\n"));
+        assert!(!device_list_looks_plausible("CUDA0\n"));
+    }
+
+    #[test]
+    fn exe_name_check_accepts_sd_server_prefix_only() {
+        assert!(exe_name_looks_like_sd_server(Path::new("C:/x/sd-server.exe")));
+        assert!(exe_name_looks_like_sd_server(Path::new("/x/sd-server-cuda")));
+        assert!(!exe_name_looks_like_sd_server(Path::new("C:/x/notepad.exe")));
+        assert!(!exe_name_looks_like_sd_server(Path::new("/x/sd")));
+    }
+
+    #[test]
+    fn refine_component_dirs_respects_flat_layout_embeddings() {
+        let base = std::env::temp_dir().join(format!(
+            "lumina-embd-{}-{}",
+            std::process::id(),
+            now_epoch_seconds()
+        ));
+        let embed_sub = base.join("embeddings");
+        std::fs::create_dir_all(&embed_sub).unwrap();
+        std::fs::write(embed_sub.join("sub.safetensors"), b"sub").unwrap();
+
+        // 根目录有小 embedding 文件（扁平布局）→ 不收窄（审查 P4c）。
+        std::fs::write(base.join("style.pt"), b"embedding").unwrap();
+        let mut args = serde_json::json!({ "embd-dir": base.to_string_lossy() });
+        refine_component_dirs(&mut args);
+        assert_eq!(args["embd-dir"].as_str().unwrap(), base.to_string_lossy());
+
+        // 根目录只有大文件（模型权重）→ 收窄到 embeddings/。
+        std::fs::remove_file(base.join("style.pt")).unwrap();
+        let big = base.join("model.safetensors");
+        {
+            // set_len 稀疏扩文件；块作用域保证句柄先释放再 remove
+            // （Windows 打开中的文件无法删除）。
+            let f = std::fs::File::create(&big).unwrap();
+            f.set_len(EMBEDDING_SMALL_FILE_BYTES + 1).unwrap();
+        }
+        let mut args2 = serde_json::json!({ "embd-dir": base.to_string_lossy() });
+        refine_component_dirs(&mut args2);
+        assert_eq!(
+            args2["embd-dir"].as_str().unwrap(),
+            embed_sub.to_string_lossy()
+        );
+
+        // 根目录无 embedding 类文件 → 同样收窄。
+        std::fs::remove_file(&big).unwrap();
+        let mut args3 = serde_json::json!({ "embd-dir": base.to_string_lossy() });
+        refine_component_dirs(&mut args3);
+        assert_eq!(
+            args3["embd-dir"].as_str().unwrap(),
+            embed_sub.to_string_lossy()
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

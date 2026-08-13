@@ -30,6 +30,10 @@ export interface ResultEntry {
   saveError?: string;
 }
 
+/** server-log 流事件：progress（\r 原地刷新）与 line（\n 追加）按到达
+ * 顺序批量落库（审查 P4e）。 */
+export type LogEvent = { type: "line" | "progress"; text: string };
+
 interface StoreState {
   // toast
   toasts: ToastEntry[];
@@ -91,8 +95,9 @@ interface StoreState {
   lastProgress: boolean;
   appendLog: (text: string) => void;
   updateProgress: (text: string) => void;
-  /** 按帧批量落日志：App 级聚合高频 server-log 事件后一次写入。 */
-  flushLogs: (lines: string[], progress: string | null) => void;
+  /** 按帧批量落日志：App 级聚合高频 server-log 事件后一次写入。事件
+   * 保持到达顺序，progress 与 line 交替时合并行为与逐条处理一致（审查 P4e）。 */
+  flushLogs: (events: LogEvent[]) => void;
   clearLogs: () => void;
 
   // 生成进度（解析 stdout 的 step X/Y 行）
@@ -261,19 +266,26 @@ export const useStore = create<StoreState>((set, get) => ({
       const merged = mergeProgressLine(s.logs, s.lastProgress, text);
       return { logs: capLogs(merged.logs), lastProgress: merged.lastProgress };
     }),
-  flushLogs: (lines, progress) =>
+  flushLogs: (events) =>
     set((s) => {
+      // 按到达顺序逐条处理：line 追加、progress 解析步数并原地刷新/
+      // 追加最后一行。旧实现把两类事件分容器收集、flush 时先 line 后
+      // progress，同帧内到达顺序相反时合并结果与逐条处理不一致（审查 P4e）。
       let logs = s.logs.slice();
       let lastProgress = s.lastProgress;
-      for (const text of lines) {
-        logs.push(text);
-        lastProgress = false;
-      }
       let progressStep = s.progressStep;
       let progressTotal = s.progressTotal;
       let progressStartedAt = s.progressStartedAt;
-      if (progress != null && progress.trim() !== "") {
-        const parsed = parseStepProgress(progress);
+      for (const ev of events) {
+        if (ev.type === "line") {
+          if (ev.text === "") continue;
+          logs.push(ev.text);
+          lastProgress = false;
+          continue;
+        }
+        const text = ev.text;
+        if (text.trim() === "") continue;
+        const parsed = parseStepProgress(text);
         if (parsed) {
           const now = Date.now();
           progressStartedAt =
@@ -285,7 +297,7 @@ export const useStore = create<StoreState>((set, get) => ({
           progressStep = parsed.step;
           progressTotal = parsed.total;
         }
-        const merged = mergeProgressLine(logs, lastProgress, progress);
+        const merged = mergeProgressLine(logs, lastProgress, text);
         logs = merged.logs;
         lastProgress = merged.lastProgress;
       }

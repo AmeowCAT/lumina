@@ -40,8 +40,9 @@ export const api = {
   detectFamily: (path: string) => invoke<string>("detect_family", { path }),
 
   loadSettings: () => invoke<Settings>("load_settings"),
+  /** 后端可能在运行期用实际端口覆盖快照里的端口：返回被保持的端口供 UI 提示。 */
   saveSettings: (settings: Settings) =>
-    invoke<void>("save_settings", { settings }),
+    invoke<{ portKept?: number } | null>("save_settings", { settings }),
 
   pickFolder: () => invoke<string | null>("pick_folder"),
   pickFile: () => invoke<string | null>("pick_file"),

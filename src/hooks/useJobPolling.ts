@@ -73,7 +73,6 @@ export function useJobPolling() {
               continue;
             }
             const d = body as Job;
-            const cfg = store.jobs.find((x) => x.id === d.id)?.config;
             store.setJobs((j) =>
               j.map((x) =>
                 x.id === d.id
@@ -86,49 +85,7 @@ export function useJobPolling() {
                   : x
               )
             );
-            if (d.status === "completed" && d.result && !processedJobs.has(d.id)) {
-              processedJobs.add(d.id);
-              const result = d.result;
-              const autoSave = !!store.settings.outputDir;
-              store.setResults((r) => {
-                const entry: ResultEntry = {
-                  jobId: d.id,
-                  mode: d.kind,
-                  result,
-                  created: d.created,
-                  completedAt: Date.now(),
-                  config: cfg,
-                  saveStatus: autoSave ? "saving" : "not_configured",
-                };
-                // 结果内存上限：最新在前，超出丢弃最旧（对抗性审查 B5）。
-                return [entry, ...r].slice(0, MAX_RESULTS);
-              });
-              if (autoSave) {
-                void saveResult(result, d.id).then((summary) => {
-                  const latest = useStore.getState();
-                  latest.setResults((entries) =>
-                    entries.map((entry) =>
-                      entry.jobId === d.id
-                        ? {
-                            ...entry,
-                            saveStatus: summary.status,
-                            savePaths: summary.paths,
-                            saveError: summary.error,
-                          }
-                        : entry
-                    )
-                  );
-                  if (summary.status === "failed" || summary.status === "partial") {
-                    latest.toast(
-                      summary.status === "partial"
-                        ? `自动保存部分失败：${summary.error}`
-                        : `自动保存失败：${summary.error}`,
-                      true
-                    );
-                  }
-                });
-              }
-            }
+            ingestCompletedJob(d);
             if (d.status === "failed")
               store.toast(`任务失败: ${extractApiError(d)}`, true);
           } catch (e) {
@@ -220,6 +177,62 @@ export async function saveResult(
     paths,
     error: errors.join("；") || "没有可保存的输出数据",
   };
+}
+
+/**
+ * 收割一个已完成任务的结果（进画廊 + 自动保存）。轮询循环与"取消时任务
+ * 恰好已完成"两条路径共用：取消响应里的 completed 任务不会再被轮询处理
+ * （轮询只跟踪 queued/generating/unknown），必须在这里直接收割，否则结果
+ * 永久丢失（审查 P1）。返回是否实际收割（幂等）。
+ */
+export function ingestCompletedJob(d: Job): boolean {
+  if (d.status !== "completed" || !d.result || processedJobs.has(d.id)) {
+    return false;
+  }
+  const store = useStore.getState();
+  processedJobs.add(d.id);
+  const result = d.result;
+  const autoSave = !!store.settings.outputDir;
+  const cfg = store.jobs.find((x) => x.id === d.id)?.config;
+  store.setResults((r) => {
+    const entry: ResultEntry = {
+      jobId: d.id,
+      mode: d.kind,
+      result,
+      created: d.created,
+      completedAt: Date.now(),
+      config: cfg,
+      saveStatus: autoSave ? "saving" : "not_configured",
+    };
+    // 结果内存上限：最新在前，超出丢弃最旧（对抗性审查 B5）。
+    return [entry, ...r].slice(0, MAX_RESULTS);
+  });
+  if (autoSave) {
+    void saveResult(result, d.id).then((summary) => {
+      const latest = useStore.getState();
+      latest.setResults((entries) =>
+        entries.map((entry) =>
+          entry.jobId === d.id
+            ? {
+                ...entry,
+                saveStatus: summary.status,
+                savePaths: summary.paths,
+                saveError: summary.error,
+              }
+            : entry
+        )
+      );
+      if (summary.status === "failed" || summary.status === "partial") {
+        latest.toast(
+          summary.status === "partial"
+            ? `自动保存部分失败：${summary.error}`
+            : `自动保存失败：${summary.error}`,
+          true
+        );
+      }
+    });
+  }
+  return true;
 }
 
 /** 自动保存重试（ResultsGrid 的"重试保存"按钮）。模块级函数，供

@@ -59,8 +59,18 @@ export function useBlobUrlCache() {
   // 剪枝：缓存只保留当前 results/jobs 仍引用的条目，已从 store 移除的
   // 结果其 blob URL 一并 revoke，避免缓存 Map 随结果增删单调增长
   // （对抗性审查 B5——结果数组本身有上限，这里让缓存同步收缩）。
+  // 引用早退（审查 P4d）：只有 results/jobs 数组引用变化才需要重建存活
+  // 集合——日志/进度/toast 等高频 store 更新与缓存无关，直接跳过，避免
+  // 每次更新都全量扫描。
+  const lastResultsRef = useRef(useStore.getState().results);
+  const lastJobsRef = useRef(useStore.getState().jobs);
   useEffect(() => {
     const unsub = useStore.subscribe((s) => {
+      if (s.results === lastResultsRef.current && s.jobs === lastJobsRef.current) {
+        return;
+      }
+      lastResultsRef.current = s.results;
+      lastJobsRef.current = s.jobs;
       const live = new Set<string>();
       for (const r of s.results) {
         if (r.result?.b64_json) live.add(rawKey(r.result.b64_json));

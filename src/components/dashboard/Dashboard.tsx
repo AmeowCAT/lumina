@@ -96,6 +96,9 @@ export function Dashboard() {
 	// 成功后写入的模型快照——会随 Dashboard 卸载（切回生成界面）被
 	// clearTimeout 丢弃：这正是"启动成功出图了、快照却没记录"的根因。
 	const pendingSettingsSave = useRef<Settings | null>(null);
+	// 端口被运行中服务器锁定时提示过一次的端口值：避免每次防抖保存都
+	// 重复弹同一提示（审查 P4b）。
+	const lastPortWarn = useRef<number | null>(null);
 
 	useEffect(() => {
 		if (!settingsLoaded.current) return;
@@ -106,7 +109,22 @@ export function Dashboard() {
 			setSettingsState("saving");
 			api
 				.saveSettings(settings)
-				.then(() => setSettingsState("saved"))
+				.then((res) => {
+					setSettingsState("saved");
+					// 运行中修改端口会被后端以内存中的实际端口覆盖（防抖快照
+					// 保护）：如实提示而不是让用户以为改动已生效（审查 P4b）。
+					if (
+						res?.portKept != null &&
+						settings.sdPort !== res.portKept &&
+						lastPortWarn.current !== res.portKept
+					) {
+						lastPortWarn.current = res.portKept;
+						toast(
+							`端口已被运行中的服务器锁定为 ${res.portKept}，停止服务器后修改才生效`,
+							true,
+						);
+					}
+				})
 				.catch((e) => {
 					setSettingsState("error");
 					toast("设置保存失败: " + formatError(e), true);

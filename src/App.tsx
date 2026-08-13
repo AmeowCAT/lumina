@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
-import { useStore } from "./store";
+import { useStore, type LogEvent } from "./store";
 import { Dashboard } from "./components/dashboard/Dashboard";
 import { GenerationUI } from "./components/generation/GenerationUI";
 import { LogPanel } from "./components/ui/LogPanel";
@@ -122,20 +122,22 @@ export default function App() {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
-    const pendingLines: string[] = [];
-    let pendingProgress: string | null = null;
+    // 单队列保序：旧实现把 line/progress 分容器收集，flush 时先 line 后
+    // progress，同帧内到达顺序相反时合并结果与逐条处理不一致（审查 P4e）。
+    const pendingEvents: LogEvent[] = [];
     let rafId: number | null = null;
     const flush = () => {
       rafId = null;
-      const lines = pendingLines.splice(0);
-      const progress = pendingProgress;
-      pendingProgress = null;
-      useStore.getState().flushLogs(lines, progress);
+      const events = pendingEvents.splice(0);
+      useStore.getState().flushLogs(events);
     };
     listen<{ type: string; text: string }>("server-log", (e) => {
       const p = e.payload;
-      if (p.type === "progress") pendingProgress = p.text;
-      else pendingLines.push(p.text);
+      pendingEvents.push(
+        p.type === "progress"
+          ? { type: "progress", text: p.text }
+          : { type: "line", text: p.text }
+      );
       if (rafId == null) rafId = requestAnimationFrame(flush);
     }).then((f) => {
       if (disposed) {

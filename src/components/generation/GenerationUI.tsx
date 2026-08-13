@@ -42,7 +42,11 @@ import { LoraPanel } from "./panels/LoraPanel";
 import { HiresPanel } from "./panels/HiresPanel";
 import { OutputPanel } from "./panels/OutputPanel";
 import { useBlobUrlCache } from "../../hooks/useBlobUrlCache";
-import { processedJobs, retrySave } from "../../hooks/useJobPolling";
+import {
+  ingestCompletedJob,
+  processedJobs,
+  retrySave,
+} from "../../hooks/useJobPolling";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 
 // 引擎 seed 是 int64；取 JS 安全整数上限 2^53-1，覆盖完整的 64 位种子空间。
@@ -437,7 +441,11 @@ export function GenerationUI() {
           // 服务端返回取消后的最新作业对象：排队任务会被置 cancelled，但
           // 已完成/失败的任务返回 200 且状态不变——按返回体如实更新，而不是
           // 无条件把本地置为 cancelled（对抗性审查 A4）。
-          const s = (body as { status?: unknown })?.status;
+          const d = body as Partial<Job> | null;
+          const s = d?.status;
+          // 竞态修复（审查 P1）：任务在两次轮询之间已完成、用户恰好点取消，
+          // 返回体是 completed——轮询不会再处理它，这里直接收割结果。
+          const ingested = d ? ingestCompletedJob(d as Job) : false;
           setJobs((j) =>
             j.map((x) =>
               x.id === id && typeof s === "string"
@@ -446,11 +454,26 @@ export function GenerationUI() {
             )
           );
           if (typeof s === "string" && s !== "cancelled") {
-            toast("该任务已结束，无需取消");
+            toast(ingested ? "任务已完成，结果已收入画廊" : "该任务已结束，无需取消");
           }
         } else if (status === 409) {
           // sd-server 不支持中断生成中的任务（capabilities.cancel_generating=false）
           toast("任务正在生成，暂不支持中断", true);
+        } else if (status === 404 || status === 410) {
+          // 任务在服务器上已不存在（重启/过期）：与轮询同款处理置为失败，
+          // 避免列表里残留"永远排队"的幽灵任务（审查 P1）。
+          setJobs((j) =>
+            j.map((x) =>
+              x.id === id
+                ? {
+                    ...x,
+                    status: "failed",
+                    error: { message: "任务已失效（服务器重启或任务过期）" },
+                  }
+                : x
+            )
+          );
+          toast("任务已失效（服务器重启或任务过期）", true);
         } else {
           toast("取消失败：" + extractApiError(body, status), true);
         }

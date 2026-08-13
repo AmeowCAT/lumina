@@ -34,8 +34,10 @@ async fn effective_port(state: &AppState) -> u16 {
     }
 }
 
-/// 判断 `dir` 是否等于或在 `root` 之内（词法比较，Windows 下不区分大小写，
-/// 先做 `..` 组件归一化——纯前缀比较会被 `D:/out/../evil` 绕过）。
+/// 判断 `dir` 是否等于或在 `root` 之内。第一道是词法比较（Windows 下不
+/// 区分大小写，先做 `..` 组件归一化——纯前缀比较会被 `D:/out/../evil`
+/// 绕过）；第二道用 canonicalize 兜底符号链接：词法前缀拦不住输出目录内
+/// 预置的 `out/link -> C:\\Windows` 这类 symlink 逃逸（审查 P3）。
 /// `root` 为空时恒为 false。save_output / read_file_b64 是 webview 可调用的
 /// 任意读写入口，收敛到用户配置的输出目录子树（对抗性审查 C）。
 fn dir_is_within(dir: &str, root: &str) -> bool {
@@ -66,7 +68,42 @@ fn dir_is_within(dir: &str, root: &str) -> bool {
         return false;
     }
     let dir = norm(dir.trim());
-    dir == root || dir.starts_with(&format!("{}/", root))
+    if !(dir == root || dir.starts_with(&format!("{}/", root))) {
+        return false;
+    }
+    // symlink 兜底：canonicalize 两侧再比一次。dir 可能尚不存在
+    // （save_output 会先 create_dir_all），此时规范化最近的已存在祖先并
+    // 拼回剩余组件；canonicalize 失败（权限等）宁可拒绝。
+    let canon = |raw: &str| {
+        let p = std::path::Path::new(raw);
+        let mut cur = p;
+        let mut missing: Vec<String> = Vec::new();
+        while cur.canonicalize().is_err() {
+            match (cur.file_name(), cur.parent()) {
+                (Some(name), Some(parent)) => {
+                    missing.push(name.to_string_lossy().into_owned());
+                    cur = parent;
+                }
+                _ => return None,
+            }
+        }
+        let mut resolved = cur.canonicalize().ok()?;
+        for comp in missing.iter().rev() {
+            resolved.push(comp);
+        }
+        Some(resolved)
+    };
+    match (canon(&root), canon(&dir)) {
+        (Some(rc), Some(dc)) => {
+            let rc_str = rc.to_string_lossy();
+            dc == rc || dc.starts_with(&format!("{}{}", rc_str, std::path::MAIN_SEPARATOR))
+        }
+        // root 可解析而 dir 不可解析：dir 链上有坏链接，保守拒绝。
+        (Some(_), None) => false,
+        // root 本身不可解析（盘符/目录尚不存在）：退回到已通过的词法结果——
+        // 不存在的目录只会被 create_dir_all 新建为真实目录，无 symlink 可逃逸。
+        (None, _) => true,
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +122,53 @@ mod tests {
         // 空 root 一律拒绝
         assert!(!dir_is_within("D:/out", ""));
         assert!(!dir_is_within("", "D:/out"));
+    }
+
+    #[test]
+    fn dir_is_within_blocks_symlink_escape() {
+        // 词法比较会被 out/link -> 外部目录 的 symlink 绕过，canonicalize
+        // 兜底必须拦下（审查 P3）。创建 symlink 需要额外权限（Windows 开发
+        // 者模式/管理员），失败时跳过本测试（环境受限，非代码失败）。
+        let base = std::env::temp_dir().join(format!(
+            "lumina-within-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let out = base.join("out");
+        let outside = base.join("evil");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let link = out.join("link");
+        let ok = {
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_dir(&outside, &link).is_ok()
+            }
+            #[cfg(not(windows))]
+            {
+                std::os::unix::fs::symlink(&outside, &link).is_ok()
+            }
+        };
+        if !ok {
+            let _ = std::fs::remove_dir_all(&base);
+            eprintln!("skipping symlink test: creation not permitted");
+            return;
+        }
+        let out_str = out.to_string_lossy().to_string();
+        let link_str = link.to_string_lossy().to_string();
+        // 词法上 out/link 在 out 之内，但真实位置在 evil——必须拒绝。
+        assert!(!dir_is_within(&link_str, &out_str));
+        // 正常子目录仍放行。
+        let sub = out.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert!(dir_is_within(
+            &sub.to_string_lossy().to_string(),
+            &out_str
+        ));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 
@@ -207,20 +291,31 @@ async fn load_settings(
     })
 }
 
+/// save_settings 的返回：运行中的子进程端口以内存为准、前端快照被覆盖时，
+/// 把被保持的端口回传给前端（portKept），让控制台提示"端口修改在运行期
+/// 不生效"而不是静默丢失（审查 P4b）。未发生覆盖时为 null。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveSettingsResponse {
+    port_kept: Option<u16>,
+}
+
 #[tauri::command]
 async fn save_settings(
     state: State<'_, AppState>,
     mut settings: settings::Settings,
-) -> Result<(), String> {
+) -> Result<SaveSettingsResponse, String> {
     // 运行中的子进程端口以内存为准：前端携带的 Settings 快照可能还是旧端口
     // （保存防抖），直接落盘会覆盖刚更新的值，stop 后代理会连错端口。
-    if let Some(port) = state.server.lock().await.active_port() {
+    let active = state.server.lock().await.active_port();
+    let overridden = active.filter(|port| *port != settings.sd_port);
+    if let Some(port) = active {
         settings.sd_port = port;
     }
     settings.save().map_err(|e| e.to_string())?;
     *state.settings.lock().await = settings;
     *state.settings_warning.lock().await = None;
-    Ok(())
+    Ok(SaveSettingsResponse { port_kept: overridden })
 }
 
 // ── native dialogs ────────────────────────────────────────────────────
