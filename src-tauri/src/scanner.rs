@@ -12,6 +12,9 @@ const SAFETENSORS_INDEX_SUFFIX: &str = ".safetensors.index.json";
 /// 扫描出的模型文件数量上限：单目录百万条目会全部进内存并序列化到前端，
 /// 卡死 GUI（对抗性审查 C）。超限截断并在警告里说明。
 const MAX_SCAN_FILES: usize = 5000;
+/// 遍历条目总数上限。MAX_SCAN_FILES 只约束“已收集的模型文件数”，单目录
+/// 大量无关扩展名文件仍会被逐个检查；这里对 entries_inspected 兜底截断。
+const MAX_SCAN_ENTRIES: usize = 100_000;
 /// Safetensors 索引文件大小上限：数 GB 的 index JSON 整读会 OOM。
 const MAX_INDEX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -313,14 +316,19 @@ fn walk(
     context.stats.directories_scanned += 1;
 
     for entry in entries {
-        // 文件数量上限：单目录百万条目会拖垮 GUI（对抗性审查 C）。
-        if out.len() >= MAX_SCAN_FILES {
+        // 文件/条目数量上限：只按 out.len() 计数，会被海量无关扩展名文件
+        // 绕过，因此同时给 entries_inspected 设总闸（对抗性审查 C）。
+        if out.len() >= MAX_SCAN_FILES || context.stats.entries_inspected >= MAX_SCAN_ENTRIES {
             if !context.truncated {
                 context.truncated = true;
                 context.warn(
                     "entry_limit",
                     dir,
-                    format!("文件数量超过扫描上限 {}，已截断", MAX_SCAN_FILES),
+                    if out.len() >= MAX_SCAN_FILES {
+                        format!("文件数量超过扫描上限 {}，已截断", MAX_SCAN_FILES)
+                    } else {
+                        format!("扫描条目超过上限 {}，已截断", MAX_SCAN_ENTRIES)
+                    },
                 );
             }
             break;

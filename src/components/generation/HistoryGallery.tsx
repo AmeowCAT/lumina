@@ -7,7 +7,6 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { AnimatePresence } from "motion/react";
 import { api } from "../../api";
 import { useStore } from "../../store";
@@ -53,15 +52,27 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
 function HistoryTile({
   file,
   style,
-  getSrc,
+  src,
   onOpen,
+  onNeedSrc,
 }: {
   file: OutputEntry;
   style?: CSSProperties;
-  getSrc: (f: OutputEntry) => string;
+  src: string;
   onOpen: (file: OutputEntry) => void;
+  onNeedSrc: () => void;
 }) {
   const date = new Date(file.modified * 1000).toLocaleString();
+
+  // 缩略图改为经 read_file_b64（受输出目录白名单 + 大小上限约束）读取，
+  // 不再依赖 asset:// 协议的 ** 全盘作用域。
+  // 仅随 src 变化触发一次；onNeedSrc 最终调用的是 useCallback 稳定引用的
+  // ensureThumb，失败后避免父级每次重渲染都重试读取。
+  useEffect(() => {
+    if (!src) onNeedSrc();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
   return (
     <button
       type="button"
@@ -73,7 +84,7 @@ function HistoryTile({
       }`}
       onClick={() => onOpen(file)}
     >
-      <img src={getSrc(file)} alt="" loading="lazy" />
+      <img src={src} alt="" loading="lazy" />
       {file.metadata && (
         <span className="history-badge" aria-hidden="true" title="含参数">
           参
@@ -123,16 +134,37 @@ export const HistoryGallery = memo(function HistoryGallery({
     load();
   }, [load]);
 
-  // src URL 懒缓存:只为实际渲染过的文件生成 asset:// URL,
-  // 上千文件时避免一次性构造全部 URL(虚拟滚动配套)。
-  const srcCache = useRef(new Map<string, string>());
-  const getSrc = useCallback((f: OutputEntry) => {
-    let url = srcCache.current.get(f.path);
-    if (!url) {
-      url = convertFileSrc(f.path);
-      srcCache.current.set(f.path, url);
+  // 缩略图 dataURL 懒缓存:只为实际渲染过的文件调用 read_file_b64,
+  // 上千文件时避免一次性读取全部文件(虚拟滚动配套)。读取经后端输出
+  // 目录白名单 + 256MB 上限校验,替代 asset:// 协议的全盘作用域。
+  const thumbSrcsRef = useRef(new Map<string, string>());
+  const pendingThumbs = useRef(new Map<string, Promise<string>>());
+  const [thumbVersion, setThumbVersion] = useState(0);
+  const thumbSrcs = useMemo(() => new Map(thumbSrcsRef.current), [thumbVersion]);
+
+  const ensureThumb = useCallback(async (f: OutputEntry) => {
+    if (thumbSrcsRef.current.has(f.path)) return;
+    let pending = pendingThumbs.current.get(f.path);
+    if (!pending) {
+      pending = api.readFileB64(f.path).then((b64) => {
+        const ext =
+          f.ext === "jpg" || f.ext === "jpeg" ? "jpeg" : f.ext || "png";
+        return `data:image/${ext};base64,${b64}`;
+      });
+      pendingThumbs.current.set(f.path, pending);
     }
-    return url;
+    try {
+      const src = await pending;
+      if (!thumbSrcsRef.current.has(f.path)) {
+        thumbSrcsRef.current.set(f.path, src);
+        setThumbVersion((v) => v + 1);
+      }
+    } catch {
+      // 缩略图失败静默：瓦片保持占位；恢复参数/用作初始图时 readFileB64
+      // 会再次尝试并给出可见错误。
+    } finally {
+      pendingThumbs.current.delete(f.path);
+    }
   }, []);
 
   // 搜索文本一次性预计算：旧实现每次键击对每个文件 JSON.stringify(metadata)
@@ -218,23 +250,35 @@ export const HistoryGallery = memo(function HistoryGallery({
     };
   }, [imgFiles.length === 0, virtualize]);
 
-  // 统一 Lightbox 的导航列表与动作条
+  // 统一 Lightbox 的导航列表与动作条。src 随缩略图缓存逐步填充；
+  // 打开时若当前项尚未加载完成，会在 useEffect 中补拉。
   const lightboxItems = useMemo<LightboxItem[]>(
     () =>
       sortedFiles.map((f) => ({
         type: "image",
-        src: getSrc(f),
+        src: thumbSrcs.get(f.path) || "",
         title: f.name,
       })),
-    [sortedFiles, getSrc]
+    [sortedFiles, thumbSrcs]
   );
+
+  // Lightbox 当前项(及相邻项)的缩略图按需补齐:虚拟滚动下导航可能落到
+  // 尚未渲染过的文件,这里直接走同一缓存通道。
+  useEffect(() => {
+    if (lightboxIndex == null) return;
+    for (const idx of [lightboxIndex - 1, lightboxIndex, lightboxIndex + 1]) {
+      const entry = sortedFiles[idx];
+      if (entry) void ensureThumb(entry);
+    }
+  }, [lightboxIndex, sortedFiles, ensureThumb]);
 
   const openTile = useCallback(
     (file: OutputEntry) => {
+      void ensureThumb(file);
       const idx = sortedFiles.findIndex((f) => f.path === file.path);
       if (idx >= 0) setLightboxIndex(idx);
     },
-    [sortedFiles]
+    [sortedFiles, ensureThumb]
   );
 
   const onRestore = useCallback(
@@ -280,7 +324,8 @@ export const HistoryGallery = memo(function HistoryGallery({
       try {
         await api.deleteOutputFile(entry.path);
         setFiles((fs) => fs.filter((f) => f.path !== entry.path));
-        srcCache.current.delete(entry.path);
+        thumbSrcsRef.current.delete(entry.path);
+        setThumbVersion((v) => v + 1);
         setLightboxIndex(null);
         toast(`已删除：${entry.name}`);
       } catch (e) {
@@ -344,8 +389,9 @@ export const HistoryGallery = memo(function HistoryGallery({
                   <HistoryTile
                     key={file.path}
                     file={file}
-                    getSrc={getSrc}
+                    src={thumbSrcs.get(file.path) || ""}
                     onOpen={openTile}
+                    onNeedSrc={() => void ensureThumb(file)}
                     style={{
                       position: "absolute",
                       left: pos.left,
@@ -363,8 +409,9 @@ export const HistoryGallery = memo(function HistoryGallery({
                 <HistoryTile
                   key={f.path}
                   file={f}
-                  getSrc={getSrc}
+                  src={thumbSrcs.get(f.path) || ""}
                   onOpen={openTile}
+                  onNeedSrc={() => void ensureThumb(f)}
                 />
               ))}
             </div>

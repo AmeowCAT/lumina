@@ -14,6 +14,7 @@ import {
   inferPidVaeFormat,
   missingRequiredInputs,
   persistFamilyDefaults,
+  validateMaxVramSpec,
 } from "../launchConfig";
 
 // 对齐步长依模型版本而定（src/stable-diffusion.cpp video_frames_to_latent_frames）。
@@ -284,6 +285,15 @@ describe("launch configuration", () => {
         fps: 24,
       })
     );
+  });
+
+  it("accepts every --max-vram spelling std::stof accepts", () => {
+    for (const spec of ["6", "6.5", "-2", "+2", ".5", "1e3", "cuda0=6e0,vulkan0=.5"]) {
+      expect(validateMaxVramSpec(spec)).toBeNull();
+    }
+    for (const spec of ["0x10", "inf", "nan", "cuda0=", "=6", "cuda0=abc"]) {
+      expect(validateMaxVramSpec(spec)).not.toBeNull();
+    }
   });
 
   it("passes --max-vram through for every supported spec shape", () => {

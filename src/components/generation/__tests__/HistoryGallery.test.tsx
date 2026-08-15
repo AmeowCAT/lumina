@@ -8,10 +8,6 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
-  convertFileSrc: (path: string) => `asset://${path}`,
-}));
-
 vi.mock("../../../api", () => ({
   api: {
     listOutputFiles: mocks.listOutputFiles,

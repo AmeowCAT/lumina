@@ -125,12 +125,17 @@ const PATH_VALUE_ARGS: &[&str] = &[
     "uncond-diffusion-model",
     "vae",
     "taesd",
+    // 上游 --taesd 的别名（common.cpp ArgOptions）。
+    "tae",
     "clip_l",
     "clip_g",
     "clip_vision",
     "t5xxl",
     "llm",
     "llm_vision",
+    // --llm / --llm_vision 的旧别名。
+    "qwen2vl",
+    "qwen2vl_vision",
     "audio-vae",
     "embeddings-connectors",
     "control-net",
@@ -138,6 +143,8 @@ const PATH_VALUE_ARGS: &[&str] = &[
     "pulid-weights",
     "motion-module",
     "ip-adapter",
+    // ESRGAN 放大模型路径。
+    "upscale-model",
     "lora-model-dir",
     "embd-dir",
     "hires-upscalers-dir",
@@ -461,19 +468,29 @@ fn probe_backend_devices(exe: &Path) -> Option<String> {
 /// 逗号分段，`key=value` 中 **value 是后端名**（key 是模块名
 /// all/default/*/te/clip/llm/...），无 `=` 的段本身就是后端名。
 /// 只校验 value / 裸 token；key 侧的非法模块名由上游启动时报出。
+///
+/// value 还可以是 `&` 分隔的多设备列表（如 `diffusion=cuda0&cuda1`，
+/// 上游 `split_device_list` / ArgOptions 的 `--backend` 示例）。这里先
+/// 拆成单设备 token 再逐个校验，避免把整个列表当一个名字误杀。
 fn backend_spec_tokens(spec: &str) -> Vec<String> {
-    spec.split(',')
-        .filter_map(|part| {
-            let part = part.trim();
-            if part.is_empty() {
-                return None;
+    let mut tokens = Vec::new();
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let value = match part.split_once('=') {
+            Some((_, value)) => value,
+            None => part,
+        };
+        for device in value.split('&') {
+            let device = device.trim();
+            if !device.is_empty() {
+                tokens.push(device.to_string());
             }
-            Some(match part.split_once('=') {
-                Some((_, value)) => value.trim().to_string(),
-                None => part.to_string(),
-            })
-        })
-        .collect()
+        }
+    }
+    tokens
 }
 
 /// 不经设备列表校验的 token：通用 token（上游 is_default_backend_token /
@@ -1093,6 +1110,22 @@ mod tests {
     }
 
     #[test]
+    fn build_args_validates_upstream_path_aliases_too() {
+        for key in ["tae", "qwen2vl", "qwen2vl_vision", "upscale-model"] {
+            let missing = std::env::temp_dir().join(format!(
+                "lumina-missing-alias-{}-{}.bin",
+                key,
+                now_epoch_seconds()
+            ));
+            let mut map = serde_json::Map::new();
+            map.insert(key.to_string(), serde_json::Value::String(missing.to_string_lossy().into_owned()));
+            let args = serde_json::Value::Object(map);
+            let error = build_args(&args, DEFAULT_SD_PORT).unwrap_err().to_string();
+            assert!(error.contains("path does not exist"), "key {}: {}", key, error);
+        }
+    }
+
+    #[test]
     fn build_args_keeps_compatible_cli_shape() {
         let args = serde_json::json!({
             "backend": "cuda",
@@ -1182,6 +1215,10 @@ mod tests {
         assert!(find_backend_error("rocm", "ROCM0\tAMD\nCPU\tx\n").is_none());
         // 多段 spec 中任一 value 未命中即报错。
         assert!(find_backend_error("cuda0,te=vulkan0", devices).is_some());
+        // 上游合法的 & 多设备列表（--backend "diffusion=cuda0&cuda1"）逐项校验。
+        assert!(find_backend_error("diffusion=cuda0&cuda1", devices).is_none());
+        assert!(find_backend_error("diffusion=cuda0&cuda9", devices).is_some());
+        assert!(backend_spec_needs_probe("diffusion=cuda0&cuda1"));
         // 通用/不可探测 token 不拦截。
         assert!(find_backend_error("gpu", "").is_none());
         assert!(find_backend_error("all=metal,te=cpu", devices).is_none());

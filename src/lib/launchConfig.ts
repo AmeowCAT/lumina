@@ -197,7 +197,9 @@ export function inferPidVaeFormat(modelPath: string): string {
 }
 
 const MAX_VRAM_DEVICE_RE = /^[A-Za-z0-9_.+-]+$/;
-const MAX_VRAM_NUM_RE = /^-?\d+(\.\d+)?$/;
+// 与上游 std::stof 可接受的十进制浮点写法对齐（含 1e3、.5、+2、-1.5e-2）；
+// 显式排除 hex（0x…）与 inf/nan——parse_strict_float 同样不接受。
+const MAX_VRAM_NUM_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
 
 /** 预校验 --max-vram 原始 spec（上游 ggml_graph_cut 解析失败会让 sd-server
  * 启动即退，GUI 提前拦截给出可读错误）。返回错误消息或 null。

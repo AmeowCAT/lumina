@@ -76,7 +76,10 @@ export default function App() {
               if (!alive) return;
               setCaps(c);
               lastCapsSync.current = Date.now();
-              if (c.current_mode) setMode(c.current_mode);
+              // current_mode 是服务器启动时的静态默认值（上游 routes_sdcpp.cpp），
+              // 只在首次接入/服务器切换时同步到 UI。周期性 30s 刷新若照搬会把
+              // 用户手动切到的 vid_gen 静默拉回 img_gen。
+              if (c.current_mode && (!hadCaps || identityChanged)) setMode(c.current_mode);
               if (!hadCaps || identityChanged) {
                 const label = s.external
                   ? "检测到外部 sd-server — " + (c.model?.name || "")

@@ -130,6 +130,7 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
     if !base.is_dir() {
         return Ok(vec![]);
     }
+    let canonical_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
     let mut entries = Vec::new();
     let mut dirs = vec![base.to_path_buf()];
     // visited 按规范化路径去重：`is_dir()` 跟随 symlink，a→b→a 的环会导致
@@ -149,9 +150,27 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
             for entry in read_dir.flatten() {
                 let p = entry.path();
                 if p.is_dir() {
+                    // 与 scanner 的 structured dir 守卫一致：symlink 目录必须
+                    // 仍位于输出目录根内，否则视为逃逸并跳过。
+                    let canonical_dir = p.canonicalize().unwrap_or_else(|_| p.clone());
+                    if !canonical_dir.starts_with(&canonical_base) {
+                        continue;
+                    }
                     if dirs.len() < 50 && traversed < MAX_TRAVERSED_DIRS {
                         dirs.push(p);
                     }
+                    continue;
+                }
+                // symlink 文件同样不允许指到输出目录之外。
+                if entry
+                    .file_type()
+                    .map(|file_type| file_type.is_symlink())
+                    .unwrap_or(false)
+                    && p
+                        .canonicalize()
+                        .map(|canonical_file| !canonical_file.starts_with(&canonical_base))
+                        .unwrap_or(true)
+                {
                     continue;
                 }
                 if entries.len() >= MAX_LISTED_FILES {

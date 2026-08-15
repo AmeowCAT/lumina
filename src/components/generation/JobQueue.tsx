@@ -39,7 +39,9 @@ function shortId(id: string): string {
 
 function elapsedLabel(created?: number, endedAt?: number): string {
   if (!created) return "";
-  const ms = (endedAt ?? Date.now()) - created;
+  // created 来自上游 unix_timestamp_now()（秒），endedAt 是前端毫秒时间戳，
+  // 相减前必须统一单位，否则会显示数百万分钟。
+  const ms = (endedAt ?? Date.now()) - created * 1000;
   if (ms < 1000) return "";
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -60,6 +62,9 @@ export const JobQueue = memo(function JobQueue({
 }: Props) {
   const progressStep = useStore((s) => s.progressStep);
   const progressTotal = useStore((s) => s.progressTotal);
+  // 完成任务的大体积 result 在收割后已从 jobs 剥离（避免 300 条任务重复
+  // 持有 base64），下载入口从结果画廊取回同任务结果。
+  const results = useStore((s) => s.results);
   const pct =
     progressTotal > 0 ? Math.min(100, Math.round((progressStep / progressTotal) * 100)) : 0;
 
@@ -91,6 +96,7 @@ export const JobQueue = memo(function JobQueue({
             j.status === "completed" ||
             j.status === "failed" ||
             j.status === "cancelled";
+          const jobResult = results.find((r) => r.jobId === j.id)?.result;
           const elapsed = elapsedLabel(
             j.created,
             terminal ? j.lastPollSuccess : undefined
@@ -111,7 +117,7 @@ export const JobQueue = memo(function JobQueue({
                 >
                   {statusLabel(j.status)}
                 </span>
-                <span className="job-prompt">{j.prompt || ""}</span>
+                <span className="job-prompt">{j.config?.params?.prompt || ""}</span>
                 <span className="job-elapsed" aria-hidden="true">
                   {elapsed}
                 </span>
@@ -136,15 +142,15 @@ export const JobQueue = memo(function JobQueue({
                       取消
                     </button>
                   )}
-                  {j.status === "completed" && j.result && (
+                  {j.status === "completed" && jobResult && (
                     <button
                       className="btn btn-sm"
                       aria-label={`下载任务 ${j.id} 的结果`}
                       onClick={() => {
                         const img =
-                          j.result?.images?.[0]?.b64_json || j.result?.b64_json;
+                          jobResult.images?.[0]?.b64_json || jobResult.b64_json;
                         if (img)
-                          onDownload(img, j.result?.output_format, j.result?.mime_type);
+                          onDownload(img, jobResult.output_format, jobResult.mime_type);
                       }}
                     >
                       {IC.dl}

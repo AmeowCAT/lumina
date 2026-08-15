@@ -28,14 +28,18 @@ fn validate_job_id(id: &str) -> Result<()> {
     Ok(())
 }
 
-/// sd-server 的 /sdcpp/v1/capabilities 响应必然包含 `samplers` 数组与
-/// `defaults_by_mode` 对象（routes_sdcpp.cpp），两者齐备才认定是 sd-server。
-fn is_capabilities_shape(value: &serde_json::Value) -> bool {
-    value.get("samplers").and_then(|v| v.as_array()).is_some()
-        && value
-            .get("defaults_by_mode")
-            .and_then(|v| v.as_object())
-            .is_some()
+/// sd-server 的 /v1/models 响应形状（routes_openai.cpp）：
+/// `data[0].id == "sd-cpp-local"`。用这个轻量端点做 3s 心跳而不是
+/// /sdcpp/v1/capabilities——后者每次都会触发上游 refresh_lora_cache 对
+/// lora-model-dir 做递归全量扫描，大模型目录下会让心跳超过 2s 超时。
+fn is_sd_server_models_shape(value: &serde_json::Value) -> bool {
+    value
+        .get("data")
+        .and_then(|v| v.as_array())
+        .and_then(|data| data.first())
+        .and_then(|entry| entry.get("id"))
+        .and_then(|id| id.as_str())
+        == Some("sd-cpp-local")
 }
 
 /// Thin HTTP client wrapping sd-server's `/sdcpp/v1` API. Replaces the webui's
@@ -54,17 +58,17 @@ impl SdClient {
     }
 
     /// Quick (2s) reachability probe used by `server_status`.  Besides the
-    /// status code, the body must carry sd-server's capabilities shape —
+    /// status code, the body must carry sd-server's `/v1/models` shape —
     /// otherwise any HTTP service answering 200 on that path (SPA dev-server
     /// fallback, ComfyUI, reverse proxy) would be mistaken for an external
     /// sd-server and receive generation requests (adversarial review C).
+    /// `/v1/models` is a static handler that does not refresh LoRA/upscaler
+    /// caches, unlike `/sdcpp/v1/capabilities`.
     pub async fn ping(&self) -> bool {
-        let req = self
-            .http
-            .get(format!("{}/sdcpp/v1/capabilities", self.base));
+        let req = self.http.get(format!("{}/v1/models", self.base));
         match req.timeout(Duration::from_secs(2)).send().await {
             Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
-                Ok(value) => is_capabilities_shape(&value),
+                Ok(value) => is_sd_server_models_shape(&value),
                 Err(_) => false,
             },
             _ => false,
@@ -153,6 +157,17 @@ mod tests {
         assert!(validate_job_id("../capabilities").is_err());
         assert!(validate_job_id("a/b").is_err());
         assert!(validate_job_id("a?x=1").is_err());
+    }
+
+    #[test]
+    fn models_shape_requires_the_sd_cpp_local_id() {
+        assert!(is_sd_server_models_shape(
+            &serde_json::json!({"data": [{"id": "sd-cpp-local", "object": "model"}]})
+        ));
+        assert!(!is_sd_server_models_shape(&serde_json::json!({"data": []})));
+        assert!(!is_sd_server_models_shape(
+            &serde_json::json!({"data": [{"id": "comfy-model"}]})
+        ));
     }
 
     #[tokio::test]

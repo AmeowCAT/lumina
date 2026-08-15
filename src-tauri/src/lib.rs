@@ -394,12 +394,25 @@ async fn parse_png_metadata(path: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn list_output_files(dir: String) -> Result<Vec<serde_json::Value>, String> {
+async fn list_output_files(
+    state: State<'_, AppState>,
+    dir: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    // 与 read_file_b64 / delete_output_file 对等：目录枚举同样收敛到
+    // 配置的输出目录内，防止 WebView 把任意目录清单拖回来。
+    let output_dir = state.settings.lock().await.output_dir.clone();
+    if !dir_is_within(&dir, &output_dir) {
+        return Err("目录必须位于已配置的输出目录内".into());
+    }
     tauri::async_runtime::spawn_blocking(move || png_info::list_output_files(&dir))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
+
+/// read_file_b64 的单文件大小上限。历史画廊会把整图 base64 化后交给
+/// WebView，数 GB 的图片会同时打爆后端内存与前端字符串（对抗性审查 C）。
+const MAX_READ_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[tauri::command]
 async fn read_file_b64(
@@ -415,6 +428,13 @@ async fn read_file_b64(
     use base64::Engine;
     use std::fs;
     tauri::async_runtime::spawn_blocking(move || {
+        let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
+        if metadata.len() > MAX_READ_FILE_BYTES {
+            return Err(format!(
+                "文件过大，无法读取（{}MB > 256MB 上限）",
+                metadata.len() / (1024 * 1024)
+            ));
+        }
         let data = fs::read(&path).map_err(|e| e.to_string())?;
         Ok(base64::engine::general_purpose::STANDARD.encode(&data))
     })

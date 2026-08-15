@@ -74,11 +74,16 @@ export function useJobPolling() {
               continue;
             }
             const d = body as Job;
+            // 完成的 result（含完整 base64）只保留在结果画廊（上限 60），
+            // 任务队列（上限 300）仅保留状态/元数据，避免同一份大视频/
+            // 批次图在两端重复持有（对抗性审查 B5 的补充）。
+            const jobResult = d.status === "completed" ? null : d.result;
             store.setJobs((j) =>
               j.map((x) =>
                 x.id === d.id
                   ? {
                       ...d,
+                      result: jobResult,
                       config: x.config,
                       pollFailures: 0,
                       lastPollSuccess: Date.now(),
