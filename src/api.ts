@@ -86,6 +86,10 @@ export const api = {
 
   readFileB64: (path: string) => invoke<string>("read_file_b64", { path }),
 
+  /** 历史画廊缩略图：后端降采样后的小图（b64 + mime），替代整图读取 */
+  readThumbnail: (path: string) =>
+    invoke<{ b64: string; mime: string }>("read_thumbnail", { path }),
+
   /** 删除历史画廊中的单个输出文件(后端校验必须位于输出目录内) */
   deleteOutputFile: (path: string) => invoke<void>("delete_output_file", { path }),
 };

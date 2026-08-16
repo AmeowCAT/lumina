@@ -196,29 +196,33 @@ export function inferPidVaeFormat(modelPath: string): string {
   return "";
 }
 
-const MAX_VRAM_DEVICE_RE = /^[A-Za-z0-9_.+-]+$/;
-// 与上游 std::stof 可接受的十进制浮点写法对齐（含 1e3、.5、+2、-1.5e-2）；
-// 显式排除 hex（0x…）与 inf/nan——parse_strict_float 同样不接受。
-const MAX_VRAM_NUM_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+const MAX_VRAM_DEVICE_RE = /^[A-Za-z0-9_.+*-]+$/;
+// 与上游 parse_strict_float（std::stof + isfinite）对齐：十进制浮点
+// （1e3、.5、+2、-1.5e-2）及 C99 十六进制浮点（0x10、0x1p3）都合法，
+// 仅 inf/nan 被 isfinite 拦掉。
+const MAX_VRAM_NUM_RE =
+  /^[+-]?((\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?|0[xX][0-9a-fA-F]+(\.[0-9a-fA-F]*)?([pP][+-]?\d+)?)$/;
 
 /** 预校验 --max-vram 原始 spec（上游 ggml_graph_cut 解析失败会让 sd-server
  * 启动即退，GUI 提前拦截给出可读错误）。返回错误消息或 null。
- * 合法形态：单值 "6" / "-2"（自动探测保留余量），或逗号分隔的
- * "设备=数值" 列表（如 "cuda0=6,vulkan0=4"）。 */
+ * 与上游 MaxVramAssignment::parse 对齐：逗号分段逐段解析，无 `=` 的段
+ * 设置全局默认预算（后者覆盖前者），`设备=数值` 段设置单设备预算，
+ * 空段跳过，`all`/`default`/`*` 是合法的默认预算键。 */
 export function validateMaxVramSpec(raw: string): string | null {
   const spec = raw.trim();
   if (!spec) return null;
-  if (!spec.includes("=")) {
-    if (!MAX_VRAM_NUM_RE.test(spec)) {
-      return "应为数字（GiB）或负的保留余量，如 6 或 -2";
-    }
-    return null;
-  }
-  const parts = spec.split(",");
-  for (const part of parts) {
+  for (const part of spec.split(",")) {
     const p = part.trim();
+    if (!p) continue; // 上游跳过空段
     const eq = p.indexOf("=");
-    if (eq <= 0) return `设备分配项格式应为 设备=数值：${p || "（空项）"}`;
+    if (eq < 0) {
+      // 无 `=`：整段是全局默认预算数值（可与设备段混用，如 "6,cuda0=4"）。
+      if (!MAX_VRAM_NUM_RE.test(p)) {
+        return `应为数字（GiB）或负的保留余量，如 6 或 -2：${p}`;
+      }
+      continue;
+    }
+    if (eq === 0) return `设备分配项格式应为 设备=数值：${p}`;
     const device = p.slice(0, eq).trim();
     const value = p.slice(eq + 1).trim();
     if (!MAX_VRAM_DEVICE_RE.test(device)) {

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listOutputFiles: vi.fn(),
   readFileB64: vi.fn(),
+  readThumbnail: vi.fn(),
   deleteOutputFile: vi.fn(),
   toast: vi.fn(),
 }));
@@ -12,6 +13,7 @@ vi.mock("../../../api", () => ({
   api: {
     listOutputFiles: mocks.listOutputFiles,
     readFileB64: mocks.readFileB64,
+    readThumbnail: mocks.readThumbnail,
     deleteOutputFile: mocks.deleteOutputFile,
   },
 }));
@@ -40,6 +42,7 @@ describe("HistoryGallery", () => {
       },
     ]);
     mocks.readFileB64.mockResolvedValue("aW1hZ2U=");
+    mocks.readThumbnail.mockResolvedValue({ b64: "aW1hZ2U=", mime: "image/jpeg" });
     mocks.deleteOutputFile.mockResolvedValue(undefined);
   });
 

@@ -100,9 +100,11 @@ fn dir_is_within(dir: &str, root: &str) -> bool {
         }
         // root 可解析而 dir 不可解析：dir 链上有坏链接，保守拒绝。
         (Some(_), None) => false,
-        // root 本身不可解析（盘符/目录尚不存在）：退回到已通过的词法结果——
-        // 不存在的目录只会被 create_dir_all 新建为真实目录，无 symlink 可逃逸。
-        (None, _) => true,
+        // root 本身不可解析：仅当 root 确实不存在（会被 create_dir_all 新建
+        // 为真实目录，无 symlink 可逃逸）才退回词法结果；root 存在却解析
+        // 失败（ACL/长路径等）说明 symlink 兜底已失效，保守拒绝——与注释
+        // "canonicalize 失败宁可拒绝"的口径一致（对抗性审查）。
+        (None, _) => !std::path::Path::new(&root).exists(),
     }
 }
 
@@ -383,7 +385,16 @@ async fn save_as(
 // ── PNG metadata ───────────────────────────────────────────────────────
 
 #[tauri::command]
-async fn parse_png_metadata(path: String) -> Result<serde_json::Value, String> {
+async fn parse_png_metadata(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    // 与 read_file_b64 / list_output_files / delete_output_file 对等：
+    // 元数据读取同样收敛到输出目录内（对抗性审查：此前是唯一无校验的读入口）。
+    let output_dir = state.settings.lock().await.output_dir.clone();
+    if !dir_is_within(&path, &output_dir) {
+        return Err("文件必须位于已配置的输出目录内".into());
+    }
     tauri::async_runtime::spawn_blocking(move || match png_info::parse_png_metadata(&path) {
         Ok(Some(v)) => Ok(v),
         Ok(None) => Ok(serde_json::Value::Null),
@@ -437,6 +448,57 @@ async fn read_file_b64(
         }
         let data = fs::read(&path).map_err(|e| e.to_string())?;
         Ok(base64::engine::general_purpose::STANDARD.encode(&data))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 缩略图最长边。历史画廊瓦片渲染尺寸 ≤ 200px，384 足够 2x 屏。
+const THUMBNAIL_MAX_DIM: u32 = 384;
+
+/// 历史画廊缩略图：后端解码原图并降采样后返回小图。此前直接用
+/// read_file_b64 把完整原图 base64 交给 WebView 缓存，上千张图会让
+/// 内存膨胀数 GB（对抗性审查 H1）。带 alpha 的图编码为 PNG（保透明），
+/// 否则 JPEG（更小）。
+#[tauri::command]
+async fn read_thumbnail(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    let output_dir = state.settings.lock().await.output_dir.clone();
+    if !dir_is_within(&path, &output_dir) {
+        return Err("文件必须位于已配置的输出目录内".into());
+    }
+    use base64::Engine;
+    tauri::async_runtime::spawn_blocking(move || {
+        let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if metadata.len() > MAX_READ_FILE_BYTES {
+            return Err(format!(
+                "文件过大，无法读取（{}MB > 256MB 上限）",
+                metadata.len() / (1024 * 1024)
+            ));
+        }
+        let img = image::open(&path).map_err(|e| e.to_string())?;
+        let thumb = img.thumbnail(THUMBNAIL_MAX_DIM, THUMBNAIL_MAX_DIM);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let (format, mime) = if thumb.color().has_alpha() {
+            (image::ImageFormat::Png, "image/png")
+        } else {
+            (image::ImageFormat::Jpeg, "image/jpeg")
+        };
+        // JPEG 编码不支持带 alpha 通道的缓冲，无 alpha 时统一转 RGB8。
+        let encodable = if mime == "image/jpeg" {
+            image::DynamicImage::ImageRgb8(thumb.to_rgb8())
+        } else {
+            thumb
+        };
+        encodable
+            .write_to(&mut buf, format)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "b64": base64::engine::general_purpose::STANDARD.encode(buf.into_inner()),
+            "mime": mime,
+        }))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -586,6 +648,7 @@ pub fn run() {
             parse_png_metadata,
             list_output_files,
             read_file_b64,
+            read_thumbnail,
             delete_output_file,
             sdcpp_capabilities,
             sdcpp_submit,

@@ -97,10 +97,12 @@ export const JobQueue = memo(function JobQueue({
             j.status === "failed" ||
             j.status === "cancelled";
           const jobResult = results.find((r) => r.jobId === j.id)?.result;
-          const elapsed = elapsedLabel(
-            j.created,
-            terminal ? j.lastPollSuccess : undefined
-          );
+          // 终态但没有成功轮询时间戳（404/410 失效路径）：耗时无法定格，
+          // 显示空而不是随渲染继续增长的数字。
+          const elapsed =
+            terminal && !j.lastPollSuccess
+              ? ""
+              : elapsedLabel(j.created, terminal ? j.lastPollSuccess : undefined);
           return (
             <div key={j.id} className="job-row-wrap">
               <div className="job-row">
@@ -142,20 +144,47 @@ export const JobQueue = memo(function JobQueue({
                       取消
                     </button>
                   )}
-                  {j.status === "completed" && jobResult && (
-                    <button
-                      className="btn btn-sm"
-                      aria-label={`下载任务 ${j.id} 的结果`}
-                      onClick={() => {
-                        const img =
-                          jobResult.images?.[0]?.b64_json || jobResult.b64_json;
-                        if (img)
-                          onDownload(img, jobResult.output_format, jobResult.mime_type);
-                      }}
-                    >
-                      {IC.dl}
-                    </button>
-                  )}
+                  {j.status === "completed" &&
+                    (jobResult ? (
+                      <button
+                        className="btn btn-sm"
+                        aria-label={`下载任务 ${j.id} 的结果`}
+                        title={
+                          (jobResult.images?.length || 0) > 1
+                            ? `下载全部 ${jobResult.images!.length} 张`
+                            : "下载结果"
+                        }
+                        onClick={() => {
+                          // 批次多图逐张下载，避免只取第一张静默丢图。
+                          const images = jobResult.images?.length
+                            ? jobResult.images
+                            : jobResult.b64_json
+                              ? [{ b64_json: jobResult.b64_json }]
+                              : [];
+                          for (const img of images) {
+                            if (img.b64_json)
+                              onDownload(
+                                img.b64_json,
+                                jobResult.output_format,
+                                jobResult.mime_type
+                              );
+                          }
+                        }}
+                      >
+                        {IC.dl}
+                      </button>
+                    ) : (
+                      // 结果画廊有保留上限，被淘汰后 base64 已不在内存：给出
+                      // 可见的禁用态而不是让下载按钮无声消失（对抗性审查 M1）。
+                      <button
+                        className="btn btn-sm"
+                        disabled
+                        aria-label={`任务 ${j.id} 的结果已不可下载`}
+                        title="结果已超出内存保留上限，无法下载（已保存到磁盘的不受影响）"
+                      >
+                        {IC.dl}
+                      </button>
+                    ))}
                   <button
                     className="btn btn-sm jq-remove"
                     title="移除任务记录"

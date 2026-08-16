@@ -145,6 +145,23 @@ const PATH_VALUE_ARGS: &[&str] = &[
     "ip-adapter",
     // ESRGAN 放大模型路径。
     "upscale-model",
+    // 其余上游路径参数（common.cpp / runtime.cpp，不以 -dir 结尾的部分）。
+    "ad-model",
+    "init-img",
+    "end-img",
+    "mask",
+    "control-image",
+    "ip-adapter-image",
+    "control-video",
+    "pm-id-embed-path",
+    "pulid-id-embedding",
+    "ref-image",
+    "ref-video",
+    "ref-video-audio",
+    "ref-audio",
+    "prompt-file",
+    "negative-prompt-file",
+    "serve-html-path",
     "lora-model-dir",
     "embd-dir",
     "hires-upscalers-dir",
@@ -207,13 +224,27 @@ fn build_args(args: &serde_json::Value, port: u16) -> Result<Vec<String>> {
                         // （对抗性审查 A3）。
                         if let Some(key_name) = t.strip_prefix("--") {
                             if let Some((k, inline)) = key_name.split_once('=') {
+                                // 上游 parse_options（common.cpp）是精确字符串
+                                // 匹配，不支持 `--key=value` 形式——原样透传会
+                                // 让 sd-server 报 unknown argument 启动即退。
+                                // 这里拆成两个 token 再传（对抗性审查）。
                                 validate_path_arg(k, inline)?;
+                                out.push(format!("--{}", k));
+                                out.push(inline.to_string());
+                                continue;
                             } else if is_path_arg(key_name)
                                 && i + 1 < tokens.len()
                                 && !tokens[i + 1].starts_with("--")
                             {
                                 validate_path_arg(key_name, &tokens[i + 1])?;
                             }
+                        } else if t == "-m"
+                            && i + 1 < tokens.len()
+                            && !tokens[i + 1].starts_with('-')
+                        {
+                            // --model 的短别名（common.cpp {"-m", "--model"}），
+                            // 单横线会绕过上面的 strip_prefix("--") 校验。
+                            validate_path_arg("model", &tokens[i + 1])?;
                         }
                         out.push(t.clone());
                     }
@@ -522,6 +553,38 @@ fn backend_spec_needs_probe(spec: &str) -> bool {
         .any(|token| backend_token_needs_probe(token))
 }
 
+/// 不依赖设备探测的结构性校验（上游 SDBackendManager::validate）：
+/// - `disk` 仅 params_backend 接受，出现在 --backend 里启动即退；
+/// - `&` 设备列表内不允许 default/auto 这类默认 token。
+fn backend_spec_static_error(spec: &str) -> Option<String> {
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let value = match part.split_once('=') {
+            Some((_, value)) => value,
+            None => part,
+        };
+        let is_list = value.contains('&');
+        for device in value.split('&') {
+            let device = device.trim().to_ascii_lowercase();
+            if device == "disk" {
+                return Some(
+                    "--backend 不接受 disk（上游仅 params_backend 支持），请从 backend 配置中移除".into(),
+                );
+            }
+            if is_list && matches!(device.as_str(), "default" | "auto" | "") {
+                return Some(format!(
+                    "--backend 的多设备列表（& 分隔）中不允许 default/auto/空 token：{}",
+                    part
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// 模拟上游 sd_backend_resolve_name 的宽松匹配（不区分大小写、token 为
 /// 设备名前缀；反向前缀一并接受以容忍设备名差异）。复合 spec
 /// （`all=cuda0,te=cpu`）逐 value 校验，未命中的 token 汇总报错。
@@ -783,6 +846,10 @@ impl ServerManager {
             .map(str::to_string)
             .unwrap_or_default();
         let cmd_args = build_args(&args_json, port)?;
+        // 结构性 backend 错误（disk / 列表内 default）不需要探测即可拦截。
+        if let Some(error) = backend_spec_static_error(&backend_spec) {
+            anyhow::bail!(error);
+        }
 
         // 二进制身份与 backend 预探测共用一次 `--list-devices` 调用：
         // - 文件名不是 sd-server 前缀时，探测输出形状（name<TAB>description）
@@ -1126,6 +1193,16 @@ mod tests {
     }
 
     #[test]
+    fn build_args_splits_inline_extra_arg_form() {
+        // 上游 parse_options 不支持 `--key=value`，透传会 unknown argument
+        // 启动即退——必须拆成两个 token。
+        let args = serde_json::json!({ "extra_args": "--threads=4" });
+        let out = build_args(&args, DEFAULT_SD_PORT).unwrap();
+        assert!(out.windows(2).any(|w| w[0] == "--threads" && w[1] == "4"));
+        assert!(!out.iter().any(|t| t == "--threads=4"));
+    }
+
+    #[test]
     fn build_args_keeps_compatible_cli_shape() {
         let args = serde_json::json!({
             "backend": "cuda",
@@ -1205,7 +1282,7 @@ mod tests {
 
     #[test]
     fn backend_spec_validation_splits_key_value_assignments() {
-        let devices = "CUDA0\tNVIDIA GeForce RTX\nCPU\tGeneric CPU\n";
+        let devices = "CUDA0\tNVIDIA GeForce RTX\nCUDA1\tNVIDIA GeForce RTX\nCPU\tGeneric CPU\n";
         // 复合 spec：只校验 value 侧（cuda0），cpu 是通用 token 跳过。
         assert!(find_backend_error("all=cuda0,te=cpu", devices).is_none());
         // value 侧设备不存在时报错，且错误信息包含该 token。
@@ -1219,6 +1296,12 @@ mod tests {
         assert!(find_backend_error("diffusion=cuda0&cuda1", devices).is_none());
         assert!(find_backend_error("diffusion=cuda0&cuda9", devices).is_some());
         assert!(backend_spec_needs_probe("diffusion=cuda0&cuda1"));
+        // 结构性错误：disk 与列表内 default token（上游 validate 启动即退）。
+        assert!(backend_spec_static_error("disk").is_some());
+        assert!(backend_spec_static_error("te=disk").is_some());
+        assert!(backend_spec_static_error("diffusion=cuda0&default").is_some());
+        assert!(backend_spec_static_error("diffusion=cuda0&cuda1").is_none());
+        assert!(backend_spec_static_error("all=default,te=cpu").is_none());
         // 通用/不可探测 token 不拦截。
         assert!(find_backend_error("gpu", "").is_none());
         assert!(find_backend_error("all=metal,te=cpu", devices).is_none());

@@ -288,10 +288,26 @@ describe("launch configuration", () => {
   });
 
   it("accepts every --max-vram spelling std::stof accepts", () => {
-    for (const spec of ["6", "6.5", "-2", "+2", ".5", "1e3", "cuda0=6e0,vulkan0=.5"]) {
+    for (const spec of [
+      "6",
+      "6.5",
+      "-2",
+      "+2",
+      ".5",
+      "1e3",
+      "0x10",
+      "cuda0=6e0,vulkan0=.5",
+      // 上游 MaxVramAssignment::parse：混合全局预算 + 设备段、空段、通配键。
+      "6,cuda0=4",
+      "6,",
+      "cuda0=6,,vulkan0=4",
+      "*=6",
+      "all=6",
+      "default=6",
+    ]) {
       expect(validateMaxVramSpec(spec)).toBeNull();
     }
-    for (const spec of ["0x10", "inf", "nan", "cuda0=", "=6", "cuda0=abc"]) {
+    for (const spec of ["inf", "nan", "cuda0=", "=6", "cuda0=abc"]) {
       expect(validateMaxVramSpec(spec)).not.toBeNull();
     }
   });

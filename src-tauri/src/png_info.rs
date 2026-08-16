@@ -124,13 +124,24 @@ pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
     Ok(None)
 }
 
+/// 去掉 Windows canonicalize 产出的 `\\?\` verbatim 前缀。starts_with 比较
+/// 两侧一个带前缀一个不带（一侧 canonicalize 失败回退原路径时）会恒为
+/// false，把合法子目录整体跳过（对抗性审查）。统一去前缀后再比较。
+fn strip_verbatim(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p.to_path_buf(),
+    }
+}
+
 /// List files in a directory with their image metadata, for the history gallery.
 pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
     let base = Path::new(dir);
     if !base.is_dir() {
         return Ok(vec![]);
     }
-    let canonical_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let canonical_base = strip_verbatim(&base.canonicalize().unwrap_or_else(|_| base.to_path_buf()));
     let mut entries = Vec::new();
     let mut dirs = vec![base.to_path_buf()];
     // visited 按规范化路径去重：`is_dir()` 跟随 symlink，a→b→a 的环会导致
@@ -152,7 +163,8 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
                 if p.is_dir() {
                     // 与 scanner 的 structured dir 守卫一致：symlink 目录必须
                     // 仍位于输出目录根内，否则视为逃逸并跳过。
-                    let canonical_dir = p.canonicalize().unwrap_or_else(|_| p.clone());
+                    let canonical_dir =
+                        strip_verbatim(&p.canonicalize().unwrap_or_else(|_| p.clone()));
                     if !canonical_dir.starts_with(&canonical_base) {
                         continue;
                     }
@@ -168,7 +180,9 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
                     .unwrap_or(false)
                     && p
                         .canonicalize()
-                        .map(|canonical_file| !canonical_file.starts_with(&canonical_base))
+                        .map(|canonical_file| {
+                            !strip_verbatim(&canonical_file).starts_with(&canonical_base)
+                        })
                         .unwrap_or(true)
                 {
                     continue;

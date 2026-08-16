@@ -227,14 +227,16 @@ export interface Limits {
 
 export interface Capabilities {
   model: { name: string; stem: string; path: string };
-  current_mode: GenMode;
+  /** 上游两种模式都不支持时返回 ""（routes_sdcpp.cpp），不能假定必为合法模式 */
+  current_mode: GenMode | "";
   supported_modes: GenMode[];
-  defaults_by_mode: Record<GenMode, GenParams>;
+  /** 上游只包含支持的模式，缺键可能存在（routes_sdcpp.cpp） */
+  defaults_by_mode: Partial<Record<GenMode, GenParams>>;
   limits: Limits;
   samplers: string[];
   schedulers: string[];
-  output_formats_by_mode: Record<GenMode, string[]>;
-  features_by_mode: Record<GenMode, Features>;
+  output_formats_by_mode: Partial<Record<GenMode, string[]>>;
+  features_by_mode: Partial<Record<GenMode, Features>>;
   loras: { name: string; path: string }[];
   upscalers: { name: string; path?: string }[];
 }

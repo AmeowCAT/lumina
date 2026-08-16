@@ -441,13 +441,19 @@ export function buildRequestBody(
     (sampleParams.guidance as Record<string, unknown>).img_cfg =
       sp.guidance.img_cfg;
   const slg = sp?.guidance?.slg;
-  if (slg && slg.scale > 0)
+  if (slg && slg.scale > 0) {
     (sampleParams.guidance as Record<string, unknown>).slg = {
       layers: slg.layers || [7, 8, 9],
       layer_start: slg.layer_start ?? 0.01,
       layer_end: slg.layer_end ?? 0.2,
       scale: slg.scale,
     };
+  } else {
+    // 显式发 scale:0 关闭：请求体是在服务端 default_gen_params 之上合并
+    // （routes_sdcpp.cpp），省略字段会沿用服务端默认——外部 server 若默认
+    // 开启 SLG，省略无法关闭（对抗性审查）。
+    (sampleParams.guidance as Record<string, unknown>).slg = { scale: 0 };
+  }
 
   const vl = (params.lora || []).filter((l) => l.path);
   if (vl.length)
@@ -474,9 +480,13 @@ export function buildRequestBody(
     if (h.upscale_tile_size != null && h.upscale_tile_size <= 0)
       delete h.upscale_tile_size;
     b.hires = h;
+  } else {
+    // 显式关闭：省略字段会沿用服务端默认（可能是开启）。
+    b.hires = { enabled: false };
   }
-  if (params.vae_tiling_params?.enabled)
-    b.vae_tiling_params = { ...params.vae_tiling_params };
+  b.vae_tiling_params = params.vae_tiling_params?.enabled
+    ? { ...params.vae_tiling_params }
+    : { enabled: false };
 
   if (params.cache_mode && params.cache_mode !== "disabled") {
     b.cache_mode = params.cache_mode;
@@ -486,6 +496,9 @@ export function buildRequestBody(
     // cache_mode/cache_option/scm_mask，该键在请求体中会被静默忽略——
     // 真正的开关是服务端启动参数 --scm-policy。capabilities 的默认值里
     // 仍会携带该键，但发送它只会制造"已生效"的假象。
+  } else {
+    // 上游接受 "disabled"（common.cpp validate），显式覆盖服务端默认。
+    b.cache_mode = "disabled";
   }
 
   if (mode === "vid_gen" && params.high_noise_sample_params) {

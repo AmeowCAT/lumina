@@ -147,7 +147,11 @@ function recordPollFailure(id: string, message: string) {
 export async function saveEntryPart(jobId: string, key: string): Promise<void> {
   const store = useStore.getState();
   const entry = store.results.find((r) => r.jobId === jobId);
-  if (!entry) return;
+  if (!entry) {
+    // 结果画廊有保留上限，超限被淘汰后 base64 已不在内存（对抗性审查 M1）。
+    store.toast("该任务的结果已超出内存保留上限，无法再保存", true);
+    return;
+  }
   if (entry.saves?.[key]?.status === "saving") return;
   const dir = store.settings.outputDir;
   if (!dir) {
@@ -226,4 +230,32 @@ export function ingestCompletedJob(d: Job): boolean {
   });
   store.toast(`生成完成 · ${what}`);
   return true;
+}
+
+/**
+ * 被用户从队列移除、但服务器侧仍在生成的任务：脱离队列继续低频轮询，
+ * 完成后照常收割进结果画廊——否则"将在后台跑完"的提示是空头支票，
+ * 结果永久丢失（对抗性审查 M3）。终态或任务失效即停；2 小时兜底停止。
+ */
+export function trackDetachedJob(id: string) {
+  const iv = setInterval(async () => {
+    try {
+      const { status, body } = await api.sdcppJob(id);
+      if (status === 404 || status === 410) {
+        clearInterval(iv);
+        return;
+      }
+      if (status !== 200) return;
+      const d = body as Job;
+      if (d.status === "completed") {
+        ingestCompletedJob(d);
+        clearInterval(iv);
+      } else if (d.status === "failed" || d.status === "cancelled") {
+        clearInterval(iv);
+      }
+    } catch {
+      // 网络抖动继续重试，由兜底定时器收尾。
+    }
+  }, 3000);
+  setTimeout(() => clearInterval(iv), 2 * 60 * 60 * 1000);
 }

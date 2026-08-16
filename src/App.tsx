@@ -72,15 +72,23 @@ export default function App() {
           if (shouldRefreshCaps) {
             try {
               const hadCaps = !!c;
+              const prevCapsModel = c?.model?.name;
               c = await api.sdcppCapabilities();
               if (!alive) return;
+              // 外部 sd-server 没有 startedAt（不是我们 spawn 的），同端口
+              // 换外部实例时 identityChanged 检测不到；用 caps 里的模型名
+              // 兜底识别切换（对抗性审查 M6）。
+              const capsIdentityChanged =
+                hadCaps && prevCapsModel !== c.model?.name;
+              const freshIdentity =
+                !hadCaps || identityChanged || capsIdentityChanged;
               setCaps(c);
               lastCapsSync.current = Date.now();
               // current_mode 是服务器启动时的静态默认值（上游 routes_sdcpp.cpp），
               // 只在首次接入/服务器切换时同步到 UI。周期性 30s 刷新若照搬会把
               // 用户手动切到的 vid_gen 静默拉回 img_gen。
-              if (c.current_mode && (!hadCaps || identityChanged)) setMode(c.current_mode);
-              if (!hadCaps || identityChanged) {
+              if (c.current_mode && freshIdentity) setMode(c.current_mode);
+              if (freshIdentity) {
                 const label = s.external
                   ? "检测到外部 sd-server — " + (c.model?.name || "")
                   : "服务器就绪 — " + (c.model?.name || "");
@@ -98,7 +106,13 @@ export default function App() {
           }
           // Only enter running once caps are available — otherwise GenerationUI
           // returns null (no params) and the screen is blank.
-          if (c && !useStore.getState().dashboardOpen) setPhase("running");
+          if (c) {
+            if (!useStore.getState().dashboardOpen) setPhase("running");
+          } else {
+            // 可达但 caps 拉不到（重启换模型加载中）：退回控制台展示日志，
+            // 而不是让 running 视图空白数分钟（对抗性审查 M7）。
+            setPhase("dashboard");
+          }
         } else {
           if (useStore.getState().caps) {
             setCaps(null);

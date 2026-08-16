@@ -53,25 +53,26 @@ function HistoryTile({
   file,
   style,
   src,
+  retryToken,
   onOpen,
   onNeedSrc,
 }: {
   file: OutputEntry;
   style?: CSSProperties;
   src: string;
+  retryToken: number;
   onOpen: (file: OutputEntry) => void;
   onNeedSrc: () => void;
 }) {
   const date = new Date(file.modified * 1000).toLocaleString();
 
-  // 缩略图改为经 read_file_b64（受输出目录白名单 + 大小上限约束）读取，
-  // 不再依赖 asset:// 协议的 ** 全盘作用域。
-  // 仅随 src 变化触发一次；onNeedSrc 最终调用的是 useCallback 稳定引用的
-  // ensureThumb，失败后避免父级每次重渲染都重试读取。
+  // 缩略图经后端 read_thumbnail（输出目录白名单 + 降采样）按需加载。
+  // retryToken 仅在用户点"刷新"时变化，让首次读取失败的瓦片有机会重试；
+  // 平时只随 src 变化触发一次，失败不会被父级重渲染反复重试。
   useEffect(() => {
     if (!src) onNeedSrc();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src]);
+  }, [src, retryToken]);
 
   return (
     <button
@@ -120,6 +121,9 @@ export const HistoryGallery = memo(function HistoryGallery({
       return;
     }
     setLoading(true);
+    // 给此前读取失败的缩略图一次重试机会（HistoryTile 的 retryToken 依赖）。
+    failedThumbs.current.clear();
+    setRetryToken((t) => t + 1);
     try {
       const f = await api.listOutputFiles(settings.outputDir);
       setFiles(f);
@@ -134,37 +138,103 @@ export const HistoryGallery = memo(function HistoryGallery({
     load();
   }, [load]);
 
-  // 缩略图 dataURL 懒缓存:只为实际渲染过的文件调用 read_file_b64,
-  // 上千文件时避免一次性读取全部文件(虚拟滚动配套)。读取经后端输出
-  // 目录白名单 + 256MB 上限校验,替代 asset:// 协议的全盘作用域。
+  // 缩略图 dataURL 懒缓存：只为实际渲染过的文件调用后端 read_thumbnail
+  // （输出目录白名单 + 降采样到 384px），小图常驻成本低；仍设 FIFO 上限
+  // 防极端目录。失败的路径进 failedThumbs，避免重渲染风暴式重试，
+  // 用户点"刷新"时清空重试（retryToken）。
+  const THUMB_CACHE_MAX = 2000;
+  /** 并发读取上限：快速滚动时避免几十个解码/IPC 同时打满后端（审查 H2） */
+  const THUMB_CONCURRENCY = 4;
   const thumbSrcsRef = useRef(new Map<string, string>());
-  const pendingThumbs = useRef(new Map<string, Promise<string>>());
+  const failedThumbs = useRef(new Set<string>());
+  const pendingThumbs = useRef(new Set<string>());
+  const thumbQueue = useRef<OutputEntry[]>([]);
+  const activeThumbReads = useRef(0);
   const [thumbVersion, setThumbVersion] = useState(0);
+  const [retryToken, setRetryToken] = useState(0);
   const thumbSrcs = useMemo(() => new Map(thumbSrcsRef.current), [thumbVersion]);
 
-  const ensureThumb = useCallback(async (f: OutputEntry) => {
-    if (thumbSrcsRef.current.has(f.path)) return;
-    let pending = pendingThumbs.current.get(f.path);
-    if (!pending) {
-      pending = api.readFileB64(f.path).then((b64) => {
-        const ext =
-          f.ext === "jpg" || f.ext === "jpeg" ? "jpeg" : f.ext || "png";
-        return `data:image/${ext};base64,${b64}`;
-      });
-      pendingThumbs.current.set(f.path, pending);
-    }
-    try {
-      const src = await pending;
-      if (!thumbSrcsRef.current.has(f.path)) {
-        thumbSrcsRef.current.set(f.path, src);
-        setThumbVersion((v) => v + 1);
+  const pumpThumbQueue = useCallback(() => {
+    while (
+      activeThumbReads.current < THUMB_CONCURRENCY &&
+      thumbQueue.current.length > 0
+    ) {
+      const f = thumbQueue.current.shift()!;
+      if (thumbSrcsRef.current.has(f.path)) {
+        pendingThumbs.current.delete(f.path);
+        continue;
       }
-    } catch {
-      // 缩略图失败静默：瓦片保持占位；恢复参数/用作初始图时 readFileB64
-      // 会再次尝试并给出可见错误。
-    } finally {
-      pendingThumbs.current.delete(f.path);
+      activeThumbReads.current += 1;
+      api
+        .readThumbnail(f.path)
+        .then(({ b64, mime }) => {
+          const cache = thumbSrcsRef.current;
+          if (!cache.has(f.path)) {
+            // FIFO 淘汰：Map 迭代顺序即插入顺序。
+            while (cache.size >= THUMB_CACHE_MAX) {
+              const oldest = cache.keys().next().value;
+              if (oldest == null) break;
+              cache.delete(oldest);
+            }
+            cache.set(f.path, `data:${mime};base64,${b64}`);
+            setThumbVersion((v) => v + 1);
+          }
+        })
+        .catch(() => {
+          // 失败记录在案：瓦片保持占位，"刷新"或点开瓦片时再重试，
+          // 恢复参数/用作初始图路径会给出可见错误。
+          failedThumbs.current.add(f.path);
+        })
+        .finally(() => {
+          activeThumbReads.current -= 1;
+          pendingThumbs.current.delete(f.path);
+          pumpThumbQueue();
+        });
     }
+  }, []);
+
+  const ensureThumb = useCallback(
+    (f: OutputEntry, force = false) => {
+      if (thumbSrcsRef.current.has(f.path)) return;
+      if (pendingThumbs.current.has(f.path)) return;
+      if (failedThumbs.current.has(f.path) && !force) return;
+      failedThumbs.current.delete(f.path);
+      pendingThumbs.current.add(f.path);
+      thumbQueue.current.push(f);
+      pumpThumbQueue();
+    },
+    [pumpThumbQueue]
+  );
+
+  // Lightbox 用原图（缩略图放大会糊）：按需读取 + 小容量 LRU，避免整图
+  // dataURL 无限累积（审查 H1 的 Lightbox 侧）。
+  const FULL_CACHE_MAX = 6;
+  const fullSrcsRef = useRef(new Map<string, string>());
+  const pendingFull = useRef(new Set<string>());
+  const ensureFull = useCallback((f: OutputEntry) => {
+    if (fullSrcsRef.current.has(f.path) || pendingFull.current.has(f.path))
+      return;
+    pendingFull.current.add(f.path);
+    api
+      .readFileB64(f.path)
+      .then((b64) => {
+        const ext = f.ext === "jpg" || f.ext === "jpeg" ? "jpeg" : f.ext || "png";
+        const cache = fullSrcsRef.current;
+        // LRU：重插到尾部前先淘汰最旧。
+        while (cache.size >= FULL_CACHE_MAX) {
+          const oldest = cache.keys().next().value;
+          if (oldest == null) break;
+          cache.delete(oldest);
+        }
+        cache.set(f.path, `data:image/${ext};base64,${b64}`);
+        setThumbVersion((v) => v + 1);
+      })
+      .catch(() => {
+        // 原图失败回退缩略图显示，无需报错（动作按钮各自有错误提示）。
+      })
+      .finally(() => {
+        pendingFull.current.delete(f.path);
+      });
   }, []);
 
   // 搜索文本一次性预计算：旧实现每次键击对每个文件 JSON.stringify(metadata)
@@ -250,31 +320,37 @@ export const HistoryGallery = memo(function HistoryGallery({
     };
   }, [imgFiles.length === 0, virtualize]);
 
-  // 统一 Lightbox 的导航列表与动作条。src 随缩略图缓存逐步填充；
-  // 打开时若当前项尚未加载完成，会在 useEffect 中补拉。
+  // 统一 Lightbox 的导航列表与动作条。当前项优先用原图（LRU 缓存），
+  // 未就绪时回退缩略图，加载完成经 thumbVersion 触发刷新。
   const lightboxItems = useMemo<LightboxItem[]>(
     () =>
       sortedFiles.map((f) => ({
         type: "image",
-        src: thumbSrcs.get(f.path) || "",
+        src: fullSrcsRef.current.get(f.path) || thumbSrcs.get(f.path) || "",
         title: f.name,
       })),
     [sortedFiles, thumbSrcs]
   );
 
-  // Lightbox 当前项(及相邻项)的缩略图按需补齐:虚拟滚动下导航可能落到
+  // Lightbox 当前项拉原图，相邻项预取缩略图：虚拟滚动下导航可能落到
   // 尚未渲染过的文件,这里直接走同一缓存通道。
   useEffect(() => {
     if (lightboxIndex == null) return;
-    for (const idx of [lightboxIndex - 1, lightboxIndex, lightboxIndex + 1]) {
-      const entry = sortedFiles[idx];
-      if (entry) void ensureThumb(entry);
+    const current = sortedFiles[lightboxIndex];
+    if (current) {
+      ensureThumb(current, true);
+      ensureFull(current);
     }
-  }, [lightboxIndex, sortedFiles, ensureThumb]);
+    for (const idx of [lightboxIndex - 1, lightboxIndex + 1]) {
+      const entry = sortedFiles[idx];
+      if (entry) ensureThumb(entry);
+    }
+  }, [lightboxIndex, sortedFiles, ensureThumb, ensureFull]);
 
   const openTile = useCallback(
     (file: OutputEntry) => {
-      void ensureThumb(file);
+      // force：读取失败过的瓦片点开时再试一次。
+      ensureThumb(file, true);
       const idx = sortedFiles.findIndex((f) => f.path === file.path);
       if (idx >= 0) setLightboxIndex(idx);
     },
@@ -325,6 +401,8 @@ export const HistoryGallery = memo(function HistoryGallery({
         await api.deleteOutputFile(entry.path);
         setFiles((fs) => fs.filter((f) => f.path !== entry.path));
         thumbSrcsRef.current.delete(entry.path);
+        fullSrcsRef.current.delete(entry.path);
+        failedThumbs.current.delete(entry.path);
         setThumbVersion((v) => v + 1);
         setLightboxIndex(null);
         toast(`已删除：${entry.name}`);
@@ -390,8 +468,9 @@ export const HistoryGallery = memo(function HistoryGallery({
                     key={file.path}
                     file={file}
                     src={thumbSrcs.get(file.path) || ""}
+                    retryToken={retryToken}
                     onOpen={openTile}
-                    onNeedSrc={() => void ensureThumb(file)}
+                    onNeedSrc={() => ensureThumb(file)}
                     style={{
                       position: "absolute",
                       left: pos.left,
@@ -410,8 +489,9 @@ export const HistoryGallery = memo(function HistoryGallery({
                   key={f.path}
                   file={f}
                   src={thumbSrcs.get(f.path) || ""}
+                  retryToken={retryToken}
                   onOpen={openTile}
-                  onNeedSrc={() => void ensureThumb(f)}
+                  onNeedSrc={() => ensureThumb(f)}
                 />
               ))}
             </div>

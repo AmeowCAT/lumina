@@ -1,6 +1,6 @@
 [package]
 name = "lumina"
-version = "0.7.14"
+version = "0.7.15"
 edition = "2021"
 description = "Lumina (流光) — desktop GUI for stable-diffusion.cpp sd-server"
 
@@ -22,6 +22,8 @@ tokio = { version = "1", features = ["process", "io-util", "time", "sync", "rt-m
 reqwest = { version = "0.12", features = ["json"] }
 rfd = "0.15"
 base64 = "0.22"
+# 历史画廊缩略图：后端解码 + 降采样，避免整图 base64 常驻 WebView 内存。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 anyhow = "1"
 dirs = "5"
 log = "0.4"

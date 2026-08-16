@@ -47,6 +47,7 @@ import {
   ingestCompletedJob,
   processedJobs,
   saveEntryPart,
+  trackDetachedJob,
 } from "../../hooks/useJobPolling";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 
@@ -504,20 +505,18 @@ export function GenerationUI() {
         }
       }
       if (job?.status === "generating") {
-        toast("已从列表移除；该任务正在生成，无法中断，将在后台跑完");
+        // 脱离队列后仍低频轮询到终态并收割进结果画廊——否则"后台跑完"
+        // 的结果无人接收，永久丢失（对抗性审查 M3）。
+        trackDetachedJob(id);
+        toast("已从列表移除；该任务正在生成，完成后结果仍会进入结果画廊");
       }
-      blobRef.current.revokeVideoUrl(id);
+      // 只移除任务记录，不动结果画廊：清空按钮的语义是"不删除生成结果"，
+      // 单个移除若连带删结果会让未保存的图静默丢失（对抗性审查 M2）。
+      // 结果侧有独立的删除入口（removeResult）。
       processedJobs.delete(id);
       setJobs((j) => j.filter((x) => x.id !== id));
-      setResults((r) => {
-        const removed = r.find((x) => x.jobId === id);
-        removed?.result?.images?.forEach((img) => {
-          if (img.b64_json) blobRef.current.revokeImageUrl(img.b64_json);
-        });
-        return r.filter((x) => x.jobId !== id);
-      });
     },
-    [setJobs, setResults, toast]
+    [setJobs, toast]
   );
 
   // 清空整个队列（取消所有可取消的任务）。
