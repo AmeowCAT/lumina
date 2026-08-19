@@ -43,6 +43,7 @@ import { LoraPanel } from "./panels/LoraPanel";
 import { HiresPanel } from "./panels/HiresPanel";
 import { OutputPanel } from "./panels/OutputPanel";
 import { useBlobUrlCache } from "../../hooks/useBlobUrlCache";
+import { useTheme } from "../../lib/theme";
 import {
   ingestCompletedJob,
   processedJobs,
@@ -120,6 +121,7 @@ export function GenerationUI() {
   const [sheetTarget, setSheetTarget] = useState<"size" | "sampling" | null>(null);
   const progressStep = useStore((s) => s.progressStep);
   const progressTotal = useStore((s) => s.progressTotal);
+  const theme = useTheme();
 
   const openLightbox = useCallback(
     (items: LightboxItem[], index: number) => setLightbox({ items, index }),
@@ -849,6 +851,14 @@ export function GenerationUI() {
       <div className="main">
         <div className="output-area">
           <ProgressBar />
+          {/* VOSTOK 胶片边注:画布右缘竖排遥测,生成时实时帧号 */}
+          {theme === "vostok" && (
+            <span className="r-vertical r-canvas-vertical" aria-hidden="true">
+              {currentGen && progressTotal > 0
+                ? `FRAME ${String(progressStep).padStart(3, "0")}/${String(progressTotal).padStart(3, "0")} · ORBIT-1`
+                : "STANDBY · ORBIT-1 · LUMINA STUDIO"}
+            </span>
+          )}
           <div className="canvas-float left">
             <div
               className="mode-tabs"

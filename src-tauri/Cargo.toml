@@ -1,6 +1,6 @@
 [package]
 name = "lumina"
-version = "0.7.15"
+version = "0.7.16"
 edition = "2021"
 description = "Lumina (流光) — desktop GUI for stable-diffusion.cpp sd-server"
 

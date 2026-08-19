@@ -5,6 +5,8 @@ import { useId } from "react";
  * 深色圆角底,呼应"暗房金光"主题的安全灯琥珀色。
  *
  * 用 `useId` 给渐变分配唯一 id,避免同页多实例时 `url(#...)` 撞车。
+ * 徽章底色/圆角读 CSS 变量(--color-logo-bg-*, --logo-rx),主题可覆写;
+ * 流光弧读 --color-flow-start/--color-accent/--color-flow-end,随主题换色。
  */
 export function Logo({ size = 28 }: { size?: number }) {
   const uid = useId().replace(/:/g, "");
@@ -23,8 +25,8 @@ export function Logo({ size = 28 }: { size?: number }) {
     >
       <defs>
         <linearGradient id={bg} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#221c12" />
-          <stop offset="1" stopColor="#100d09" />
+          <stop style={{ stopColor: "var(--color-logo-bg-hi, #221c12)" }} />
+          <stop offset="1" style={{ stopColor: "var(--color-logo-bg-lo, #100d09)" }} />
         </linearGradient>
         <linearGradient id={flow} x1="12" y1="54" x2="52" y2="12" gradientUnits="userSpaceOnUse">
           <stop stopColor="var(--color-flow-start)" />
@@ -37,8 +39,9 @@ export function Logo({ size = 28 }: { size?: number }) {
           <stop offset="1" stopColor="var(--color-accent)" stopOpacity="0" />
         </radialGradient>
       </defs>
-      <rect width="64" height="64" rx="15" fill={`url(#${bg})`} />
+      <rect className="logo-rect-bg" width="64" height="64" rx="15" fill={`url(#${bg})`} />
       <rect
+        className="logo-rect-frame"
         x="0.5"
         y="0.5"
         width="63"

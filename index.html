@@ -6,6 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0d0b09" />
     <title>流光 Lumina</title>
+    <script>
+      // 主题引导:首帧渲染前恢复持久化主题,避免默认暗色闪切(FOUC)。
+      // 与 src/lib/theme.ts 的 STORAGE_KEY / themeColor 保持一致。
+      try {
+        var t = localStorage.getItem("lumina:theme");
+        if (t !== "lumina" && t !== "vostok") t = "lumina";
+        document.documentElement.dataset.theme = t;
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute("content", t === "vostok" ? "#0d1117" : "#0d0b09");
+      } catch (e) {
+        /* localStorage 不可用时保持默认主题 */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

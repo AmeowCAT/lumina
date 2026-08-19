@@ -24,9 +24,11 @@ import { IC } from "../ui/Icons";
 import { Logo } from "../ui/Logo";
 import { NumberInput } from "../ui/NumberInput";
 import { Select } from "../ui/Select";
+import { ThemePicker } from "../ui/ThemePicker";
 import { Toggle } from "../ui/Toggle";
 import { TwoTapButton } from "../ui/TwoTapButton";
 import { useModelSwitch } from "../../hooks/useModelSwitch";
+import { useTheme } from "../../lib/theme";
 import { cn } from "../ui/cn";
 
 export function Dashboard() {
@@ -46,6 +48,7 @@ export function Dashboard() {
 	const setComponents = useStore((s) => s.setComponents);
 	const toast = useStore((s) => s.toast);
 	const setDashboardOpen = useStore((s) => s.setDashboardOpen);
+	const theme = useTheme();
 	const [starting, setStarting] = useState(false);
 	// 切换模型将影响任务/结果时的待确认影响清单;非空即显示确认条
 	const [pendingSwitch, setPendingSwitch] = useState<string[] | null>(null);
@@ -538,6 +541,12 @@ export function Dashboard() {
 
 	return (
 		<div className="dashboard">
+			{/* VOSTOK 胶片边注:GO/NO-GO 遥测印字(检查单确实每 3s 轮询,见 App.tsx) */}
+			{theme === "vostok" && (
+				<span className="r-vertical r-dash-vertical" aria-hidden="true">
+					GO / NO-GO · 检查单 POLLING 3S
+				</span>
+			)}
 			<motion.div
 				className="dash-rail"
 				initial={{ opacity: 0, y: 16 }}
@@ -777,6 +786,13 @@ export function Dashboard() {
 								? "设置未保存，请检查配置目录权限"
 								: "设置已保存"}
 				</div>
+
+				<Panel title="界面主题">
+					<ThemePicker />
+					<div className="field-hint field-hint-flush" style={{ marginTop: 8 }}>
+						仅影响界面外观，即时生效并本地保存，不影响生成参数与服务器配置
+					</div>
+				</Panel>
 
 				<div ref={pathsSection}>
 				<Panel title="程序与路径">

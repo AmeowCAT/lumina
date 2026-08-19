@@ -10,11 +10,13 @@ import { Logo } from "./components/ui/Logo";
 import { ToastContainer } from "./components/ui/Toast";
 import { useJobPolling } from "./hooks/useJobPolling";
 import { useSystemIntegration } from "./hooks/useSystemIntegration";
+import { useTheme } from "./lib/theme";
 
 type Phase = "checking" | "dashboard" | "running";
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>("checking");
+  const theme = useTheme();
   const serverStatus = useStore((s) => s.serverStatus);
   const dashboardOpen = useStore((s) => s.dashboardOpen);
   const setServerStatus = useStore((s) => s.setServerStatus);
@@ -196,6 +198,60 @@ export default function App() {
   }, [serverStatus, phase]);
 
   if (phase === "checking") {
+    // VOSTOK 主题的 Splash 是 R 版全海报场(brand-spec 附录 A 回填):
+    // 红楔/旭日光束/任务补丁直接落在印刷场上,没有卡片。
+    if (theme === "vostok") {
+      return (
+        <div className="app">
+          <div className="r-splash">
+            <div className="r-splash-rays" aria-hidden="true" />
+            <div className="r-splash-wedge" aria-hidden="true" />
+            <div className="r-splash-wedge-2" aria-hidden="true" />
+            <span className="r-vertical r-splash-vertical" aria-hidden="true">
+              ЗАПУСК · LAUNCH SEQUENCE
+            </span>
+            <div className="r-splash-orb" aria-hidden="true">
+              <span className="orb ready" />
+            </div>
+            <div className="r-splash-lockup">
+              <div className="over">Lumina Studio · Восток-1</div>
+              <h1 className="r-splash-word">流光</h1>
+              <div className="r-splash-en">LUMINA STUDIO</div>
+            </div>
+            <div className="r-splash-colophon" role="status">
+              <span className="spinner" />
+              <span>正在检查启动器和服务器状态 — CHECKING LAUNCHER / SERVER</span>
+            </div>
+            <svg
+              className="r-splash-patch"
+              width="104"
+              height="104"
+              viewBox="0 0 120 120"
+              role="img"
+              aria-label="东方号任务补丁"
+            >
+              <defs>
+                <path id="vostok-patch-top" d="M 14,62 A 46,46 0 0 1 106,62" fill="none" />
+                <path id="vostok-patch-bot" d="M 102,74 A 44,44 0 0 1 18,74" fill="none" />
+              </defs>
+              <circle cx="60" cy="60" r="58" fill="#0d1117" stroke="#edeadc" strokeWidth="1.6" />
+              <circle cx="60" cy="60" r="50" fill="none" stroke="#edeadc" strokeOpacity="0.35" strokeWidth="0.8" />
+              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.6" fill="#edeadc">
+                <textPath href="#vostok-patch-top" startOffset="6%">LUMINA STUDIO</textPath>
+              </text>
+              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.2" fill="#edeadc">
+                <textPath href="#vostok-patch-bot" startOffset="4%">ВОСТОК · 东方号</textPath>
+              </text>
+              <polygon points="60,26 74,86 46,86" fill="#ce241b" />
+              <circle cx="60" cy="26" r="6.5" fill="#edeadc" />
+              <ellipse cx="60" cy="60" rx="34" ry="9" fill="none" stroke="#8fc1cd" strokeWidth="1.4" transform="rotate(-18 60 60)" />
+              <circle cx="88" cy="44" r="2.2" fill="#edeadc" />
+            </svg>
+          </div>
+          <ToastContainer />
+        </div>
+      );
+    }
     return (
       <div className="app">
         <div className="splash">

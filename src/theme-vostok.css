@@ -1,0 +1,772 @@
+/* ─────────────────────────────────────────────────────────────
+   流光 Lumina — "东方号 VOSTOK" 主题层
+   苏俄构成主义 × 太空时代:利西茨基的红色楔形打进深空。
+   深空墨蓝 + 纸白 + 苏红 #CE241B · Bahnschrift 压缩工业体 ·
+   斜切对角线母题 · 轨道环与星图 · 遥测等宽字。
+
+   来源:docs/Web-Prototype-v2/(brand-spec.md + vostok-theme/styles.css
+   + vostok-theme-preview-v2.html)。本文件不替换 styles.css,而是与其
+   共存:所有规则以 [data-theme="vostok"] 作用域覆盖,默认 "Lumina Dark"
+   主题不受影响;切换入口见 src/lib/theme.ts 与 ui/ThemePicker.tsx。
+
+   按 brand-spec 附录 A 与 v2 页脚裁决回填的 R 方言要素:
+   Splash 海报场、Toast 顶部斜切楔、红色收敛(队列角标/种子号降级中性)、
+   工作台胶片边注、featured 裁切标记;对角梁/幽灵大字/页眉火焰梁不进生产。
+
+   兼容说明:默认主题的 --color-*-rgb 三元组在本主题下继续定义为红色值,
+   未被覆盖的默认规则(如 section-flash)自动落到红色系,不漏色。
+   需要 WebView2/Chromium ≥ 111(color-mix / oklch)。
+   ───────────────────────────────────────────────────────────── */
+
+/* ═══ ① 设计令牌:深空墨蓝 × 构成主义纸白 × 苏红 ═══════════════ */
+@layer theme {
+  :root[data-theme="vostok"] {
+    --color-bg: oklch(0.175 0.014 264);          /* #0d1117 深空 */
+    --color-well: oklch(0.14 0.011 264);         /* #07090e 深井 */
+    --color-surface: oklch(0.205 0.016 264);     /* #13171f 舱面 */
+    --color-elevated: oklch(0.235 0.018 264);    /* #1a1e27 仪表板 */
+    --color-hover: oklch(0.275 0.02 264);        /* #232832 悬停 */
+    --color-fg: oklch(0.935 0.018 95);           /* #edeadc 纸白 */
+    --color-fg2: oklch(0.75 0.016 90);           /* #b2aea3 次级 */
+    --color-muted: oklch(0.565 0.014 80);        /* #7a756d 弱化 */
+    --color-line: color-mix(in oklch, var(--color-fg) 8%, transparent);
+    --color-line2: color-mix(in oklch, var(--color-fg) 16%, transparent);
+    /* 苏红:全局唯一强调色 */
+    --color-accent: oklch(0.55 0.205 29);        /* #ce241b */
+    --color-accent-hover: oklch(0.6 0.215 29);   /* #e43227 */
+    --color-accent-hi: oklch(0.7 0.185 33);      /* #fc694c 信号红(深底文字) */
+    --color-accent-ink: oklch(0.94 0.018 95);    /* #efebde 红底上的纸白 */
+    --color-accent-dim: color-mix(in oklch, var(--color-accent) 14%, transparent);
+    --color-glow: color-mix(in oklch, var(--color-accent) 32%, transparent);
+    /* 火焰梯度:淡焰 → 苏红 → 深绯。只用于英雄时刻——
+       生成/发射 CTA、进度束、字标下楔形、Logo 流光弧、就绪辉光。 */
+    --color-flow-start: oklch(0.87 0.12 70);     /* #ffc679 */
+    --color-flow-end: oklch(0.44 0.16 24);       /* #971922 */
+    --grad-flow: linear-gradient(100deg, var(--color-flow-start), var(--color-accent) 46%, var(--color-flow-end));
+    --grad-flow-soft: linear-gradient(100deg,
+      color-mix(in oklch, var(--color-flow-start) 22%, transparent),
+      color-mix(in oklch, var(--color-accent) 22%, transparent) 46%,
+      color-mix(in oklch, var(--color-flow-end) 22%, transparent));
+    /* -45° 滚动斜纹:进度束(火焰遥测)与警戒条纹(危险/武装) */
+    --grad-beam: repeating-linear-gradient(-45deg,
+      var(--color-flow-start) 0 6px, var(--color-accent) 6px 12px, var(--color-flow-end) 12px 18px);
+    --grad-hazard: repeating-linear-gradient(-45deg,
+      var(--color-danger) 0 7px, var(--color-danger-solid) 7px 14px);
+    /* 钢青:仅环境辉光与星点,不作文字、不作第二强调色 */
+    --color-steel: oklch(0.78 0.055 215);        /* #8fc1cd */
+    /* 语义态:GO 绿 / 信号琥珀 / 警报红(实心+斜纹区别于品牌红)/ 钢铁灰蓝 */
+    --color-danger: oklch(0.64 0.21 25);         /* #f14445 */
+    --color-danger-solid: oklch(0.47 0.17 26);   /* #a51e21 */
+    --color-danger-dim: color-mix(in oklch, var(--color-danger) 14%, transparent);
+    --color-warn: oklch(0.74 0.14 80);           /* #d9a02c */
+    --color-warn-dim: color-mix(in oklch, var(--color-warn) 12%, transparent);
+    --color-success: oklch(0.72 0.12 165);       /* #4dbc92 */
+    --color-success-dim: color-mix(in oklch, var(--color-success) 13%, transparent);
+    --color-queued: oklch(0.65 0.028 255);       /* #8490a0 */
+    --color-queued-dim: color-mix(in oklch, var(--color-queued) 12%, transparent);
+    /* 墨蓝玻璃:所有浮层基底,不再是中性灰黑 */
+    --color-glass: color-mix(in oklch, var(--color-surface) 72%, transparent);
+    --color-glass-card: color-mix(in oklch, var(--color-surface) 86%, transparent);
+    --color-glass-strong: color-mix(in oklch, var(--color-surface) 92%, transparent);
+
+    /* ── 字体:Bahnschrift 压缩工业体(构成) + Inter(正文) + JetBrains Mono(遥测) ── */
+    --font-display: "Bahnschrift SemiCondensed", "Bahnschrift", "Oswald",
+      "Franklin Gothic Medium", "Arial Narrow", "Microsoft YaHei UI",
+      "Microsoft YaHei", "PingFang SC", sans-serif;
+
+    /* ── 圆角收紧:直角为骨,圆形只属于航天器语汇 ── */
+    --radius-xs: 2px;
+    --radius-sm: 3px;
+    --radius-md: 5px;
+    --radius-lg: 8px;
+    --shadow-panel: 0 1px 2px rgb(2 4 8 / 0.45);
+    --shadow-overlay: 0 8px 28px rgb(2 4 8 / 0.62), 0 2px 8px rgb(0 0 0 / 0.45);
+    --shadow-glow: 0 0 22px color-mix(in oklch, var(--color-accent) 28%, transparent);
+
+    /* ── 默认主题兼容层:未覆盖规则里的三元组引用落到红色系 ── */
+    --color-accent-rgb: 206 36 27;        /* #ce241b */
+    --color-accent-hi-rgb: 252 105 76;    /* #fc694c */
+    --color-flow-start-rgb: 255 198 121;  /* #ffc679 */
+    --color-flow-end-rgb: 151 25 34;      /* #971922 */
+    --color-celadon: #8fc1cd;             /* 青瓷 → 钢青 */
+    /* Logo 徽章:墨蓝底 + 构成主义直角(Logo.tsx 读这两个变量) */
+    --color-logo-bg-hi: #1a1e27;
+    --color-logo-bg-lo: #0b0e14;
+    --logo-rx: 6px;
+
+    /* R 版质感:胶片颗粒(fractalNoise 内联 SVG)与丝网半调网点 */
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E");
+    --halftone: radial-gradient(circle, rgb(2 4 8 / 0.22) 1.2px, transparent 1.7px);
+  }
+}
+
+/* ═══ ② 主题专属 keyframes(全局命名加 vostok- 前缀避免污染默认主题) ═══ */
+/* 斜纹输送带:-45° 条纹 18px 周期,横向步进 25.45px = 两个周期,无缝循环 */
+@keyframes beam-slide { to { background-position-x: 25.45px } }
+/* 发射钮就绪呼吸:clip-path 会裁掉外阴影,辉光必须走 filter drop-shadow;
+   默认主题同名 keyframes 是 box-shadow 版,不能覆盖,故改名 */
+@keyframes vostok-ready-pulse {
+  0%, 100% { filter: drop-shadow(0 0 8px color-mix(in oklch, var(--color-accent) 55%, transparent))
+    drop-shadow(0 0 26px color-mix(in oklch, var(--color-accent) 22%, transparent)) }
+  50% { filter: drop-shadow(0 0 12px color-mix(in oklch, var(--color-accent) 75%, transparent))
+    drop-shadow(0 0 44px color-mix(in oklch, var(--color-accent) 32%, transparent)) }
+}
+
+/* ═══ ③ 基础层:环境基底、选区、滚动条 ═══ */
+@layer base {
+  /* 环境基底:左上一缕苏红、右上一缕钢青,如地平线两端的地光 */
+  [data-theme="vostok"] body {
+    background:
+      radial-gradient(70% 55% at 8% -10%, color-mix(in oklch, var(--color-accent) 6%, transparent), transparent 62%),
+      radial-gradient(70% 55% at 96% -8%, color-mix(in oklch, var(--color-steel) 5%, transparent), transparent 62%),
+      var(--color-bg);
+  }
+  [data-theme="vostok"] ::selection {
+    background: color-mix(in oklch, var(--color-accent) 38%, transparent);
+    color: var(--color-fg);
+  }
+  [data-theme="vostok"] ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--color-fg) 10%, transparent);
+    border-radius: 4px; border: 2px solid transparent; background-clip: content-box;
+  }
+  [data-theme="vostok"] ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--color-accent) 45%, transparent);
+    background-clip: content-box;
+  }
+}
+
+/* ═══ ④ 组件层(与默认主题同 layer,scoped 选择器优先级更高) ═══ */
+@layer components {
+  /* ── 布局骨架 / 页眉 ─────────────────────────────────── */
+  [data-theme="vostok"] .header { background: var(--color-glass) }
+  [data-theme="vostok"] .header-logo .brand-zh {
+    font-family: var(--font-display); font-weight: 600; font-size: 15px;
+    letter-spacing: 0.14em;
+  }
+
+  /* ── 面板:深空仪表卡,标题前挂红色斜杠(构成主义注册标记) ── */
+  [data-theme="vostok"] .panel-head:hover {
+    background: color-mix(in oklch, var(--color-fg) 3%, transparent);
+  }
+  [data-theme="vostok"] .panel-title {
+    align-items: center;
+    font-family: var(--font-display); font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.15em;
+  }
+  [data-theme="vostok"] .panel-title::before {
+    content: ""; width: 3px; height: 10px; margin-right: 7px; flex-shrink: 0;
+    background: var(--color-accent); transform: skewX(-24deg);
+  }
+
+  /* ── 表单 ─────────────────────────────────────────────── */
+  [data-theme="vostok"] .input:focus {
+    border-color: color-mix(in oklch, var(--color-accent) 65%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 15%, transparent);
+  }
+  [data-theme="vostok"] .input::placeholder {
+    color: color-mix(in oklch, var(--color-muted) 70%, transparent);
+  }
+  [data-theme="vostok"] .input.invalid {
+    border-color: color-mix(in oklch, var(--color-danger) 65%, transparent);
+    box-shadow: 0 0 0 3px var(--color-danger-dim);
+  }
+
+  /* ── 按钮:主按钮即红色楔形——利西茨基的对角线打进界面 ── */
+  [data-theme="vostok"] .btn {
+    font-family: var(--font-display); font-weight: 600; letter-spacing: 0.05em;
+  }
+  [data-theme="vostok"] .btn-primary {
+    background: var(--grad-flow); background-size: 160% 100%;
+    border-color: transparent; border-radius: 0;
+    /* 平行四边形楔:左下/右上各切 9px,文字随盒正立 */
+    clip-path: polygon(9px 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+    color: var(--color-accent-ink); font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; box-shadow: none;
+    transition: background-position 0.25s var(--ease-expo), transform 0.16s var(--ease-expo),
+      filter 0.2s var(--ease-expo), opacity 0.16s var(--ease-expo);
+  }
+  /* clip-path 会裁掉 outline/box-shadow,焦点与辉光一律走 filter drop-shadow */
+  [data-theme="vostok"] .btn-primary:hover {
+    background: var(--grad-flow); background-size: 160% 100%;
+    background-position: 80% 0; border-color: transparent;
+    transform: translateY(-1px); box-shadow: none;
+    filter: drop-shadow(0 4px 14px color-mix(in oklch, var(--color-accent) 38%, transparent));
+  }
+  [data-theme="vostok"] .btn-primary:active:not(:disabled) { transform: translateY(1px) }
+  [data-theme="vostok"] .btn-primary:focus-visible {
+    outline: none;
+    filter: drop-shadow(0 0 5px color-mix(in oklch, var(--color-accent-hi) 85%, transparent))
+      drop-shadow(0 0 14px color-mix(in oklch, var(--color-accent) 45%, transparent));
+  }
+  [data-theme="vostok"] .btn-danger:hover {
+    background: var(--color-danger); border-color: transparent; color: var(--color-accent-ink);
+  }
+  [data-theme="vostok"] .icon-btn:hover {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+    color: var(--color-accent-hi);
+  }
+  [data-theme="vostok"] .generate-btn {
+    font-family: var(--font-display); letter-spacing: 0.24em; text-indent: 0.24em;
+  }
+
+  /* ── 分段切换(tab 语义保留) ──────────────────────────── */
+  [data-theme="vostok"] .mode-tab {
+    border-radius: var(--radius-xs);
+    font-family: var(--font-display); font-weight: 600; letter-spacing: 0.06em;
+  }
+  [data-theme="vostok"] .mode-tab.active {
+    box-shadow: 0 0 0 0.5px color-mix(in oklch, var(--color-accent) 40%, transparent);
+  }
+
+  /* ── 进度光束:画布顶部的斜纹输送带,火焰遥测 ───────────── */
+  [data-theme="vostok"] .progress-bar-track {
+    background: color-mix(in oklch, var(--color-fg) 7%, transparent);
+  }
+  [data-theme="vostok"] .progress-bar-fill {
+    background: var(--grad-beam);
+    box-shadow: 0 0 12px var(--color-glow),
+      0 1px 10px color-mix(in oklch, var(--color-steel) 35%, transparent);
+    animation: beam-slide 0.9s linear infinite;
+  }
+
+  /* ── Radix Slider:菱形拇指——对角线母题落在指尖 ── */
+  [data-theme="vostok"] .slider-track {
+    border-radius: 0;
+    background: color-mix(in oklch, var(--color-fg) 12%, transparent);
+  }
+  [data-theme="vostok"] .slider-range {
+    background: linear-gradient(90deg, var(--color-flow-end), var(--color-accent));
+  }
+  [data-theme="vostok"] .slider-thumb {
+    width: 12px; height: 12px; border-radius: 0;
+    transform: rotate(45deg);
+    box-shadow: 0 0 8px color-mix(in oklch, var(--color-accent) 45%, transparent);
+  }
+  [data-theme="vostok"] .slider-thumb:hover { transform: rotate(45deg) scale(1.18) }
+  [data-theme="vostok"] .slider-thumb:active {
+    transform: rotate(45deg) scale(1.05);
+    box-shadow: 0 0 12px color-mix(in oklch, var(--color-accent) 60%, transparent);
+  }
+
+  /* ── Radix Switch:胶囊语汇,航天器拨杆 ── */
+  [data-theme="vostok"] .switch-root {
+    background: color-mix(in oklch, var(--color-fg) 14%, transparent);
+  }
+
+  /* ── Radix Select ─────────────────────────────────────── */
+  [data-theme="vostok"] .select-trigger[data-state="open"] {
+    border-color: color-mix(in oklch, var(--color-accent) 65%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 15%, transparent);
+  }
+
+  /* ── 种子行 / 尺寸预设 ────────────────────────────────── */
+  [data-theme="vostok"] .seed-btn:hover {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+    color: var(--color-accent-hi);
+  }
+  [data-theme="vostok"] .seed-btn.active {
+    box-shadow: 0 0 12px color-mix(in oklch, var(--color-accent) 35%, transparent);
+  }
+  [data-theme="vostok"] .size-preset.active {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+  }
+  /* 两段式确认的武装态:琥珀警戒斜纹,再次点击即执行 */
+  [data-theme="vostok"] .size-preset.armed {
+    background: repeating-linear-gradient(-45deg,
+      color-mix(in oklch, var(--color-warn) 22%, transparent) 0 5px,
+      transparent 5px 10px);
+    border-color: color-mix(in oklch, var(--color-warn) 55%, transparent);
+  }
+
+  /* ── 图片上传 / LoRA ──────────────────────────────────── */
+  [data-theme="vostok"] .upload-remove {
+    background: rgb(4 6 10 / 0.82); color: var(--color-fg);
+    border-color: color-mix(in oklch, var(--color-fg) 16%, transparent);
+  }
+  [data-theme="vostok"] .lora-remove:hover {
+    background: var(--color-danger); color: var(--color-accent-ink);
+  }
+
+  /* ── 输出区 / 画布:深空星图,结果是主角 ────────────────── */
+  [data-theme="vostok"] .output-area {
+    /* 星图点阵:1px 钢青细点 28px 等距平铺,静态标尺质感 */
+    background-image: radial-gradient(circle, color-mix(in oklch, var(--color-steel) 11%, transparent) 1px, transparent 1.5px);
+  }
+  [data-theme="vostok"] .canvas-float .mode-tabs,
+  [data-theme="vostok"] .canvas-float .btn { background: var(--color-glass) }
+  [data-theme="vostok"] .canvas-toolbar { background: var(--color-glass) }
+  [data-theme="vostok"] .queue-toggle.active {
+    border-color: color-mix(in oklch, var(--color-accent) 60%, transparent);
+    color: var(--color-accent-hi);
+  }
+  /* R/CD 修正:计数角标降级为中性,不再占用红色预算 */
+  [data-theme="vostok"] .queue-badge {
+    background: var(--color-elevated); border: 1px solid var(--color-line2);
+    color: var(--color-fg2); font: 700 9.5px/15px var(--font-mono);
+    box-shadow: none;
+  }
+
+  /* ── 浮动指令条:提示词是国王,停靠画布底部中央 ─────────── */
+  [data-theme="vostok"] .prompt-dock {
+    background: color-mix(in oklch, var(--color-surface) 80%, transparent);
+    box-shadow: var(--shadow-overlay),
+      0 0 0 0.5px color-mix(in oklch, var(--color-fg) 5%, transparent) inset;
+  }
+  [data-theme="vostok"] .prompt-dock:focus-within {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+    box-shadow:
+      var(--shadow-overlay),
+      0 0 0 3px color-mix(in oklch, var(--color-accent) 15%, transparent),
+      0 0 36px color-mix(in oklch, var(--color-accent) 22%, transparent);
+  }
+  [data-theme="vostok"] .dock-negative {
+    background: color-mix(in oklch, var(--color-well) 60%, transparent);
+  }
+  [data-theme="vostok"] .dock-negative:focus {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+  }
+  [data-theme="vostok"] .param-chip {
+    background: color-mix(in oklch, var(--color-fg) 4%, transparent);
+  }
+  [data-theme="vostok"] .param-chip:hover {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+    color: var(--color-accent-hi); background: var(--color-accent-dim);
+  }
+  [data-theme="vostok"] .param-chip.active {
+    box-shadow: 0 0 10px color-mix(in oklch, var(--color-accent) 40%, transparent);
+  }
+  [data-theme="vostok"] .chip-pop {
+    background: color-mix(in oklch, var(--color-elevated) 94%, transparent);
+  }
+
+  /* ── 参数 Sheet / 任务队列抽屉:墨蓝玻璃 ───────────────── */
+  [data-theme="vostok"] .sheet-backdrop {
+    background: color-mix(in oklch, var(--color-well) 45%, transparent);
+  }
+  [data-theme="vostok"] .params-sheet {
+    background: var(--color-glass-strong);
+    box-shadow: -18px 0 48px rgb(2 4 8 / 0.55);
+  }
+  [data-theme="vostok"] .params-sheet-head h3 {
+    font: 600 11.5px var(--font-display); letter-spacing: 0.16em;
+  }
+  [data-theme="vostok"] .queue-backdrop {
+    background: color-mix(in oklch, var(--color-well) 48%, transparent);
+  }
+  [data-theme="vostok"] .queue-overlay {
+    background: var(--color-glass-strong);
+    box-shadow: 18px 0 48px rgb(2 4 8 / 0.55);
+  }
+
+  /* ── 任务队列 ─────────────────────────────────────────── */
+  [data-theme="vostok"] .jq-header { background: var(--color-glass-card) }
+  [data-theme="vostok"] .job-row:hover {
+    background: color-mix(in oklch, var(--color-fg) 3%, transparent);
+  }
+  [data-theme="vostok"] .job-status.generating {
+    box-shadow: 0 0 10px color-mix(in oklch, var(--color-accent) 25%, transparent);
+  }
+  /* 失败=实心警报红+纸白,与"生成中"的呼吸红晕拉开重量差 */
+  [data-theme="vostok"] .job-status.failed {
+    background: var(--color-danger-solid); color: var(--color-accent-ink);
+  }
+  [data-theme="vostok"] .job-status.cancelled {
+    background: color-mix(in oklch, var(--color-fg) 6%, transparent);
+    color: var(--color-muted);
+  }
+  [data-theme="vostok"] .job-status.unknown {
+    background: var(--color-warn-dim); color: var(--color-warn);
+  }
+  [data-theme="vostok"] .job-progress {
+    border-radius: 0;
+    background: color-mix(in oklch, var(--color-fg) 7%, transparent);
+  }
+  [data-theme="vostok"] .job-progress-fill {
+    background: var(--grad-beam);
+    box-shadow: 0 0 8px var(--color-glow);
+    animation: beam-slide 1.2s linear infinite;
+  }
+
+  /* ── 结果卡片:签名辉光——图像是深空里唯一发光的物体 ────── */
+  [data-theme="vostok"] .result-card img, [data-theme="vostok"] .result-card video {
+    box-shadow:
+      0 12px 40px rgb(2 4 8 / 0.65),
+      -8px -6px 44px color-mix(in oklch, var(--color-accent) 11%, transparent),
+      8px 6px 44px color-mix(in oklch, var(--color-steel) 9%, transparent);
+  }
+  [data-theme="vostok"] .result-card:hover img,
+  [data-theme="vostok"] .result-card:hover video {
+    box-shadow:
+      0 12px 44px rgb(2 4 8 / 0.7),
+      -10px -8px 56px color-mix(in oklch, var(--color-accent) 17%, transparent),
+      10px 8px 56px color-mix(in oklch, var(--color-steel) 13%, transparent);
+  }
+  [data-theme="vostok"] .result-card-actions .btn {
+    background: color-mix(in oklch, var(--color-well) 88%, transparent);
+  }
+  /* 两段式删除的武装态:警戒斜纹 + 呼吸提醒,再次点击即执行 */
+  [data-theme="vostok"] .result-card-actions .btn-danger.armed,
+  [data-theme="vostok"] .featured-item-actions .btn-danger.armed {
+    background: var(--grad-hazard); border-color: transparent;
+    color: var(--color-accent-ink); font-weight: 700;
+  }
+
+  /* ── 本次生成聚焦区:最新成果像海报一样被钉在画布上 ────── */
+  [data-theme="vostok"] .featured-item img, [data-theme="vostok"] .featured-item video {
+    box-shadow:
+      0 12px 40px rgb(2 4 8 / 0.65),
+      -8px -6px 44px color-mix(in oklch, var(--color-accent) 11%, transparent),
+      8px 6px 44px color-mix(in oklch, var(--color-steel) 9%, transparent);
+  }
+  /* R:微旋转 + 对角裁切标记(红色直角框住作品,印刷套准记号) */
+  [data-theme="vostok"] .featured-item { transform: rotate(-1.5deg) }
+  [data-theme="vostok"] .featured-item:hover {
+    transform: rotate(-1.5deg) translateY(-2px);
+  }
+  [data-theme="vostok"] .featured-item::before,
+  [data-theme="vostok"] .featured-item::after {
+    content: ""; position: absolute; width: 26px; height: 26px;
+    z-index: 2; pointer-events: none;
+  }
+  [data-theme="vostok"] .featured-item::before {
+    top: -13px; left: -13px;
+    border-top: 2px solid var(--color-accent);
+    border-left: 2px solid var(--color-accent);
+  }
+  [data-theme="vostok"] .featured-item::after {
+    bottom: -13px; right: -13px;
+    border-bottom: 2px solid var(--color-accent);
+    border-right: 2px solid var(--color-accent);
+  }
+  [data-theme="vostok"] .featured-item-actions .btn {
+    background: color-mix(in oklch, var(--color-well) 88%, transparent);
+  }
+  /* R/CD 修正:种子号降级为中性遥测,不再占用红色 */
+  [data-theme="vostok"] .featured-seed { color: var(--color-fg2) }
+  [data-theme="vostok"] .featured-result::before {
+    background: radial-gradient(ellipse at center,
+      color-mix(in oklch, var(--color-accent) 7%, transparent), transparent 70%);
+  }
+  /* 瀑布流接续聚焦区:两端渐隐的红色细线,斜切呼应 */
+  [data-theme="vostok"] .results-workspace .result-grid::before {
+    transform: translateX(-50%) skewX(-24deg);
+    height: 2px;
+    background: linear-gradient(90deg, transparent,
+      color-mix(in oklch, var(--color-accent) 35%, transparent) 50%, transparent);
+  }
+
+  /* ── 加载指示 ──────────────────────────────────────────── */
+  [data-theme="vostok"] .spinner {
+    border-color: color-mix(in oklch, var(--color-fg) 15%, transparent);
+  }
+
+  /* ── Toast:R/CD 修正——色条从左侧移到顶边并斜切(注册标记语法) ── */
+  [data-theme="vostok"] .toast {
+    position: relative; overflow: hidden;
+    padding: 12px 8px 9px 13px;
+    background: color-mix(in oklch, var(--color-elevated) 95%, transparent);
+    border: 1px solid var(--color-line2);
+  }
+  [data-theme="vostok"] .toast::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 20px; height: 3px;
+    background: var(--color-accent);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  }
+  [data-theme="vostok"] .toast.error::before { background: var(--color-danger) }
+  [data-theme="vostok"] .toast-action {
+    border-color: color-mix(in oklch, var(--color-accent) 45%, transparent);
+  }
+  [data-theme="vostok"] .toast-action:hover {
+    background: color-mix(in oklch, var(--color-accent) 26%, transparent);
+    border-color: color-mix(in oklch, var(--color-accent) 70%, transparent);
+  }
+  [data-theme="vostok"] .toast-dismiss:hover {
+    background: color-mix(in oklch, var(--color-fg) 9%, transparent);
+    color: var(--color-fg);
+  }
+
+  /* ── Lightbox ─────────────────────────────────────────── */
+  [data-theme="vostok"] .lightbox {
+    background: color-mix(in oklch, var(--color-well) 90%, transparent);
+  }
+  [data-theme="vostok"] .lightbox img {
+    box-shadow: 0 0 90px color-mix(in oklch, var(--color-accent) 18%, transparent),
+      0 24px 64px rgb(2 4 8 / 0.75);
+  }
+  [data-theme="vostok"] .lightbox-close {
+    background: color-mix(in oklch, var(--color-fg) 10%, transparent);
+    border-color: color-mix(in oklch, var(--color-fg) 12%, transparent);
+    color: var(--color-fg);
+  }
+  [data-theme="vostok"] .lightbox-toolbar,
+  [data-theme="vostok"] .lightbox-footer { background: var(--color-glass-strong) }
+  [data-theme="vostok"] .lightbox-tool {
+    border-color: color-mix(in oklch, var(--color-fg) 14%, transparent);
+    background: color-mix(in oklch, var(--color-fg) 6%, transparent);
+    color: var(--color-fg);
+  }
+  [data-theme="vostok"] .lightbox-tool:hover {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+  }
+  [data-theme="vostok"] .lightbox-nav {
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklch, var(--color-surface) 60%, transparent);
+    color: var(--color-fg);
+  }
+  [data-theme="vostok"] .lightbox-nav:hover {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+  }
+
+  /* ── 历史画廊 ─────────────────────────────────────────── */
+  [data-theme="vostok"] .history-item:hover {
+    border-color: color-mix(in oklch, var(--color-accent) 60%, transparent);
+    box-shadow: 0 0 20px color-mix(in oklch, var(--color-accent) 18%, transparent);
+  }
+  [data-theme="vostok"] .history-badge {
+    box-shadow: 0 0 8px color-mix(in oklch, var(--color-accent) 55%, transparent);
+  }
+
+  /* ── 日志面板 ─────────────────────────────────────────── */
+  [data-theme="vostok"] .log-head:hover {
+    background: color-mix(in oklch, var(--color-fg) 3%, transparent);
+  }
+  [data-theme="vostok"] .log-clear:hover {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+    color: var(--color-accent-hi);
+  }
+  [data-theme="vostok"] .log-stop {
+    border-color: color-mix(in oklch, var(--color-danger) 55%, transparent);
+  }
+
+  /* ── Dashboard / 发射检查单 ───────────────────────────── */
+  [data-theme="vostok"] .dashboard::before {
+    background:
+      radial-gradient(50% 40% at 10% 0%, color-mix(in oklch, var(--color-accent) 8%, transparent), transparent 70%),
+      radial-gradient(45% 40% at 96% 100%, color-mix(in oklch, var(--color-steel) 5%, transparent), transparent 70%);
+  }
+  [data-theme="vostok"] .dashboard-card { background: var(--color-glass-card) }
+  /* 构成主义注册标记:卡片顶边的红色斜切小楔 */
+  [data-theme="vostok"] .dashboard-card::after {
+    content: ""; position: absolute; top: -1px; left: 22px;
+    width: 46px; height: 3px; transform: skewX(-24deg);
+    background: var(--color-accent);
+  }
+  /* 字标:纸白压缩工业体 + 下方斜切红楔,取代旧渐变金字 */
+  [data-theme="vostok"] .wordmark {
+    font-family: var(--font-display); letter-spacing: 0.16em;
+    background: none; -webkit-background-clip: initial; background-clip: initial;
+    color: var(--color-fg);
+  }
+  [data-theme="vostok"] .wordmark::after {
+    content: ""; display: block; height: 4px; width: 62%; margin-top: 3px;
+    background: var(--grad-flow); transform: skewX(-24deg);
+  }
+  [data-theme="vostok"] .orb-wrap, [data-theme="vostok"] .check-list {
+    background: color-mix(in oklch, var(--color-surface) 62%, transparent);
+  }
+  /* 斯普特尼克状态灯:球体 + -22° 轨道环 */
+  [data-theme="vostok"] .orb {
+    background: radial-gradient(circle at 38% 34%,
+      color-mix(in oklch, var(--color-fg) 9%, transparent), transparent 62%);
+  }
+  [data-theme="vostok"] .orb::before {
+    background: color-mix(in oklch, var(--color-fg) 13%, transparent);
+  }
+  /* 轨道环:压扁的椭圆横穿球体 */
+  [data-theme="vostok"] .orb::after {
+    content: ""; position: absolute; left: -26%; top: 50%; width: 152%; height: 44%;
+    transform: translateY(-50%) rotate(-22deg);
+    border: 1px solid color-mix(in oklch, var(--color-fg) 22%, transparent);
+    border-radius: 50%; transition: all 0.6s var(--ease-expo); pointer-events: none;
+  }
+  [data-theme="vostok"] .orb.starting {
+    border-color: color-mix(in oklch, var(--color-accent) 45%, transparent);
+  }
+  [data-theme="vostok"] .orb.starting::before {
+    box-shadow: 0 0 18px color-mix(in oklch, var(--color-accent) 65%, transparent);
+  }
+  [data-theme="vostok"] .orb.starting::after {
+    border-color: color-mix(in oklch, var(--color-accent) 40%, transparent);
+  }
+  [data-theme="vostok"] .orb.ready {
+    border-color: color-mix(in oklch, var(--color-accent) 70%, transparent);
+    box-shadow: 0 0 28px color-mix(in oklch, var(--color-accent) 38%, transparent),
+      0 0 64px color-mix(in oklch, var(--color-accent) 15%, transparent);
+  }
+  [data-theme="vostok"] .orb.ready::before {
+    background: linear-gradient(135deg, var(--color-flow-start), var(--color-accent));
+    box-shadow: 0 0 22px color-mix(in oklch, var(--color-accent) 85%, transparent),
+      0 0 8px color-mix(in oklch, var(--color-flow-start) 90%, transparent) inset;
+  }
+  [data-theme="vostok"] .orb.ready::after {
+    border-color: color-mix(in oklch, var(--color-accent-hi) 55%, transparent);
+    box-shadow: 0 0 10px color-mix(in oklch, var(--color-accent) 30%, transparent);
+  }
+  [data-theme="vostok"] .orb.failed {
+    border-color: color-mix(in oklch, var(--color-danger) 55%, transparent);
+  }
+  [data-theme="vostok"] .orb.failed::before {
+    box-shadow: 0 0 18px color-mix(in oklch, var(--color-danger) 65%, transparent);
+  }
+  [data-theme="vostok"] .orb.failed::after {
+    border-color: color-mix(in oklch, var(--color-danger) 45%, transparent);
+  }
+  /* GO/NO-GO 检查单:全绿时摘要泛起 GO 绿光(任务控制 All-Go) */
+  [data-theme="vostok"] .check-item:hover {
+    background: color-mix(in oklch, var(--color-fg) 4%, transparent);
+  }
+  [data-theme="vostok"] .check-summary.ready { color: var(--color-success) }
+  [data-theme="vostok"] .check-summary.ready {
+    text-shadow: 0 0 12px color-mix(in oklch, var(--color-success) 55%, transparent);
+  }
+  [data-theme="vostok"] .check-item.done .check-dot {
+    border-color: color-mix(in oklch, var(--color-success) 65%, transparent);
+    background: radial-gradient(circle at 40% 35%,
+      color-mix(in oklch, var(--color-success) 80%, white), var(--color-success));
+    box-shadow: 0 0 10px color-mix(in oklch, var(--color-success) 50%, transparent);
+  }
+  [data-theme="vostok"] .check-item.done .check-detail { color: var(--color-success) }
+  /* 切换模型的影响确认条 */
+  [data-theme="vostok"] .confirm-strip {
+    border-color: color-mix(in oklch, var(--color-warn) 40%, transparent);
+  }
+  /* R:发射钮是本屏主角,字号放大 */
+  [data-theme="vostok"] .btn-launch {
+    padding: 14px 16px; font-size: 15px; letter-spacing: 0.16em;
+  }
+  /* 全部就绪:红色发射钮开始呼吸——按下它是这个应用的仪式。
+     clip-path 裁掉 box-shadow,辉光走 filter 版 keyframes */
+  [data-theme="vostok"] .launch-dock.ready .btn-primary:not(:disabled) {
+    box-shadow: none;
+    animation: vostok-ready-pulse 2.8s ease-in-out infinite;
+  }
+  [data-theme="vostok"] .scan-warning, [data-theme="vostok"] .validation-summary {
+    border-color: color-mix(in oklch, var(--color-warn) 40%, transparent);
+  }
+
+  /* ── 小件 ─────────────────────────────────────────────── */
+  [data-theme="vostok"] .tag {
+    border-color: color-mix(in oklch, var(--color-accent) 35%, transparent);
+  }
+  [data-theme="vostok"] .empty-state::before {
+    background: radial-gradient(circle,
+      color-mix(in oklch, var(--color-accent) 55%, transparent),
+      color-mix(in oklch, var(--color-accent) 8%, transparent) 65%, transparent);
+    box-shadow: 0 0 24px color-mix(in oklch, var(--color-accent) 28%, transparent);
+  }
+  /* 主题选择卡在本主题下的字体统一 */
+  [data-theme="vostok"] .theme-card-name {
+    font-family: var(--font-display); letter-spacing: 0.08em;
+  }
+  [data-theme="vostok"] .theme-card.active {
+    border-color: color-mix(in oklch, var(--color-accent) 60%, transparent);
+    box-shadow: 0 0 0 0.5px color-mix(in oklch, var(--color-accent) 40%, transparent);
+  }
+  [data-theme="vostok"] .kbd { border-radius: var(--radius-xs) }
+
+  /* ═══ R 版海报化方言(brand-spec 附录 A 回填) ═══════════════ */
+
+  /* ── R · Splash:整张就是海报,没有卡片 ─────────────────── */
+  [data-theme="vostok"] .r-splash {
+    flex: 1; position: relative; overflow: hidden;
+    display: flex; align-items: flex-start; justify-content: center;
+  }
+  /* 胶片颗粒覆盖全场(丝网印刷的纸感) */
+  [data-theme="vostok"] .r-splash::after {
+    content: ""; position: absolute; inset: 0; z-index: 40;
+    background-image: var(--grain); pointer-events: none;
+  }
+  [data-theme="vostok"] .r-splash-rays {
+    position: absolute; inset: 0; pointer-events: none;
+    background: repeating-conic-gradient(from -30deg at 82% 12%,
+      color-mix(in oklch, var(--color-accent) 6%, transparent) 0deg 3deg,
+      transparent 3deg 15deg);
+    -webkit-mask-image: radial-gradient(52% 46% at 82% 12%, black, transparent 74%);
+    mask-image: radial-gradient(52% 46% at 82% 12%, black, transparent 74%);
+  }
+  /* 主楔形色域:从右下切入,半调网点丝网质感 */
+  [data-theme="vostok"] .r-splash-wedge {
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--color-accent);
+    background-image: var(--halftone); background-size: 7px 7px;
+    clip-path: polygon(100% 40%, 100% 100%, 0 100%, 0 84%);
+  }
+  /* 深绯副楔,叠出套色印刷的错位感 */
+  [data-theme="vostok"] .r-splash-wedge-2 {
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--color-flow-end); opacity: 0.9;
+    clip-path: polygon(100% 47%, 100% 100%, 8% 100%, 0 90%);
+    mix-blend-mode: multiply;
+  }
+  [data-theme="vostok"] .r-splash-lockup {
+    position: relative; z-index: 2; text-align: left;
+    transform: rotate(-4deg); margin: 92px 12% 0 0;
+  }
+  [data-theme="vostok"] .r-splash-lockup .over {
+    font: 600 11px var(--font-mono); letter-spacing: 0.5em;
+    color: var(--color-fg2); text-transform: uppercase; margin-bottom: 14px;
+  }
+  [data-theme="vostok"] .r-splash-word {
+    font-family: var(--font-display); font-weight: 700; font-size: 92px;
+    letter-spacing: 0.1em; line-height: 1; color: var(--color-fg);
+    text-shadow: 5px 5px 0 color-mix(in oklch, var(--color-flow-end) 55%, transparent);
+  }
+  [data-theme="vostok"] .r-splash-word::after {
+    content: ""; display: block; height: 8px; width: 58%; margin-top: 10px;
+    background: var(--grad-flow); transform: skewX(-24deg);
+  }
+  [data-theme="vostok"] .r-splash-en {
+    font: 600 15px var(--font-display); letter-spacing: 0.46em;
+    color: var(--color-accent-hi); margin-top: 14px; text-transform: uppercase;
+  }
+  [data-theme="vostok"] .r-splash-orb {
+    position: absolute; top: 9%; right: 8%; z-index: 2;
+    animation: breathe 7s ease-in-out infinite;
+  }
+  /* orb 是 span(inline),在 flex 容器里会被块化,这里独立落版需显式 block */
+  [data-theme="vostok"] .r-splash-orb .orb { display: block; width: 64px; height: 64px }
+  /* 海报版权行:状态信息以小号等宽字收在楔上 */
+  [data-theme="vostok"] .r-splash-colophon {
+    position: absolute; left: 26px; bottom: 18px; z-index: 3;
+    display: flex; align-items: center; gap: 10px;
+    font: 500 10.5px var(--font-mono); color: var(--color-accent-ink);
+    letter-spacing: 0.08em;
+  }
+  [data-theme="vostok"] .r-splash-colophon .spinner {
+    border-color: color-mix(in oklch, var(--color-accent-ink) 30%, transparent);
+    border-top-color: var(--color-accent-ink);
+  }
+  [data-theme="vostok"] .r-splash-patch { position: absolute; right: 30px; bottom: 26px; z-index: 3 }
+
+  /* ── R · 竖排遥测边注(胶片齿孔旁的印字) ──────────────── */
+  [data-theme="vostok"] .r-vertical {
+    position: absolute; z-index: 12; writing-mode: vertical-rl;
+    font: 500 9px var(--font-mono); letter-spacing: 0.34em;
+    color: var(--color-muted);
+    pointer-events: none; user-select: none; white-space: nowrap;
+  }
+  /* Splash 左缘 / Dashboard 左缘 / 生成画布右缘(避开 8px 滚动条) */
+  [data-theme="vostok"] .r-splash-vertical { left: 14px; top: 46%; transform: translateY(-50%) }
+  [data-theme="vostok"] .r-dash-vertical {
+    position: fixed; left: 10px; top: 50%; transform: translateY(-50%);
+  }
+  [data-theme="vostok"] .r-canvas-vertical {
+    right: 12px; top: 50%; transform: translateY(-50%);
+    color: color-mix(in oklch, var(--color-steel) 60%, transparent);
+  }
+}
+
+/* 窄窗口隐藏胶片边注,避免压字(跟随默认主题的 860px 断点) */
+@media (max-width: 860px) {
+  [data-theme="vostok"] .r-dash-vertical,
+  [data-theme="vostok"] .r-canvas-vertical { display: none }
+}
+
+/* 动效偏好:停掉本主题新增的斜纹滚动与呼吸辉光
+   (其余动画由默认主题的全局规则收敛) */
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="vostok"] .progress-bar-fill,
+  [data-theme="vostok"] .job-progress-fill,
+  [data-theme="vostok"] .launch-dock.ready .btn-primary,
+  [data-theme="vostok"] .r-splash-orb { animation: none }
+}
