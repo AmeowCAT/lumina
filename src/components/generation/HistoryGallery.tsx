@@ -424,7 +424,10 @@ export const HistoryGallery = memo(function HistoryGallery({
       ) : (
         <>
           <div className="flex items-end gap-2">
-            <div className="form-row flex-1">
+            {/* 横向工具行里 form-row 的 margin-bottom 无意义(gap 管间距),且
+                :last-child 清零规则会让两侧 margin 不一致,items-end 按 margin
+                box 对齐后下拉反比输入框低 9px——统一清掉才能精确底对齐 */}
+            <div className="form-row flex-1 mb-0">
               <label className="form-label" htmlFor="history-search">
                 搜索历史
               </label>
@@ -437,9 +440,13 @@ export const HistoryGallery = memo(function HistoryGallery({
                 placeholder="文件名、日期、模型或提示词"
               />
             </div>
-            <div className="form-row w-24">
+            {/* 宽度由选中项文字撑开:根字体 13px 下 w-24 仅 78px,
+                "最新优先" 48px 会被截断成"最新...";
+                py 对齐 input 的 7px,与搜索框等高(默认 6px 会矮 2.75px) */}
+            <div className="form-row shrink-0">
               <Select
                 id="history-sort"
+                className="py-[7px]"
                 value={sort}
                 onChange={(v) => setSort(v as "newest" | "oldest" | "name")}
                 ariaLabel="排序方式"

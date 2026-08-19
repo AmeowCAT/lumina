@@ -870,8 +870,10 @@
     background: rgb(10 10 12 / 0.85); border-color: var(--color-line2);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   }
-  /* 两段式删除的武装态:实心红 + 呼吸提醒,再次点击即执行 */
-  .result-card-actions .btn-danger.armed {
+  /* 两段式删除的武装态:实心红 + 呼吸提醒,再次点击即执行。
+     通用类(不限定容器):TwoTapButton 在结果卡、聚焦区、Lightbox 动作条复用;
+     双类写法抬高优先级,压住 result-card/featured-item 动作条的暗底覆盖 */
+  .btn.btn-danger.armed {
     background: var(--color-danger); border-color: transparent; color: #fff;
     font-weight: 600; letter-spacing: 0.04em;
     animation: pulse-soft 1.2s ease-in-out infinite;
@@ -935,11 +937,6 @@
   .featured-item-actions .btn {
     background: rgb(10 10 12 / 0.85); border-color: var(--color-line2);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  }
-  .featured-item-actions .btn-danger.armed {
-    background: var(--color-danger); border-color: transparent; color: #fff;
-    font-weight: 600; letter-spacing: 0.04em;
-    animation: pulse-soft 1.2s ease-in-out infinite;
   }
   /* 批量生成(>1)的分组操作:整批应用配置 / 整批删除 */
   .featured-batch-actions {
@@ -1193,6 +1190,9 @@
        控制台内容不应撑出滚动条 */
     padding: 34px 28px; overflow-y: auto; position: relative;
     overscroll-behavior: contain;
+    /* 滚动条槽位恒定预留:展开高级配置撑出滚动条时,可用宽度不变,
+       居中两列不会随滚动条出现/消失而左右跳动 */
+    scrollbar-gutter: stable;
   }
   .dashboard::before {
     content: ""; position: fixed; inset: 0; pointer-events: none;
@@ -1242,8 +1242,11 @@
      高度必须扣掉视口内 dashboard 之外的所有固定件,差 1px 都会把
      grid 行撑出滚动条:上下 padding(34+34) + 标题栏 + 收起的日志条
      (实测 26px,留 2px 余量)。 */
+  /* sticky top 必须为 0:容器 padding-top(34px)已提供留白,sticky 偏移相对
+     滚动内容盒计算,top:34px 会在右栏增高出现滑动空间后把 rail 额外下推 34px
+     (折叠/展开高级配置时左栏"下移"的根因);top:0 时自然位置即钉位,两种状态一致。 */
   .dash-rail {
-    position: sticky; top: 34px; align-self: start;
+    position: sticky; top: 0; align-self: start;
     display: flex; flex-direction: column; gap: 16px;
     height: calc(100vh - 68px - var(--titlebar-h) - 28px);
     overflow-y: auto; scrollbar-width: none;

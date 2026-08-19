@@ -264,6 +264,12 @@
   [data-theme="vostok"] .switch-root {
     background: color-mix(in oklch, var(--color-fg) 14%, transparent);
   }
+  /* 开启态必须显式重声明:本条与本主题基础条同层同优先级,缺少时基础条的
+     灰底会后置覆盖默认主题的 checked 红底,开关"开了像没开" */
+  [data-theme="vostok"] .switch-root[data-state="checked"] {
+    background: var(--color-accent);
+    box-shadow: 0 0 8px color-mix(in oklch, var(--color-accent) 45%, transparent);
+  }
 
   /* ── Radix Select ─────────────────────────────────────── */
   [data-theme="vostok"] .select-trigger[data-state="open"] {
@@ -324,12 +330,14 @@
     box-shadow: var(--shadow-overlay),
       0 0 0 0.5px color-mix(in oklch, var(--color-fg) 5%, transparent) inset;
   }
+  /* 聚焦高亮走中性纸白,不占红色预算:暗色 UI 里整框红光会被误读为
+     告警/错误(点一下种子 chip 整个指令条泛红),红色只留给激活态本身 */
   [data-theme="vostok"] .prompt-dock:focus-within {
-    border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+    border-color: color-mix(in oklch, var(--color-fg) 34%, transparent);
     box-shadow:
       var(--shadow-overlay),
-      0 0 0 3px color-mix(in oklch, var(--color-accent) 15%, transparent),
-      0 0 36px color-mix(in oklch, var(--color-accent) 22%, transparent);
+      0 0 0 0.5px color-mix(in oklch, var(--color-fg) 5%, transparent) inset,
+      0 0 28px color-mix(in oklch, var(--color-fg) 7%, transparent);
   }
   [data-theme="vostok"] .dock-negative {
     background: color-mix(in oklch, var(--color-well) 60%, transparent);
@@ -344,7 +352,11 @@
     border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
     color: var(--color-accent-hi); background: var(--color-accent-dim);
   }
+  /* 激活态必须显式重声明(与 switch 同理):否则被本主题基础条的 4% 纸白
+     后置覆盖,随机种子/反向提示词开启后没有红底,只剩一圈辉光 */
   [data-theme="vostok"] .param-chip.active {
+    background: var(--color-accent); border-color: transparent;
+    color: var(--color-accent-ink);
     box-shadow: 0 0 10px color-mix(in oklch, var(--color-accent) 40%, transparent);
   }
   [data-theme="vostok"] .chip-pop {
@@ -416,11 +428,13 @@
   [data-theme="vostok"] .result-card-actions .btn {
     background: color-mix(in oklch, var(--color-well) 88%, transparent);
   }
-  /* 两段式删除的武装态:警戒斜纹 + 呼吸提醒,再次点击即执行 */
-  [data-theme="vostok"] .result-card-actions .btn-danger.armed,
-  [data-theme="vostok"] .featured-item-actions .btn-danger.armed {
+  /* 两段式删除的武装态:警戒斜纹 + 呼吸提醒,再次点击即执行。
+     通用类(不限定容器):结果卡/聚焦区/Lightbox 动作条复用同一机制;
+     双类写法压住动作条暗底,动画与默认主题一致(vostok 此前漏了呼吸) */
+  [data-theme="vostok"] .btn.btn-danger.armed {
     background: var(--grad-hazard); border-color: transparent;
     color: var(--color-accent-ink); font-weight: 700;
+    animation: pulse-soft 1.2s ease-in-out infinite;
   }
 
   /* ── 本次生成聚焦区:最新成果像海报一样被钉在画布上 ────── */
@@ -528,6 +542,11 @@
   [data-theme="vostok"] .lightbox-nav:hover {
     border-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
   }
+  /* 动作条小按钮不是英雄时刻:楔形收敛回圆角矩形,与同行按钮轮廓对齐,
+     只以红渐变区分主次(实心楔夹在玻璃钮排里,视觉"高一头"不整齐) */
+  [data-theme="vostok"] .lightbox-footer .btn-primary {
+    clip-path: none; border-radius: var(--radius-sm);
+  }
 
   /* ── 历史画廊 ─────────────────────────────────────────── */
   [data-theme="vostok"] .history-item:hover {
@@ -623,21 +642,22 @@
   [data-theme="vostok"] .orb.failed::after {
     border-color: color-mix(in oklch, var(--color-danger) 45%, transparent);
   }
-  /* GO/NO-GO 检查单:全绿时摘要泛起 GO 绿光(任务控制 All-Go) */
+  /* GO/NO-GO 检查单:就绪态统一收进苏红(与默认主题 accent-hi 同位),
+     不再引入语义绿——红色是本主题唯一强调色 */
   [data-theme="vostok"] .check-item:hover {
     background: color-mix(in oklch, var(--color-fg) 4%, transparent);
   }
-  [data-theme="vostok"] .check-summary.ready { color: var(--color-success) }
+  [data-theme="vostok"] .check-summary.ready { color: var(--color-accent-hi) }
   [data-theme="vostok"] .check-summary.ready {
-    text-shadow: 0 0 12px color-mix(in oklch, var(--color-success) 55%, transparent);
+    text-shadow: 0 0 12px color-mix(in oklch, var(--color-accent) 55%, transparent);
   }
   [data-theme="vostok"] .check-item.done .check-dot {
-    border-color: color-mix(in oklch, var(--color-success) 65%, transparent);
+    border-color: color-mix(in oklch, var(--color-accent) 65%, transparent);
     background: radial-gradient(circle at 40% 35%,
-      color-mix(in oklch, var(--color-success) 80%, white), var(--color-success));
-    box-shadow: 0 0 10px color-mix(in oklch, var(--color-success) 50%, transparent);
+      var(--color-accent-hi), var(--color-accent));
+    box-shadow: 0 0 10px color-mix(in oklch, var(--color-accent) 50%, transparent);
   }
-  [data-theme="vostok"] .check-item.done .check-detail { color: var(--color-success) }
+  [data-theme="vostok"] .check-item.done .check-detail { color: var(--color-accent-hi) }
   /* 切换模型的影响确认条 */
   [data-theme="vostok"] .confirm-strip {
     border-color: color-mix(in oklch, var(--color-warn) 40%, transparent);
