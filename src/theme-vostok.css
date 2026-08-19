@@ -138,6 +138,18 @@
 /* ═══ ④ 组件层(与默认主题同 layer,scoped 选择器优先级更高) ═══ */
 @layer components {
   /* ── 布局骨架 / 页眉 ─────────────────────────────────── */
+  [data-theme="vostok"] .titlebar { background: var(--color-glass) }
+  [data-theme="vostok"] .titlebar-title {
+    font-family: var(--font-display); font-size: 10.5px; letter-spacing: 0.24em;
+    color: var(--color-fg);
+  }
+  [data-theme="vostok"] .titlebar-btn:hover {
+    background: var(--color-hover); color: var(--color-fg);
+  }
+  /* 关闭钮:实心警报红 + 纸白(与品牌红拉开语义距离) */
+  [data-theme="vostok"] .titlebar-close:hover {
+    background: var(--color-danger); color: var(--color-accent-ink);
+  }
   [data-theme="vostok"] .header { background: var(--color-glass) }
   [data-theme="vostok"] .header-logo .brand-zh {
     font-family: var(--font-display); font-weight: 600; font-size: 15px;

@@ -622,7 +622,17 @@ pub fn run() {
             settings_warning: Mutex::new(loaded_settings.warning),
         })
         // 窗口状态记忆:退出时保存尺寸/位置/最大化,启动时恢复。
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 排除 DECORATIONS:装饰由 tauri.conf.json(decorations: false,
+        // 自绘标题栏)全权控制——默认字段集含 DECORATIONS,旧状态文件里的
+        // decorations:true 会在启动时被恢复,把原生标题栏请回来。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         // 单实例:第二个实例启动时聚焦已有主窗口——双开会争抢同一个
         // sd-server 端口并互相误判"外部服务器"。
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

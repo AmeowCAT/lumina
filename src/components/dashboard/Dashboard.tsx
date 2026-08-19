@@ -789,9 +789,6 @@ export function Dashboard() {
 
 				<Panel title="界面主题">
 					<ThemePicker />
-					<div className="field-hint field-hint-flush" style={{ marginTop: 8 }}>
-						仅影响界面外观，即时生效并本地保存，不影响生成参数与服务器配置
-					</div>
 				</Panel>
 
 				<div ref={pathsSection}>

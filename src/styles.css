@@ -90,6 +90,8 @@
 :root {
   color-scheme: dark;
   --header-h: 40px;
+  /* 自绘标题栏高度(decorations: false 后接管原生标题栏) */
+  --titlebar-h: 36px;
   /* Logo 徽章底与圆角:主题可覆写(见 theme-vostok.css,构成主义直角) */
   --color-logo-bg-hi: #221c12;
   --color-logo-bg-lo: #100d09;
@@ -130,6 +132,36 @@
 @layer components {
   /* ── 布局骨架 ─────────────────────────────────────────── */
   .app { width: 100%; height: 100%; display: flex; flex-direction: column }
+
+  /* ── 自绘标题栏:置顶贯穿,永远可拖可关(z 高于 lightbox/toast) ── */
+  .titlebar {
+    height: var(--titlebar-h); flex-shrink: 0; position: relative; z-index: 450;
+    display: flex; align-items: stretch; user-select: none;
+    background: rgb(16 16 20 / 0.72);
+    backdrop-filter: blur(14px) saturate(1.3);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .titlebar-drag { display: flex; align-items: center }
+  /* Tauri 拖拽脚本只在目标元素自身带 data-tauri-drag-region 时触发,
+     装饰子元素必须穿透 pointer 事件 */
+  .titlebar-drag > * { pointer-events: none }
+  .titlebar-brand { gap: 7px; padding: 0 12px }
+  .titlebar-title {
+    font: 600 10px var(--font-mono); letter-spacing: 0.22em;
+    color: var(--color-fg2); text-transform: uppercase;
+  }
+  .titlebar-spacer { flex: 1 }
+  .titlebar-controls { display: flex; align-items: stretch }
+  .titlebar-btn {
+    width: 42px; display: grid; place-items: center;
+    border: 0; background: transparent; color: var(--color-fg2);
+    cursor: pointer; transition: all 0.14s var(--ease-expo);
+  }
+  .titlebar-btn:hover { background: var(--color-hover); color: var(--color-fg) }
+  .titlebar-btn:focus-visible { outline: 2px solid var(--color-accent-hi); outline-offset: -2px }
+  .titlebar-close:hover { background: var(--color-danger); color: #fff }
+
   /* phase 过渡包装:填满剩余空间,内部视图各自滚动 */
   .app-view { flex: 1; display: flex; flex-direction: column; min-height: 0 }
   .main { flex: 1; display: flex; overflow: hidden; min-height: 0 }
@@ -1157,7 +1189,9 @@
     flex: 1; min-height: 0; display: grid;
     grid-template-columns: minmax(320px, 370px) minmax(0, 640px);
     gap: 40px; justify-content: center; align-content: start;
-    padding: 40px 28px; overflow-y: auto; position: relative;
+    /* 竖向 padding 与 R 版原型一致(34px),默认窗口(1280×820)下
+       控制台内容不应撑出滚动条 */
+    padding: 34px 28px; overflow-y: auto; position: relative;
     overscroll-behavior: contain;
   }
   .dashboard::before {
@@ -1204,11 +1238,15 @@
     color: var(--color-muted); font: 12px var(--font-mono);
   }
   .splash-status .spinner { width: 16px; height: 16px }
-  /* 左栏即仪表:粘性停靠,品牌/状态灯/检查单/启动坞自上而下 */
+  /* 左栏即仪表:粘性停靠,品牌/状态灯/检查单/启动坞自上而下。
+     高度必须扣掉视口内 dashboard 之外的所有固定件,差 1px 都会把
+     grid 行撑出滚动条:上下 padding(34+34) + 标题栏 + 收起的日志条
+     (实测 26px,留 2px 余量)。 */
   .dash-rail {
     position: sticky; top: 34px; align-self: start;
     display: flex; flex-direction: column; gap: 16px;
-    height: calc(100vh - 80px); overflow-y: auto; scrollbar-width: none;
+    height: calc(100vh - 68px - var(--titlebar-h) - 28px);
+    overflow-y: auto; scrollbar-width: none;
   }
   .dash-rail::-webkit-scrollbar { display: none }
   .logo-row { display: flex; align-items: center; gap: 12px }
@@ -1434,8 +1472,8 @@
     gap: 10px;
   }
   .theme-card {
-    display: flex; flex-direction: column; gap: 4px;
-    padding: 12px; text-align: left; cursor: pointer;
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 10px 12px; text-align: left; cursor: pointer;
     border: 1px solid var(--color-line); border-radius: var(--radius-md);
     background: var(--color-well); color: var(--color-fg2);
     transition: all 0.16s var(--ease-expo);
@@ -1447,17 +1485,17 @@
     box-shadow: 0 0 0 0.5px rgb(var(--color-accent-rgb) / 0.35);
   }
   .theme-card:focus-visible { outline: 2px solid var(--color-accent-hi); outline-offset: 2px }
-  .theme-card-swatches { display: flex; gap: 5px; margin-bottom: 6px }
+  .theme-card-swatches { display: flex; gap: 5px; margin-bottom: 3px }
   .theme-card-swatches i {
-    display: block; width: 16px; height: 16px; border-radius: 50%;
+    display: block; width: 14px; height: 14px; border-radius: 50%;
     border: 1px solid rgb(255 255 255 / 0.16);
   }
-  .theme-card-name { font-size: 12.5px; font-weight: 600; color: var(--color-fg); letter-spacing: 0.04em }
+  .theme-card-name { font-size: 12px; font-weight: 600; color: var(--color-fg); letter-spacing: 0.04em }
   .theme-card-sub {
     font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em;
     color: var(--color-accent-hi); text-transform: uppercase;
   }
-  .theme-card-desc { font-size: 10.5px; color: var(--color-muted); line-height: 1.5 }
+  .theme-card-desc { font-size: 10px; color: var(--color-muted); line-height: 1.45 }
   .sr-only {
     position: absolute !important; width: 1px !important; height: 1px !important;
     padding: 0 !important; margin: -1px !important; overflow: hidden !important;

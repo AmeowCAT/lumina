@@ -7,6 +7,7 @@ import { Dashboard } from "./components/dashboard/Dashboard";
 import { GenerationUI } from "./components/generation/GenerationUI";
 import { LogPanel } from "./components/ui/LogPanel";
 import { Logo } from "./components/ui/Logo";
+import { TitleBar } from "./components/ui/TitleBar";
 import { ToastContainer } from "./components/ui/Toast";
 import { useJobPolling } from "./hooks/useJobPolling";
 import { useSystemIntegration } from "./hooks/useSystemIntegration";
@@ -203,6 +204,7 @@ export default function App() {
     if (theme === "vostok") {
       return (
         <div className="app">
+          <TitleBar />
           <div className="r-splash">
             <div className="r-splash-rays" aria-hidden="true" />
             <div className="r-splash-wedge" aria-hidden="true" />
@@ -254,6 +256,7 @@ export default function App() {
     }
     return (
       <div className="app">
+        <TitleBar />
         <div className="splash">
           <motion.div
             className="splash-card"
@@ -278,6 +281,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <TitleBar />
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={phase}
