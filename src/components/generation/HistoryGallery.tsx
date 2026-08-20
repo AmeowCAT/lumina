@@ -10,6 +10,7 @@ import {
 import { AnimatePresence } from "motion/react";
 import { api } from "../../api";
 import { useStore } from "../../store";
+import { useTheme } from "../../lib/theme";
 import { Panel } from "../ui/Panel";
 import { Select } from "../ui/Select";
 import { TwoTapButton } from "../ui/TwoTapButton";
@@ -101,6 +102,8 @@ export const HistoryGallery = memo(function HistoryGallery({
 }: Props) {
   const settings = useStore((s) => s.settings);
   const toast = useStore((s) => s.toast);
+  // 空态文案随主题语境:暗房"历史图片" ↔ 太空"回传图像"(遥测档案)
+  const vostok = useTheme() === "vostok";
   const [files, setFiles] = useState<OutputEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -420,7 +423,9 @@ export const HistoryGallery = memo(function HistoryGallery({
       ) : loading ? (
         <span className="spinner block mx-auto my-2" />
       ) : imgFiles.length === 0 ? (
-        <p className="text-muted text-xs py-1">暂无历史图片</p>
+        <p className="text-muted text-xs py-1">
+          {vostok ? "暂无回传图像" : "暂无历史图片"}
+        </p>
       ) : (
         <>
           <div className="flex items-end gap-2">
@@ -459,7 +464,9 @@ export const HistoryGallery = memo(function HistoryGallery({
             </div>
           </div>
           {sortedFiles.length === 0 ? (
-            <div className="empty-state">没有匹配的历史图片</div>
+            <div className="empty-state">
+              {vostok ? "没有匹配的回传图像" : "没有匹配的历史图片"}
+            </div>
           ) : virtualize ? (
             <div
               className="history-grid history-grid-virtual"

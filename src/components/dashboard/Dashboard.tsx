@@ -538,6 +538,8 @@ export function Dashboard() {
 		: external
 			? "ready"
 			: "offline";
+	// 文案随主题语境:暗房"启动" ↔ 太空"发射/在轨"(任务控制语言)
+	const vostok = theme === "vostok";
 
 	return (
 		<div className="dashboard">
@@ -575,13 +577,23 @@ export function Dashboard() {
 								? serverStatus?.phase === "failed"
 									? `启动失败：${serverStatus.lastError || "请查看日志"}`
 									: serverStatus?.reachable
-										? "就绪"
+										? vostok
+											? "在轨运行"
+											: "就绪"
 										: serverStatus?.phase === "starting"
-											? "正在加载模型…"
-											: "正在启动…"
+											? vostok
+												? "载荷加载中…"
+												: "正在加载模型…"
+											: vostok
+												? "点火中…"
+												: "正在启动…"
 								: serverStatus?.external
-									? "就绪（外部进程）"
-									: "等待启动"}
+									? vostok
+										? "在轨运行（外部进程）"
+										: "就绪（外部进程）"
+									: vostok
+										? "待命"
+										: "等待启动"}
 						</div>
 					</div>
 					<div className="orb-actions">
@@ -595,16 +607,22 @@ export function Dashboard() {
 								className="btn btn-sm"
 								onClick={() => setDashboardOpen(false)}
 							>
-								进入生成界面
+								{vostok ? "进入工作室" : "进入生成界面"}
 							</button>
 						)}
 					</div>
 				</div>
 				<div className="check-list">
 					<div className="check-head">
-						启动检查
+						{vostok ? "发射检查单" : "启动检查"}
 						<span className={cn("check-summary", allReady && "ready")}>
-							{allReady ? "READY · 可以启动" : `待完成 ${3 - readyCount} 项`}
+							{allReady
+								? vostok
+									? "全部就绪 ALL GO"
+									: "READY · 可以启动"
+								: vostok
+									? `NO-GO · 待完成 ${3 - readyCount} 项`
+									: `待完成 ${3 - readyCount} 项`}
 						</span>
 					</div>
 					<button
@@ -730,16 +748,22 @@ export function Dashboard() {
 												? "正在恢复上一个模型…"
 												: serverStatus?.reachable
 													? "正在切换模型…"
-													: "启动中…"}
+													: vostok
+														? "点火中…"
+														: "启动中…"}
 								</>
 							) : (
 								<>
 									{IC.play}
 									{serverStatus?.reachable
 										? caps?.model?.path === mainModel
-											? "返回生成界面"
+											? vostok
+												? "进入工作室"
+												: "返回生成界面"
 											: "切换到此模型"
-										: "启动服务器"}
+										: vostok
+											? "发射 · 进入工作室"
+											: "启动服务器"}
 								</>
 							)}
 						</button>

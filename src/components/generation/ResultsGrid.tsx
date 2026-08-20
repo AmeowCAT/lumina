@@ -4,9 +4,11 @@ import type { ImageSaveState, ResultEntry } from "../../store";
 import type { JobConfig } from "../../types";
 import type { LightboxItem } from "../ui/Lightbox";
 import { useVideoPoster } from "../../hooks/useVideoPoster";
+import { useTheme } from "../../lib/theme";
 import { cn } from "../ui/cn";
 import { IC } from "../ui/Icons";
 import { TwoTapButton } from "../ui/TwoTapButton";
+import { VostokPoster } from "../ui/VostokArt";
 
 /** 视频瓦片:首帧 poster(加载前不再黑屏),展示属性按场景传入 */
 function VideoTile({
@@ -456,6 +458,7 @@ export const ResultsGrid = memo(function ResultsGrid({
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const prevLen = useRef(results.length);
+  const theme = useTheme();
 
   const { items, indexOf } = buildLightboxItems(
     results,
@@ -472,6 +475,39 @@ export const ResultsGrid = memo(function ResultsGrid({
   }, [results.length]);
 
   if (results.length === 0) {
+    // VOSTOK 空态:画布不是空白,钉着一张待替换的海报样张(原型素材回填);
+    // 推进中样张退饱和 + 对角跟踪扫描,太空任务控制屏的构成主义表达。
+    if (theme === "vostok") {
+      return (
+        <div
+          className={cn(
+            "empty-state",
+            "empty-state-hero",
+            "vostok-hero",
+            generating && "generating"
+          )}
+        >
+          <div className="vostok-hero-art">
+            <VostokPoster />
+            {generating && <span className="vostok-scan" aria-hidden="true" />}
+          </div>
+          {generating ? (
+            <>
+              <p className="text-[13px] text-fg2">推进中…</p>
+              <p>图像正在回传，完成后会自动出现在这里</p>
+            </>
+          ) : (
+            <>
+              <p className="mb-1 text-[13px] text-fg2">发射台就绪</p>
+              <p>
+                输入提示词后点击 生成，或按 <span className="kbd">Ctrl</span>+
+                <span className="kbd">Enter</span>
+              </p>
+            </>
+          )}
+        </div>
+      );
+    }
     return (
       <div className={cn("empty-state", "empty-state-hero", generating && "generating")}>
         {generating ? (

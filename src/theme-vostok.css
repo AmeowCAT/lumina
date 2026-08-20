@@ -111,6 +111,11 @@
   50% { filter: drop-shadow(0 0 12px color-mix(in oklch, var(--color-accent) 75%, transparent))
     drop-shadow(0 0 44px color-mix(in oklch, var(--color-accent) 32%, transparent)) }
 }
+/* 跟踪扫描:一道斜置纸白光带从左下向右上掠过样张 */
+@keyframes vostok-scan-sweep {
+  from { left: -45% }
+  to { left: 115% }
+}
 
 /* ═══ ③ 基础层:环境基底、选区、滚动条 ═══ */
 @layer base {
@@ -481,6 +486,55 @@
       color-mix(in oklch, var(--color-accent) 35%, transparent) 50%, transparent);
   }
 
+  /* ── 空态样张:画布不是空白,钉着一张待替换的海报样张 ────── */
+  [data-theme="vostok"] .vostok-hero { max-width: 560px }
+  /* 默认主题的呼吸光点让位给海报样张 */
+  [data-theme="vostok"] .vostok-hero::before { content: none }
+  [data-theme="vostok"] .vostok-hero-art {
+    position: relative; display: inline-block; margin: 0 auto 18px;
+    transform: rotate(-1.5deg);
+  }
+  /* 与 featured-item 同语法的对角裁切标记(印刷套准记号) */
+  [data-theme="vostok"] .vostok-hero-art::before,
+  [data-theme="vostok"] .vostok-hero-art::after {
+    content: ""; position: absolute; width: 26px; height: 26px;
+    z-index: 2; pointer-events: none;
+  }
+  [data-theme="vostok"] .vostok-hero-art::before {
+    top: -13px; left: -13px;
+    border-top: 2px solid var(--color-accent);
+    border-left: 2px solid var(--color-accent);
+  }
+  [data-theme="vostok"] .vostok-hero-art::after {
+    bottom: -13px; right: -13px;
+    border-bottom: 2px solid var(--color-accent);
+    border-right: 2px solid var(--color-accent);
+  }
+  /* 签名辉光与结果卡同源:图像是深空里唯一发光的物体 */
+  [data-theme="vostok"] .vostok-hero-art svg {
+    display: block; width: 250px; max-width: 56vw; height: auto;
+    border-radius: var(--radius-sm); border: 1px solid var(--color-line2);
+    box-shadow:
+      0 12px 40px rgb(2 4 8 / 0.65),
+      -8px -6px 44px color-mix(in oklch, var(--color-accent) 11%, transparent),
+      8px 6px 44px color-mix(in oklch, var(--color-steel) 9%, transparent);
+  }
+  /* 推进中:样张退饱和压暗,跟踪扫描光束掠过——载荷正在轨成形 */
+  [data-theme="vostok"] .vostok-hero.generating .vostok-hero-art svg {
+    filter: saturate(0.3) brightness(0.72);
+  }
+  [data-theme="vostok"] .vostok-scan {
+    position: absolute; inset: 0; overflow: hidden;
+    border-radius: var(--radius-sm); pointer-events: none;
+  }
+  [data-theme="vostok"] .vostok-scan::before {
+    content: ""; position: absolute; top: -25%; bottom: -25%; width: 32%;
+    transform: rotate(18deg);
+    background: linear-gradient(90deg, transparent,
+      color-mix(in oklch, var(--color-fg) 15%, transparent) 50%, transparent);
+    animation: vostok-scan-sweep 2.4s var(--ease-expo) infinite;
+  }
+
   /* ── 加载指示 ──────────────────────────────────────────── */
   [data-theme="vostok"] .spinner {
     border-color: color-mix(in oklch, var(--color-fg) 15%, transparent);
@@ -708,13 +762,15 @@
     content: ""; position: absolute; inset: 0; z-index: 40;
     background-image: var(--grain); pointer-events: none;
   }
+  /* 旭日光芒以就绪星球为太阳:光晕中心锚定球心
+     (球右 8% 上 9%,64px 球体球心 = 92%−32px / 9%+32px,随窗口尺寸同步) */
   [data-theme="vostok"] .r-splash-rays {
     position: absolute; inset: 0; pointer-events: none;
-    background: repeating-conic-gradient(from -30deg at 82% 12%,
+    background: repeating-conic-gradient(from -30deg at calc(92% - 32px) calc(9% + 32px),
       color-mix(in oklch, var(--color-accent) 6%, transparent) 0deg 3deg,
       transparent 3deg 15deg);
-    -webkit-mask-image: radial-gradient(52% 46% at 82% 12%, black, transparent 74%);
-    mask-image: radial-gradient(52% 46% at 82% 12%, black, transparent 74%);
+    -webkit-mask-image: radial-gradient(52% 46% at calc(92% - 32px) calc(9% + 32px), black, transparent 74%);
+    mask-image: radial-gradient(52% 46% at calc(92% - 32px) calc(9% + 32px), black, transparent 74%);
   }
   /* 主楔形色域:从右下切入,半调网点丝网质感 */
   [data-theme="vostok"] .r-splash-wedge {
@@ -800,5 +856,6 @@
   [data-theme="vostok"] .progress-bar-fill,
   [data-theme="vostok"] .job-progress-fill,
   [data-theme="vostok"] .launch-dock.ready .btn-primary,
-  [data-theme="vostok"] .r-splash-orb { animation: none }
+  [data-theme="vostok"] .r-splash-orb,
+  [data-theme="vostok"] .vostok-scan::before { animation: none }
 }

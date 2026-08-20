@@ -829,10 +829,12 @@ export function GenerationUI() {
   const negativeVisible =
     showNegative || !!(params.negative_prompt && params.negative_prompt.trim());
   const showDistilled = DISTILL_FAMILIES.includes(family);
+  // 进行中文案随主题语境:暗房"显影" ↔ 太空"推进"(发动机工作段)
+  const developing = theme === "vostok" ? "推进中" : "显影中";
   const dreamText = currentGen
     ? progressTotal > 0
-      ? `显影中 ${progressStep}/${progressTotal}`
-      : "显影中…"
+      ? `${developing} ${progressStep}/${progressTotal}`
+      : `${developing}…`
     : "";
 
   return (
@@ -898,15 +900,6 @@ export function GenerationUI() {
           </div>
           <div className="canvas-float right">
             <button
-              className={cn("btn btn-sm", sheetOpen && "queue-toggle active")}
-              onClick={toggleSheet}
-              aria-expanded={sheetOpen}
-              aria-label="打开参数面板"
-              title="生成参数（⌘,）"
-            >
-              <SlidersHorizontal size={13} aria-hidden="true" /> 参数
-            </button>
-            <button
               className={cn("btn btn-sm queue-toggle", queueOpen && "active")}
               onClick={toggleQueue}
               aria-expanded={queueOpen}
@@ -914,6 +907,15 @@ export function GenerationUI() {
             >
               任务队列
               {activeJobs > 0 && <span className="queue-badge">{activeJobs}</span>}
+            </button>
+            <button
+              className={cn("btn btn-sm", sheetOpen && "queue-toggle active")}
+              onClick={toggleSheet}
+              aria-expanded={sheetOpen}
+              aria-label="打开参数面板"
+              title="生成参数（⌘,）"
+            >
+              <SlidersHorizontal size={13} aria-hidden="true" /> 参数
             </button>
           </div>
           <div className="output-main">

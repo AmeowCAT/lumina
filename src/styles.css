@@ -1498,7 +1498,6 @@
     font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em;
     color: var(--color-accent-hi); text-transform: uppercase;
   }
-  .theme-card-desc { font-size: 10px; color: var(--color-muted); line-height: 1.45 }
   .sr-only {
     position: absolute !important; width: 1px !important; height: 1px !important;
     padding: 0 !important; margin: -1px !important; overflow: hidden !important;

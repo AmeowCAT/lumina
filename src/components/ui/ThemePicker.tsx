@@ -50,7 +50,6 @@ export function ThemePicker() {
             </span>
             <span className="theme-card-name">{t.name}</span>
             <span className="theme-card-sub">{t.sub}</span>
-            <span className="theme-card-desc">{t.desc}</span>
           </button>
         );
       })}

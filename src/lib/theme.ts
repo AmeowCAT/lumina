@@ -15,12 +15,11 @@ export interface ThemeMeta {
   id: ThemeId;
   /** 中文名 */
   name: string;
-  /** 英文副标（等宽遥测字） */
+  /** 英文副标(等宽遥测字) */
   sub: string;
-  desc: string;
-  /** <meta name="theme-color"> 值，取主题底色 */
+  /** <meta name="theme-color"> 值,取主题底色 */
   themeColor: string;
-  /** 主题卡上的色板预览（目标主题代表色，硬编码，不随当前主题变化） */
+  /** 主题卡上的色板预览(目标主题代表色,硬编码,不随当前主题变化) */
   swatches: string[];
 }
 
@@ -29,7 +28,6 @@ export const THEMES: ThemeMeta[] = [
     id: "lumina",
     name: "流光 · 暗房金光",
     sub: "LUMINA DARK",
-    desc: "默认主题：象牙黑偏棕 + 琥珀金，玻璃与辉光",
     themeColor: "#0d0b09",
     swatches: ["#0d0b09", "#d9a441", "#f5d78e"],
   },
@@ -37,7 +35,6 @@ export const THEMES: ThemeMeta[] = [
     id: "vostok",
     name: "东方号 VOSTOK",
     sub: "RED WEDGE IN ORBIT",
-    desc: "苏俄构成主义 × 太空时代：油墨黑 + 奶油纸白 + 朱砂红斜切",
     themeColor: "#110e0b",
     swatches: ["#110e0b", "#cf3616", "#f9d280"],
   },
