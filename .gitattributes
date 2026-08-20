@@ -1,0 +1,12 @@
+# 统一行尾：源码一律 LF 入库，终结 LF/CRLF 往返 churn
+# （b8dfc18 的 ResultsGrid"1488 行重写"实为换行符噪音，d33e687 的
+# Dashboard 同理）。Windows 工作区由 core.autocrlf 处理检出转换。
+* text=auto
+
+*.{ts,tsx,js,jsx,mjs,cjs}   text eol=lf
+*.{css,html,svg}            text eol=lf
+*.{json,json5,toml,yaml,yml} text eol=lf
+*.{rs,md,sh,ps1}            text eol=lf
+
+# 二进制资源不转换
+*.{png,jpg,jpeg,webp,ico,icns,gif,woff,woff2,ttf,otf} binary

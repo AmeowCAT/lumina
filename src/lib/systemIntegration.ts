@@ -85,7 +85,9 @@ export async function notifyIfUnfocused(title: string, body: string): Promise<vo
   if (document.hasFocus()) return;
   try {
     if (!(await ensurePermission())) return;
-    sendNotification({ title, body });
+    // await 而非浮空:sendNotification 失败(OS 级权限被撤/平台限制)
+    // 时走 catch,不留未处理的 Promise rejection(审查低危项)。
+    await sendNotification({ title, body });
   } catch {
     /* dev 模式/平台限制:静默 */
   }

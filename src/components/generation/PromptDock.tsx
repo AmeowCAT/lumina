@@ -4,6 +4,7 @@ import { IC } from "../ui/Icons";
 import { Slider } from "../ui/Slider";
 import { TwoTapButton } from "../ui/TwoTapButton";
 import { cn } from "../ui/cn";
+import { useTheme } from "../../lib/theme";
 import type { Limits } from "../../types";
 
 interface Props {
@@ -90,6 +91,7 @@ export const PromptDock = memo(function PromptDock({
   onInsertLingbot,
   onOpenSheet,
 }: Props) {
+  const vostok = useTheme() === "vostok";
   return (
     <div className="prompt-dock">
       {negativeVisible && (
@@ -195,7 +197,10 @@ export const PromptDock = memo(function PromptDock({
             </>
           ) : generating ? (
             <>
-              <span className="spinner" /> 生成中
+              {/* 进行态随主题语境:暗房"生成中" ↔ 太空"推进中"(与页头
+                  dreamText、任务队列状态链一致);空闲态"生成"不动——
+                  空态提示"点击 生成"引用它。 */}
+              <span className="spinner" /> {vostok ? "推进中" : "生成中"}
             </>
           ) : (
             <>{IC.play} 生成</>

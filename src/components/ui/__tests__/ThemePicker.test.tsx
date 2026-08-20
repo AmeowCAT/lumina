@@ -38,14 +38,13 @@ describe("ThemePicker 主题选择器", () => {
     render(<ThemePicker />);
     const group = screen.getByRole("radiogroup", { name: "界面主题" });
     fireEvent.keyDown(group, { key: "ArrowRight" });
-    expect(screen.getByRole("radio", { name: /VOSTOK/ })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    const vostok = screen.getByRole("radio", { name: /VOSTOK/ });
+    expect(vostok).toHaveAttribute("aria-checked", "true");
+    // APG radio 模式:焦点跟随选中一起移动(审查 M2)。
+    expect(vostok).toHaveFocus();
     fireEvent.keyDown(group, { key: "ArrowLeft" });
-    expect(screen.getByRole("radio", { name: /暗房金光/ })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    const lumina = screen.getByRole("radio", { name: /暗房金光/ });
+    expect(lumina).toHaveAttribute("aria-checked", "true");
+    expect(lumina).toHaveFocus();
   });
 });

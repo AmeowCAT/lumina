@@ -238,6 +238,15 @@ fn build_args(args: &serde_json::Value, port: u16) -> Result<Vec<String>> {
                             {
                                 validate_path_arg(key_name, &tokens[i + 1])?;
                             }
+                        } else if let Some(inline) = t.strip_prefix("-m=") {
+                            // `-m=model.gguf` 与 `--key=value` 同理:上游
+                            // parse_options 精确匹配,等值形式报 unknown
+                            // argument 启动即退——拆成两个 token 再传,
+                            // 并做与 -m 空格形式相同的路径校验(审查 L2)。
+                            validate_path_arg("model", inline)?;
+                            out.push("-m".into());
+                            out.push(inline.to_string());
+                            continue;
                         } else if t == "-m"
                             && i + 1 < tokens.len()
                             && !tokens[i + 1].starts_with('-')
@@ -1200,6 +1209,16 @@ mod tests {
         let out = build_args(&args, DEFAULT_SD_PORT).unwrap();
         assert!(out.windows(2).any(|w| w[0] == "--threads" && w[1] == "4"));
         assert!(!out.iter().any(|t| t == "--threads=4"));
+    }
+
+    #[test]
+    fn build_args_splits_short_model_inline_form() {
+        // `-m=model.gguf` 与 `--key=value` 同理：上游精确匹配不接受等值
+        // 形式（审查 L2）。相对路径不做存在性校验，可直接构造。
+        let args = serde_json::json!({ "extra_args": "-m=model.gguf" });
+        let out = build_args(&args, DEFAULT_SD_PORT).unwrap();
+        assert!(out.windows(2).any(|w| w[0] == "-m" && w[1] == "model.gguf"));
+        assert!(!out.iter().any(|t| t == "-m=model.gguf"));
     }
 
     #[test]

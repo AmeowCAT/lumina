@@ -76,4 +76,41 @@ describe("saveEntryPart (manual save to output dir)", () => {
     await first;
     expect(useStore.getState().results[0].saves?.["0"]?.status).toBe("saved");
   });
+
+  it("locates images by batch index after a partial removal compacts the array", async () => {
+    // 删除批次中的一张后,数组被 compact 但 img.index 保留原值:
+    // 位置 0 上是 index=1。按数组下标取图会存成错图(审查 M2 回归)。
+    useStore.setState(() => ({
+      results: [
+        {
+          jobId: "job",
+          mode: "img_gen" as const,
+          result: {
+            output_format: "png",
+            images: [
+              { index: 1, b64_json: "b" },
+              { index: 2, b64_json: "c" },
+            ],
+          },
+        },
+      ],
+    }));
+    mocks.saveOutput.mockResolvedValue({ saved: true, path: "/output/x.png" });
+
+    await saveEntryPart("job", "2");
+    expect(mocks.saveOutput).toHaveBeenCalledWith("c", "png", "sdcpp_job_2", "/output");
+
+    await saveEntryPart("job", "1");
+    expect(mocks.saveOutput).toHaveBeenCalledWith("b", "png", "sdcpp_job_1", "/output");
+  });
+
+  it("reports instead of silently returning when the image is gone", async () => {
+    mocks.saveOutput.mockResolvedValue({ saved: true, path: "/output/x.png" });
+
+    await saveEntryPart("job", "9");
+
+    expect(mocks.saveOutput).not.toHaveBeenCalled();
+    const toasts = useStore.getState().toasts;
+    expect(toasts[toasts.length - 1]?.msg).toContain("未找到对应图片");
+  });
 });

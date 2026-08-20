@@ -456,6 +456,12 @@ async fn read_file_b64(
 /// 缩略图最长边。历史画廊瓦片渲染尺寸 ≤ 200px，384 足够 2x 屏。
 const THUMBNAIL_MAX_DIM: u32 = 384;
 
+/// 缩略图解码的像素总量上限（64MP，约 256MB RGBA 解码缓冲）。
+/// 文件字节上限挡不住解压炸弹：一张 50KB 的 20000×20000 PNG 解码后
+/// 是 ~1.6GB，前端 4 并发会放大到数 GB 打爆后端（审查 M1）。解码前先
+/// 读头校验尺寸。
+const MAX_THUMBNAIL_PIXELS: u64 = 64 * 1024 * 1024;
+
 /// 历史画廊缩略图：后端解码原图并降采样后返回小图。此前直接用
 /// read_file_b64 把完整原图 base64 交给 WebView 缓存，上千张图会让
 /// 内存膨胀数 GB（对抗性审查 H1）。带 alpha 的图编码为 PNG（保透明），
@@ -477,6 +483,17 @@ async fn read_thumbnail(
                 "文件过大，无法读取（{}MB > 256MB 上限）",
                 metadata.len() / (1024 * 1024)
             ));
+        }
+        // 解压炸弹预检：只读头拿尺寸，与 dir_is_within 的"宁可拒绝"
+        // 口径一致——尺寸读不出来（头损坏/格式不明）的文件不尝试解码。
+        let (w, h) = image::ImageReader::open(&path)
+            .map_err(|e| e.to_string())?
+            .with_guessed_format()
+            .map_err(|e| e.to_string())?
+            .into_dimensions()
+            .map_err(|e| e.to_string())?;
+        if u64::from(w) * u64::from(h) > MAX_THUMBNAIL_PIXELS {
+            return Err(format!("图片尺寸过大（{}×{} 像素），无法生成缩略图", w, h));
         }
         let img = image::open(&path).map_err(|e| e.to_string())?;
         let thumb = img.thumbnail(THUMBNAIL_MAX_DIM, THUMBNAIL_MAX_DIM);

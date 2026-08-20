@@ -57,18 +57,37 @@ impl SdClient {
         }
     }
 
-    /// Quick (2s) reachability probe used by `server_status`.  Besides the
+    /// Quick reachability probe used by `server_status`.  Besides the
     /// status code, the body must carry sd-server's `/v1/models` shape —
     /// otherwise any HTTP service answering 200 on that path (SPA dev-server
     /// fallback, ComfyUI, reverse proxy) would be mistaken for an external
     /// sd-server and receive generation requests (adversarial review C).
     /// `/v1/models` is a static handler that does not refresh LoRA/upscaler
     /// caches, unlike `/sdcpp/v1/capabilities`.
+    ///
+    /// 回退:自编译/裁剪的 sd-server 可能不含 OpenAI 兼容路由(或模型 id
+    /// 与 "sd-cpp-local" 不一致),轻量探测恒失败会把可用服务器误判为不可达
+    /// (审查 M2)。此时退回 sd-server 专属的 /sdcpp/v1/capabilities 做结构
+    /// 校验(带 samplers 数组即为本家,不会误认 ComfyUI/反向代理)。该端点
+    /// 会触发 LoRA 全量扫描、较重,所以只在轻量探测失败时才调用。
     pub async fn ping(&self) -> bool {
         let req = self.http.get(format!("{}/v1/models", self.base));
-        match req.timeout(Duration::from_secs(2)).send().await {
+        let models_ok = match req.timeout(Duration::from_secs(2)).send().await {
             Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
                 Ok(value) => is_sd_server_models_shape(&value),
+                Err(_) => false,
+            },
+            _ => false,
+        };
+        if models_ok {
+            return true;
+        }
+        let req = self
+            .http
+            .get(format!("{}/sdcpp/v1/capabilities", self.base));
+        match req.timeout(Duration::from_secs(3)).send().await {
+            Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
+                Ok(v) => v.get("samplers").and_then(|s| s.as_array()).is_some(),
                 Err(_) => false,
             },
             _ => false,

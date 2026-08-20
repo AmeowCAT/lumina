@@ -92,10 +92,22 @@
   --header-h: 40px;
   /* 自绘标题栏高度(decorations: false 后接管原生标题栏) */
   --titlebar-h: 36px;
-  /* Logo 徽章底与圆角:主题可覆写(见 theme-vostok.css,构成主义直角) */
-  --color-logo-bg-hi: #221c12;
-  --color-logo-bg-lo: #100d09;
-  --logo-rx: 15px;
+  /* 收起的日志条总高(含 .log-panel 1px 上边框)。单一来源:
+     .log-head 用固定高度实现它(不再依赖字体实测),dash-rail
+     的视口高度扣除引用它——改这里两处自动同步(审查 L3)。 */
+  --logbar-h: 28px;
+}
+
+/* Logo 徽章底与圆角的默认值必须放在命名层内:未分层的 :root 声明
+   优先级高于一切 @layer,theme-vostok.css 在 @layer theme 里的同名
+   覆写(油墨黑底 + 构成主义直角)会永远输掉(审查 M1)。放进 @layer theme
+   后,同层按特异性比较,:root[data-theme="vostok"] 正常胜出。 */
+@layer theme {
+  :root {
+    --color-logo-bg-hi: #221c12;
+    --color-logo-bg-lo: #100d09;
+    --logo-rx: 15px;
+  }
 }
 
 @layer base {
@@ -294,7 +306,7 @@
   /* 已保存到输出目录的成功态(图标按钮) */
   .btn.save-done {
     color: var(--color-success);
-    border-color: rgb(127 168 104 / 0.55);
+    border-color: color-mix(in oklch, var(--color-success) 55%, transparent);
     background: var(--color-success-dim);
   }
   .btn-sm { padding: 4px 10px; font-size: 11px }
@@ -1140,7 +1152,10 @@
     flex-shrink: 0; font-family: var(--font-mono); z-index: 6; position: relative;
   }
   .log-head {
-    display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+    display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    /* 固定高度:收起态总高 = --logbar-h(含面板 1px 上边框),
+       不随字体/行高/文案漂移(审查 L3 的脆弱实测对齐)。 */
+    height: calc(var(--logbar-h) - 1px); box-sizing: border-box;
     user-select: none; font-size: 10.5px; color: var(--color-fg2);
   }
   .log-head:hover { background: rgb(255 255 255 / 0.025) }
@@ -1239,16 +1254,15 @@
   }
   .splash-status .spinner { width: 16px; height: 16px }
   /* 左栏即仪表:粘性停靠,品牌/状态灯/检查单/启动坞自上而下。
-     高度必须扣掉视口内 dashboard 之外的所有固定件,差 1px 都会把
-     grid 行撑出滚动条:上下 padding(34+34) + 标题栏 + 收起的日志条
-     (实测 26px,留 2px 余量)。 */
+     高度扣掉视口内 dashboard 之外的固定件:上下 padding(34+34) +
+     标题栏 + 收起的日志条(--logbar-h,与 .log-head 固定高度同源)。 */
   /* sticky top 必须为 0:容器 padding-top(34px)已提供留白,sticky 偏移相对
      滚动内容盒计算,top:34px 会在右栏增高出现滑动空间后把 rail 额外下推 34px
      (折叠/展开高级配置时左栏"下移"的根因);top:0 时自然位置即钉位,两种状态一致。 */
   .dash-rail {
     position: sticky; top: 0; align-self: start;
     display: flex; flex-direction: column; gap: 16px;
-    height: calc(100vh - 68px - var(--titlebar-h) - 28px);
+    height: calc(100vh - 68px - var(--titlebar-h) - var(--logbar-h));
     overflow-y: auto; scrollbar-width: none;
   }
   .dash-rail::-webkit-scrollbar { display: none }

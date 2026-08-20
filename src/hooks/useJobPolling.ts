@@ -22,8 +22,23 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
  * 已领过结果的任务 id。模块级单例（而非 hook ref）：轮询逻辑挂在 App 级
  * 常驻运行（切到控制台也继续轮询/自动保存），GenerationUI 需要访问同一个
  * 集合来做"删除任务后不再重复收货"的判断。
+ * 长会话下只增不减会无界增长,收顶:超过上限时按插入序淘汰最旧的一半
+ * （被淘汰的 id 对应结果早已超出 MAX_RESULTS 保留窗,重复收割风险可忽略）。
  */
 export const processedJobs = new Set<string>();
+const PROCESSED_JOBS_MAX = 2000;
+
+function rememberProcessedJob(id: string) {
+  if (processedJobs.size >= PROCESSED_JOBS_MAX) {
+    const drop = Math.floor(PROCESSED_JOBS_MAX / 2);
+    let i = 0;
+    for (const old of processedJobs) {
+      if (i++ >= drop) break;
+      processedJobs.delete(old);
+    }
+  }
+  processedJobs.add(id);
+}
 
 export function useJobPolling() {
   const pollBusy = useRef(false);
@@ -159,11 +174,18 @@ export async function saveEntryPart(jobId: string, key: string): Promise<void> {
     return;
   }
   const ext = entry.result.output_format || "png";
+  // key 是服务端批次索引(img.index,见 ResultsGrid.imageKey),不是数组
+  // 下标:部分删除一张图后数组被 compact 但 img.index 保留原值,按下标
+  // 取会存成错图或静默失败(审查 M2)。按键值匹配批次索引定位。
+  const images = entry.result.images;
   const b64 =
     key === "v"
       ? entry.result.b64_json
-      : entry.result.images?.[Number(key)]?.b64_json;
-  if (!b64) return;
+      : images?.find((im, pos) => (im.index ?? pos) === Number(key))?.b64_json;
+  if (!b64) {
+    store.toast("未找到对应图片,可能已被移除", true);
+    return;
+  }
   const name = key === "v" ? `sdcpp_${jobId}` : `sdcpp_${jobId}_${key}`;
   const mark = (
     status: ImageSaveState["status"],
@@ -205,7 +227,7 @@ export function ingestCompletedJob(d: Job): boolean {
     return false;
   }
   const store = useStore.getState();
-  processedJobs.add(d.id);
+  rememberProcessedJob(d.id);
   const result = d.result;
   const what = result.b64_json
     ? "视频已就绪"
@@ -236,26 +258,41 @@ export function ingestCompletedJob(d: Job): boolean {
  * 被用户从队列移除、但服务器侧仍在生成的任务：脱离队列继续低频轮询，
  * 完成后照常收割进结果画廊——否则"将在后台跑完"的提示是空头支票，
  * 结果永久丢失（对抗性审查 M3）。终态或任务失效即停；2 小时兜底停止。
+ * 与主轮询对等:单次查询带软超时(否则服务器挂起时 3s 间隔会叠加
+ * in-flight 请求),并按 id 去重避免重复追踪(审查 L1)。
  */
+const detachedTracking = new Set<string>();
+
 export function trackDetachedJob(id: string) {
-  const iv = setInterval(async () => {
+  if (detachedTracking.has(id)) return;
+  detachedTracking.add(id);
+  let iv: ReturnType<typeof setInterval> | null = null;
+  let failsafe: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (iv != null) clearInterval(iv);
+    if (failsafe != null) clearTimeout(failsafe);
+    detachedTracking.delete(id);
+  };
+  iv = setInterval(async () => {
     try {
-      const { status, body } = await api.sdcppJob(id);
+      const res = await withTimeout(api.sdcppJob(id), POLL_TIMEOUT_MS);
+      if (res === "timeout") return; // 本轮放弃,下一轮再试
+      const { status, body } = res;
       if (status === 404 || status === 410) {
-        clearInterval(iv);
+        stop();
         return;
       }
       if (status !== 200) return;
       const d = body as Job;
       if (d.status === "completed") {
         ingestCompletedJob(d);
-        clearInterval(iv);
+        stop();
       } else if (d.status === "failed" || d.status === "cancelled") {
-        clearInterval(iv);
+        stop();
       }
     } catch {
       // 网络抖动继续重试，由兜底定时器收尾。
     }
   }, 3000);
-  setTimeout(() => clearInterval(iv), 2 * 60 * 60 * 1000);
+  failsafe = setTimeout(stop, 2 * 60 * 60 * 1000);
 }

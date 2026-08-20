@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { GenMode } from "../../types";
 import { useTheme } from "../../lib/theme";
 import { cn } from "../ui/cn";
@@ -56,14 +56,17 @@ export const HeaderBar = memo(function HeaderBar({
   onOpenDashboard,
 }: Props) {
   const theme = useTheme();
+  // tab 键盘模式与 APG 对齐:方向键切换时焦点跟随移动(roving tabindex
+  // 下不移焦点会让焦点停在已被 tabindex=-1 的旧 tab 上)。
+  const tabRefs = useRef<Partial<Record<GenMode, HTMLButtonElement | null>>>({});
   return (
     <header className="header">
       <div className="header-logo">
         {theme === "vostok" ? (
           <>
             <WedgeOrbitMark />
-            <span className="brand-zh">工作室</span>
-            <span className="brand-en">STUDIO</span>
+            <span className="brand-zh">测控台</span>
+            <span className="brand-en">CONTROL</span>
           </>
         ) : (
           <>
@@ -102,11 +105,15 @@ export const HeaderBar = memo(function HeaderBar({
               ? (idx + 1) % supportedModes.length
               : (idx - 1 + supportedModes.length) % supportedModes.length;
           onSwitchMode(supportedModes[next]);
+          tabRefs.current[supportedModes[next]]?.focus();
         }}
       >
         {supportedModes.map((m) => (
           <button
             key={m}
+            ref={(el) => {
+              tabRefs.current[m] = el;
+            }}
             role="tab"
             aria-selected={mode === m}
             tabIndex={mode === m ? 0 : -1}

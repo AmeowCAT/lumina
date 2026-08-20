@@ -1,6 +1,7 @@
 import { memo } from "react";
 import type { Capabilities, GenMode, Job, JobConfig } from "../../types";
 import { useStore } from "../../store";
+import { useTheme } from "../../lib/theme";
 import { IC } from "../ui/Icons";
 
 interface Props {
@@ -16,14 +17,17 @@ interface Props {
   onDownload: (b64: string, fmt?: string, mime?: string) => void;
 }
 
-function statusLabel(status: Job["status"]): string {
+// 状态文案随主题语境:暗房用直白流程词;太空(vostok)走任务链语言
+// 待发 → 推进中 → 已回传(与页头 dreamText、画布空态"测控台/回传"一致)。
+// 失败/取消两态两主题保持同词——告警与终态不含糊。
+function statusLabel(status: Job["status"], vostok: boolean): string {
   switch (status) {
     case "queued":
-      return "排队中";
+      return vostok ? "待发" : "排队中";
     case "generating":
-      return "生成中";
+      return vostok ? "推进中" : "生成中";
     case "completed":
-      return "完成";
+      return vostok ? "已回传" : "完成";
     case "failed":
       return "失败";
     case "cancelled":
@@ -62,6 +66,7 @@ export const JobQueue = memo(function JobQueue({
 }: Props) {
   const progressStep = useStore((s) => s.progressStep);
   const progressTotal = useStore((s) => s.progressTotal);
+  const vostok = useTheme() === "vostok";
   // 完成任务的大体积 result 在收割后已从 jobs 剥离（避免 300 条任务重复
   // 持有 base64），下载入口从结果画廊取回同任务结果。
   const results = useStore((s) => s.results);
@@ -117,7 +122,7 @@ export const JobQueue = memo(function JobQueue({
                   title={j.error?.message}
                   role={j.status === "failed" ? "alert" : "status"}
                 >
-                  {statusLabel(j.status)}
+                  {statusLabel(j.status, vostok)}
                 </span>
                 <span className="job-prompt">{j.config?.params?.prompt || ""}</span>
                 <span className="job-elapsed" aria-hidden="true">

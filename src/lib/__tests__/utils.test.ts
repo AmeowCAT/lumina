@@ -236,6 +236,25 @@ describe("buildRequestBody", () => {
     expect(hn.scheduler).toBeUndefined();
   });
 
+  it("explicitly disables high-noise SLG when scale is not positive", () => {
+    // 与主采样 SLG 对等:scale<=0/缺省时显式发 {scale:0},防止服务端
+    // 默认开启时省略字段无法关闭(审查 L3 对称缺口)。
+    const p: GenParams = {
+      ...baseParams,
+      high_noise_sample_params: {
+        sample_method: "default",
+        sample_steps: 8,
+        scheduler: "default",
+        guidance: { txt_cfg: 3.5 },
+      },
+    };
+    const body = buildRequestBody("vid_gen", p, {} as GenImages);
+    const hn = body.high_noise_sample_params as {
+      guidance: Record<string, unknown>;
+    };
+    expect(hn.guidance.slg).toEqual({ scale: 0 });
+  });
+
   it("includes Qwen Image Layered layer count for img_gen", () => {
     const p: GenParams = { ...baseParams, qwen_image_layers: 5 };
     const body = buildRequestBody("img_gen", p, {} as GenImages);

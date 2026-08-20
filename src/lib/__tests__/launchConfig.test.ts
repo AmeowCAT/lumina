@@ -304,10 +304,23 @@ describe("launch configuration", () => {
       "*=6",
       "all=6",
       "default=6",
+      // C99 十六进制浮点的完整形状:无整数部分 / 尾点（审查 L6）。
+      "0x.8p1",
+      "0x1.",
     ]) {
       expect(validateMaxVramSpec(spec)).toBeNull();
     }
-    for (const spec of ["inf", "nan", "cuda0=", "=6", "cuda0=abc"]) {
+    for (const spec of [
+      "inf",
+      "nan",
+      "cuda0=",
+      "=6",
+      "cuda0=abc",
+      // 形状合法但溢出为 inf,上游 isfinite 会拒绝——预校验同步拦（审查 L6）。
+      "1e999",
+      "0x1p9999",
+      "cuda0=1e999",
+    ]) {
       expect(validateMaxVramSpec(spec)).not.toBeNull();
     }
   });

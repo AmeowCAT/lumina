@@ -297,6 +297,9 @@ export interface Job {
   id: string;
   kind: GenMode;
   status: JobStatus;
+  /** 任务创建时间。单位是**秒**（上游 unix_timestamp_now），不是毫秒——
+   *  前端两处耗时换算（JobQueue `created*1000`、ResultsGrid
+   *  `completedAt/1000 - created`）都依赖此约定,上游改单位要同步改。 */
   created?: number;
   result?: JobResult | null;
   error?: { code?: string; message?: string } | null;

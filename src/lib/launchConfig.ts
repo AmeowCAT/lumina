@@ -198,10 +198,24 @@ export function inferPidVaeFormat(modelPath: string): string {
 
 const MAX_VRAM_DEVICE_RE = /^[A-Za-z0-9_.+*-]+$/;
 // 与上游 parse_strict_float（std::stof + isfinite）对齐：十进制浮点
-// （1e3、.5、+2、-1.5e-2）及 C99 十六进制浮点（0x10、0x1p3）都合法，
+// （1e3、.5、+2、-1.5e-2）及 C99 十六进制浮点（0x10、0x1p3、0x.8p1）都合法，
 // 仅 inf/nan 被 isfinite 拦掉。
 const MAX_VRAM_NUM_RE =
-  /^[+-]?((\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?|0[xX][0-9a-fA-F]+(\.[0-9a-fA-F]*)?([pP][+-]?\d+)?)$/;
+  /^[+-]?((\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?|0[xX]([0-9a-fA-F]+(\.[0-9a-fA-F]*)?|\.[0-9a-fA-F]+)([pP][+-]?\d+)?)$/;
+
+/** 形状合法还不够——1e999 / 0x1p9999 会溢出成 inf,被上游 isfinite 拒绝;
+ *  预校验同步拦掉,免得启动时才报可读性差的错误（审查 L6）。 */
+function isFiniteC99Float(s: string): boolean {
+  if (!/^[+-]?0[xX]/.test(s)) return Number.isFinite(Number(s));
+  // JS 不解析 C99 十六进制浮点,手算 mantissa × 2^exp 判溢出。
+  const body = s.replace(/^[+-]/, "").slice(2);
+  const [mant, exp] = body.split(/[pP]/);
+  const [intPart, fracPart = ""] = mant.split(".");
+  const mantVal =
+    (intPart ? parseInt(intPart, 16) : 0) +
+    (fracPart ? parseInt(fracPart, 16) / 16 ** fracPart.length : 0);
+  return Number.isFinite(mantVal * 2 ** (exp ? parseInt(exp, 10) : 0));
+}
 
 /** 预校验 --max-vram 原始 spec（上游 ggml_graph_cut 解析失败会让 sd-server
  * 启动即退，GUI 提前拦截给出可读错误）。返回错误消息或 null。
@@ -220,6 +234,9 @@ export function validateMaxVramSpec(raw: string): string | null {
       if (!MAX_VRAM_NUM_RE.test(p)) {
         return `应为数字（GiB）或负的保留余量，如 6 或 -2：${p}`;
       }
+      if (!isFiniteC99Float(p)) {
+        return `数值超出可表示范围（溢出为 inf）：${p}`;
+      }
       continue;
     }
     if (eq === 0) return `设备分配项格式应为 设备=数值：${p}`;
@@ -230,6 +247,9 @@ export function validateMaxVramSpec(raw: string): string | null {
     }
     if (!MAX_VRAM_NUM_RE.test(value)) {
       return `设备 ${device} 的预算应为数字（GiB），如 ${device}=6`;
+    }
+    if (!isFiniteC99Float(value)) {
+      return `设备 ${device} 的预算数值超出可表示范围（溢出为 inf）`;
     }
   }
   return null;

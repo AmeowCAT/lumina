@@ -127,8 +127,13 @@ pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
 /// 去掉 Windows canonicalize 产出的 `\\?\` verbatim 前缀。starts_with 比较
 /// 两侧一个带前缀一个不带（一侧 canonicalize 失败回退原路径时）会恒为
 /// false，把合法子目录整体跳过（对抗性审查）。统一去前缀后再比较。
+/// UNC 路径 canonicalize 产出 `\\?\UNC\server\share`：只剥 `\\?\` 会留下
+/// `UNC\server\share` 这种非路径形式,需整体还原为 `\\server\share`(审查 L8)。
 fn strip_verbatim(p: &Path) -> PathBuf {
     let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{}", rest));
+    }
     match s.strip_prefix(r"\\?\") {
         Some(rest) => PathBuf::from(rest),
         None => p.to_path_buf(),

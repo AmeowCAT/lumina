@@ -498,7 +498,7 @@ export const ResultsGrid = memo(function ResultsGrid({
             </>
           ) : (
             <>
-              <p className="mb-1 text-[13px] text-fg2">发射台就绪</p>
+              <p className="mb-1 text-[13px] text-fg2">测控台就绪</p>
               <p>
                 输入提示词后点击 生成，或按 <span className="kbd">Ctrl</span>+
                 <span className="kbd">Enter</span>

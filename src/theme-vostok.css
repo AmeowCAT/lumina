@@ -4,8 +4,8 @@
    色板 v2(参考中国航天任务海报):油墨黑 + 奶油纸白 + 朱砂 #CF3616 +
    青蓝遥测 · Bahnschrift 压缩工业体 · 斜切对角线母题 · 轨道环与星图。
 
-   来源:docs/Web-Prototype-v3/(brand-spec.md + vostok-theme/styles.css
-   + vostok-theme-preview-v2.html)。本文件不替换 styles.css,而是与其
+   来源:东方号主题品牌规范与主题样式表(本地原型参考稿,不入库)。
+   本文件不替换 styles.css,而是与其
    共存:所有规则以 [data-theme="vostok"] 作用域覆盖,默认 "Lumina Dark"
    主题不受影响;切换入口见 src/lib/theme.ts 与 ui/ThemePicker.tsx。
 
@@ -54,13 +54,17 @@
       var(--color-danger) 0 7px, var(--color-danger-solid) 7px 14px);
     /* 青蓝:仅环境辉光与星点,不作文字、不作第二强调色 */
     --color-steel: oklch(0.7 0.09 205);          /* #50afb9 */
-    /* 语义态:在轨蓝(GO) / 信号琥珀 / 警报绯红(实心+斜纹区别于朱砂)/ 仪表暖灰 */
+    /* 语义态:在轨蓝(GO 检查单专用) / 信号琥珀 / 警报绯红(实心+斜纹区别于朱砂)/ 仪表暖灰 */
     --color-danger: oklch(0.62 0.215 18);        /* #eb3552 */
     --color-danger-solid: oklch(0.46 0.17 20);   /* #a1182d */
     --color-danger-dim: color-mix(in oklch, var(--color-danger) 14%, transparent);
     --color-warn: oklch(0.74 0.14 80);           /* #d9a02c */
     --color-warn-dim: color-mix(in oklch, var(--color-warn) 12%, transparent);
-    --color-success: oklch(0.76 0.12 200);       /* #30c8cf 在轨蓝:青蓝提亮版——点火红之后是入轨蓝 */
+    /* GO/NO-GO 检查单就绪态专用在轨蓝:点火红之后是入轨蓝。
+       与 --color-success 解耦——success 同时驱动"已保存/已完成"等通用
+       成功态,那些场景保留绿色语义(审查:色板 v2 的波及面超出声明)。 */
+    --color-go: oklch(0.76 0.12 200);            /* #30c8cf 在轨蓝 */
+    --color-success: oklch(0.72 0.13 152);       /* 海报绿:油墨黑上的低饱和绿 */
     --color-success-dim: color-mix(in oklch, var(--color-success) 13%, transparent);
     --color-queued: oklch(0.66 0.014 70);        /* #989189 */
     --color-queued-dim: color-mix(in oklch, var(--color-queued) 12%, transparent);
@@ -697,21 +701,22 @@
     border-color: color-mix(in oklch, var(--color-danger) 45%, transparent);
   }
   /* GO/NO-GO 检查单:就绪态收进在轨蓝——点火红之后是入轨蓝;
-     全蓝时摘要泛在轨蓝光(任务控制 All-Go),红色只留给发射钮与进行中任务 */
+     全蓝时摘要泛在轨蓝光(任务控制 All-Go),红色只留给发射钮与进行中任务。
+     用专用 --color-go,不占用通用成功态 --color-success。 */
   [data-theme="vostok"] .check-item:hover {
     background: color-mix(in oklch, var(--color-fg) 4%, transparent);
   }
   [data-theme="vostok"] .check-summary.ready {
-    color: var(--color-success);
-    text-shadow: 0 0 12px color-mix(in oklch, var(--color-success) 55%, transparent);
+    color: var(--color-go);
+    text-shadow: 0 0 12px color-mix(in oklch, var(--color-go) 55%, transparent);
   }
   [data-theme="vostok"] .check-item.done .check-dot {
-    border-color: color-mix(in oklch, var(--color-success) 65%, transparent);
+    border-color: color-mix(in oklch, var(--color-go) 65%, transparent);
     background: radial-gradient(circle at 40% 35%,
-      color-mix(in oklch, var(--color-success) 80%, white), var(--color-success));
-    box-shadow: 0 0 10px color-mix(in oklch, var(--color-success) 50%, transparent);
+      color-mix(in oklch, var(--color-go) 80%, white), var(--color-go));
+    box-shadow: 0 0 10px color-mix(in oklch, var(--color-go) 50%, transparent);
   }
-  [data-theme="vostok"] .check-item.done .check-detail { color: var(--color-success) }
+  [data-theme="vostok"] .check-item.done .check-detail { color: var(--color-go) }
   /* 切换模型的影响确认条 */
   [data-theme="vostok"] .confirm-strip {
     border-color: color-mix(in oklch, var(--color-warn) 40%, transparent);

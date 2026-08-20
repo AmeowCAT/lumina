@@ -209,36 +209,63 @@ export const HistoryGallery = memo(function HistoryGallery({
     [pumpThumbQueue]
   );
 
-  // Lightbox 用原图（缩略图放大会糊）：按需读取 + 小容量 LRU，避免整图
-  // dataURL 无限累积（审查 H1 的 Lightbox 侧）。
+  // Lightbox 用原图（缩略图放大会糊）：按需读取 + 小容量 FIFO 缓存 +
+  // 并发闸——快速翻页会串起多张全量读取（单张上限 256MB），无闸时瞬时
+  // 内存尖峰可达数 GB（审查 H1 的 Lightbox 侧 / L4）。
   const FULL_CACHE_MAX = 6;
+  /** 原图并发读取上限:与缩略图 THUMB_CONCURRENCY 同构 */
+  const FULL_CONCURRENCY = 2;
   const fullSrcsRef = useRef(new Map<string, string>());
   const pendingFull = useRef(new Set<string>());
-  const ensureFull = useCallback((f: OutputEntry) => {
-    if (fullSrcsRef.current.has(f.path) || pendingFull.current.has(f.path))
-      return;
-    pendingFull.current.add(f.path);
-    api
-      .readFileB64(f.path)
-      .then((b64) => {
-        const ext = f.ext === "jpg" || f.ext === "jpeg" ? "jpeg" : f.ext || "png";
-        const cache = fullSrcsRef.current;
-        // LRU：重插到尾部前先淘汰最旧。
-        while (cache.size >= FULL_CACHE_MAX) {
-          const oldest = cache.keys().next().value;
-          if (oldest == null) break;
-          cache.delete(oldest);
-        }
-        cache.set(f.path, `data:image/${ext};base64,${b64}`);
-        setThumbVersion((v) => v + 1);
-      })
-      .catch(() => {
-        // 原图失败回退缩略图显示，无需报错（动作按钮各自有错误提示）。
-      })
-      .finally(() => {
+  const fullQueue = useRef<OutputEntry[]>([]);
+  const activeFullReads = useRef(0);
+  const pumpFullQueue = useCallback(() => {
+    while (
+      activeFullReads.current < FULL_CONCURRENCY &&
+      fullQueue.current.length > 0
+    ) {
+      const f = fullQueue.current.shift()!;
+      if (fullSrcsRef.current.has(f.path)) {
         pendingFull.current.delete(f.path);
-      });
+        continue;
+      }
+      activeFullReads.current += 1;
+      api
+        .readFileB64(f.path)
+        .then((b64) => {
+          const ext = f.ext === "jpg" || f.ext === "jpeg" ? "jpeg" : f.ext || "png";
+          const cache = fullSrcsRef.current;
+          if (!cache.has(f.path)) {
+            // FIFO 淘汰:Map 迭代顺序即插入顺序(命中不重插,不是 LRU)。
+            while (cache.size >= FULL_CACHE_MAX) {
+              const oldest = cache.keys().next().value;
+              if (oldest == null) break;
+              cache.delete(oldest);
+            }
+            cache.set(f.path, `data:image/${ext};base64,${b64}`);
+            setThumbVersion((v) => v + 1);
+          }
+        })
+        .catch(() => {
+          // 原图失败回退缩略图显示，无需报错（动作按钮各自有错误提示）。
+        })
+        .finally(() => {
+          activeFullReads.current -= 1;
+          pendingFull.current.delete(f.path);
+          pumpFullQueue();
+        });
+    }
   }, []);
+  const ensureFull = useCallback(
+    (f: OutputEntry) => {
+      if (fullSrcsRef.current.has(f.path) || pendingFull.current.has(f.path))
+        return;
+      pendingFull.current.add(f.path);
+      fullQueue.current.push(f);
+      pumpFullQueue();
+    },
+    [pumpFullQueue]
+  );
 
   // 搜索文本一次性预计算：旧实现每次键击对每个文件 JSON.stringify(metadata)
   // 过滤，上千文件时明显卡顿（对抗性审查）。这里只随 files 变化重建。
@@ -417,7 +444,7 @@ export const HistoryGallery = memo(function HistoryGallery({
   );
 
   return (
-    <Panel title="历史画廊" badge={imgFiles.length || null}>
+    <Panel title={vostok ? "回传档案" : "历史画廊"} badge={imgFiles.length || null}>
       {!settings.outputDir ? (
         <p className="text-muted text-xs py-1">请在控制台设置输出目录</p>
       ) : loading ? (

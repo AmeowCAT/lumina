@@ -518,6 +518,12 @@ export function buildRequestBody(
       (hn.guidance as Record<string, unknown>).img_cfg = h.guidance.img_cfg;
     if ((h.guidance?.slg?.scale ?? 0) > 0)
       (hn.guidance as Record<string, unknown>).slg = { ...h.guidance?.slg };
+    else
+      // 与主采样 SLG 对等（见上方 sampleParams.guidance.slg）：显式发
+      // scale:0 关闭——请求体在服务端默认值之上合并，省略会沿用服务端
+      // 默认，外部 server 默认开启 SLG 时高噪声阶段无法真正关闭（审查 L3
+      // 的对称缺口）。
+      (hn.guidance as Record<string, unknown>).slg = { scale: 0 };
     const hnBetaArgs = buildBetaSchedulerArgs(h);
     if (hnBetaArgs) hn.extra_sample_args = hnBetaArgs;
     b.high_noise_sample_params = hn;

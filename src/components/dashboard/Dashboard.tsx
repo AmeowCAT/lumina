@@ -607,7 +607,7 @@ export function Dashboard() {
 								className="btn btn-sm"
 								onClick={() => setDashboardOpen(false)}
 							>
-								{vostok ? "进入工作室" : "进入生成界面"}
+								{vostok ? "进入测控台" : "进入生成界面"}
 							</button>
 						)}
 					</div>
@@ -758,11 +758,11 @@ export function Dashboard() {
 									{serverStatus?.reachable
 										? caps?.model?.path === mainModel
 											? vostok
-												? "进入工作室"
+												? "进入测控台"
 												: "返回生成界面"
 											: "切换到此模型"
 										: vostok
-											? "发射 · 进入工作室"
+											? "发射 · 进入测控台"
 											: "启动服务器"}
 								</>
 							)}

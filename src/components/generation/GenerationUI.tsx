@@ -128,6 +128,12 @@ export function GenerationUI() {
     []
   );
   const closeLightbox = useCallback(() => setLightbox(null), []);
+  // 稳定引用:内联箭头会让 Lightbox 的键盘 effect 依赖每次父级渲染
+  // 都变化,反复重挂 listener(审查低危项)。
+  const navigateLightbox = useCallback(
+    (i: number) => setLightbox((s) => (s ? { ...s, index: i } : s)),
+    []
+  );
 
   const blobCache = useBlobUrlCache();
   // hooks 返回的函数身份随每次渲染变化，直接传给 memo 子组件会让 memo 失效
@@ -894,7 +900,7 @@ export function GenerationUI() {
                 className={cn("mode-tab", workspaceTab === "history" && "active")}
                 onClick={() => setWorkspaceTab("history")}
               >
-                历史画廊
+                {theme === "vostok" ? "回传档案" : "历史画廊"}
               </button>
             </div>
           </div>
@@ -1126,9 +1132,7 @@ export function GenerationUI() {
             items={lightbox.items}
             index={lightbox.index}
             onClose={closeLightbox}
-            onNavigate={(i) =>
-              setLightbox((s) => (s ? { ...s, index: i } : s))
-            }
+            onNavigate={navigateLightbox}
           />
         )}
       </AnimatePresence>
