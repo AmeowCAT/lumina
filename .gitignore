@@ -5,5 +5,7 @@ src-tauri/gen/
 *.log
 gui-test-screenshots/
 
-# 本地原型文件,不纳入版本管理
-docs/
+# docs/ 原本整个被忽略（本地原型文件）。README 用的截图要入库，
+# 所以改成逐项忽略 + 放行 screenshots，其余草稿仍然留在本地。
+docs/*
+!docs/screenshots/

@@ -2,6 +2,7 @@
   "name": "lumina",
   "private": true,
   "version": "0.7.18",
+  "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=20.19.0"
   },

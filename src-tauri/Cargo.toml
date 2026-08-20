@@ -3,6 +3,7 @@ name = "lumina"
 version = "0.7.18"
 edition = "2021"
 description = "Lumina (流光) — desktop GUI for stable-diffusion.cpp sd-server"
+license = "AGPL-3.0-or-later"
 
 [lib]
 name = "lumina_lib"
