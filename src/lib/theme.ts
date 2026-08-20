@@ -37,9 +37,9 @@ export const THEMES: ThemeMeta[] = [
     id: "vostok",
     name: "东方号 VOSTOK",
     sub: "RED WEDGE IN ORBIT",
-    desc: "苏俄构成主义 × 太空时代：深空墨蓝 + 纸白 + 苏红斜切",
-    themeColor: "#0d1117",
-    swatches: ["#0d1117", "#ce241b", "#ffc679"],
+    desc: "苏俄构成主义 × 太空时代：油墨黑 + 奶油纸白 + 朱砂红斜切",
+    themeColor: "#110e0b",
+    swatches: ["#110e0b", "#cf3616", "#f9d280"],
   },
 ];
 

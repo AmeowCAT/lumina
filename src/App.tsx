@@ -236,18 +236,18 @@ export default function App() {
                 <path id="vostok-patch-top" d="M 14,62 A 46,46 0 0 1 106,62" fill="none" />
                 <path id="vostok-patch-bot" d="M 102,74 A 44,44 0 0 1 18,74" fill="none" />
               </defs>
-              <circle cx="60" cy="60" r="58" fill="#0d1117" stroke="#edeadc" strokeWidth="1.6" />
-              <circle cx="60" cy="60" r="50" fill="none" stroke="#edeadc" strokeOpacity="0.35" strokeWidth="0.8" />
-              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.6" fill="#edeadc">
+              <circle cx="60" cy="60" r="58" fill="#110e0b" stroke="#eeead8" strokeWidth="1.6" />
+              <circle cx="60" cy="60" r="50" fill="none" stroke="#eeead8" strokeOpacity="0.35" strokeWidth="0.8" />
+              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.6" fill="#eeead8">
                 <textPath href="#vostok-patch-top" startOffset="6%">LUMINA STUDIO</textPath>
               </text>
-              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.2" fill="#edeadc">
+              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.2" fill="#eeead8">
                 <textPath href="#vostok-patch-bot" startOffset="4%">ВОСТОК · 东方号</textPath>
               </text>
-              <polygon points="60,26 74,86 46,86" fill="#ce241b" />
-              <circle cx="60" cy="26" r="6.5" fill="#edeadc" />
-              <ellipse cx="60" cy="60" rx="34" ry="9" fill="none" stroke="#8fc1cd" strokeWidth="1.4" transform="rotate(-18 60 60)" />
-              <circle cx="88" cy="44" r="2.2" fill="#edeadc" />
+              <polygon points="60,26 74,86 46,86" fill="#cf3616" />
+              <circle cx="60" cy="26" r="6.5" fill="#eeead8" />
+              <ellipse cx="60" cy="60" rx="34" ry="9" fill="none" stroke="#50afb9" strokeWidth="1.4" transform="rotate(-18 60 60)" />
+              <circle cx="88" cy="44" r="2.2" fill="#eeead8" />
             </svg>
           </div>
           <ToastContainer />

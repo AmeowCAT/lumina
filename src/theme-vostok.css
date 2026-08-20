@@ -1,10 +1,10 @@
 /* ─────────────────────────────────────────────────────────────
    流光 Lumina — "东方号 VOSTOK" 主题层
    苏俄构成主义 × 太空时代:利西茨基的红色楔形打进深空。
-   深空墨蓝 + 纸白 + 苏红 #CE241B · Bahnschrift 压缩工业体 ·
-   斜切对角线母题 · 轨道环与星图 · 遥测等宽字。
+   色板 v2(参考中国航天任务海报):油墨黑 + 奶油纸白 + 朱砂 #CF3616 +
+   青蓝遥测 · Bahnschrift 压缩工业体 · 斜切对角线母题 · 轨道环与星图。
 
-   来源:docs/Web-Prototype-v2/(brand-spec.md + vostok-theme/styles.css
+   来源:docs/Web-Prototype-v3/(brand-spec.md + vostok-theme/styles.css
    + vostok-theme-preview-v2.html)。本文件不替换 styles.css,而是与其
    共存:所有规则以 [data-theme="vostok"] 作用域覆盖,默认 "Lumina Dark"
    主题不受影响;切换入口见 src/lib/theme.ts 与 ui/ThemePicker.tsx。
@@ -18,30 +18,30 @@
    需要 WebView2/Chromium ≥ 111(color-mix / oklch)。
    ───────────────────────────────────────────────────────────── */
 
-/* ═══ ① 设计令牌:深空墨蓝 × 构成主义纸白 × 苏红 ═══════════════ */
+/* ═══ ① 设计令牌:海报油墨黑 × 奶油纸白 × 朱砂红(色板 v2) ═══════ */
 @layer theme {
   :root[data-theme="vostok"] {
-    --color-bg: oklch(0.175 0.014 264);          /* #0d1117 深空 */
-    --color-well: oklch(0.14 0.011 264);         /* #07090e 深井 */
-    --color-surface: oklch(0.205 0.016 264);     /* #13171f 舱面 */
-    --color-elevated: oklch(0.235 0.018 264);    /* #1a1e27 仪表板 */
-    --color-hover: oklch(0.275 0.02 264);        /* #232832 悬停 */
-    --color-fg: oklch(0.935 0.018 95);           /* #edeadc 纸白 */
-    --color-fg2: oklch(0.75 0.016 90);           /* #b2aea3 次级 */
-    --color-muted: oklch(0.565 0.014 80);        /* #7a756d 弱化 */
+    --color-bg: oklch(0.165 0.008 65);           /* #110e0b 油墨黑 */
+    --color-well: oklch(0.13 0.007 65);          /* #090705 深井 */
+    --color-surface: oklch(0.2 0.009 65);        /* #191512 舱面 */
+    --color-elevated: oklch(0.235 0.01 65);      /* #211d19 仪表板 */
+    --color-hover: oklch(0.275 0.012 65);        /* #2c2722 悬停 */
+    --color-fg: oklch(0.935 0.024 95);           /* #eeead8 奶油纸白 */
+    --color-fg2: oklch(0.76 0.018 90);           /* #b5b1a4 次级 */
+    --color-muted: oklch(0.575 0.016 75);        /* #7f786f 弱化 */
     --color-line: color-mix(in oklch, var(--color-fg) 8%, transparent);
     --color-line2: color-mix(in oklch, var(--color-fg) 16%, transparent);
-    /* 苏红:全局唯一强调色 */
-    --color-accent: oklch(0.55 0.205 29);        /* #ce241b */
-    --color-accent-hover: oklch(0.6 0.215 29);   /* #e43227 */
-    --color-accent-hi: oklch(0.7 0.185 33);      /* #fc694c 信号红(深底文字) */
-    --color-accent-ink: oklch(0.94 0.018 95);    /* #efebde 红底上的纸白 */
+    /* 朱砂红:全局唯一强调色 */
+    --color-accent: oklch(0.565 0.195 33);       /* #cf3616 朱砂 */
+    --color-accent-hover: oklch(0.625 0.205 33); /* #e94625 */
+    --color-accent-hi: oklch(0.7 0.19 42);       /* #fb6c2b 珊瑚红(深底文字) */
+    --color-accent-ink: oklch(0.94 0.024 95);    /* #f0ebda 红底上的奶油纸白 */
     --color-accent-dim: color-mix(in oklch, var(--color-accent) 14%, transparent);
     --color-glow: color-mix(in oklch, var(--color-accent) 32%, transparent);
-    /* 火焰梯度:淡焰 → 苏红 → 深绯。只用于英雄时刻——
+    /* 火焰梯度:淡金 → 朱砂 → 锈红。只用于英雄时刻——
        生成/发射 CTA、进度束、字标下楔形、Logo 流光弧、就绪辉光。 */
-    --color-flow-start: oklch(0.87 0.12 70);     /* #ffc679 */
-    --color-flow-end: oklch(0.44 0.16 24);       /* #971922 */
+    --color-flow-start: oklch(0.88 0.11 85);     /* #f9d280 淡金 */
+    --color-flow-end: oklch(0.45 0.16 30);       /* #9b2014 锈红 */
     --grad-flow: linear-gradient(100deg, var(--color-flow-start), var(--color-accent) 46%, var(--color-flow-end));
     --grad-flow-soft: linear-gradient(100deg,
       color-mix(in oklch, var(--color-flow-start) 22%, transparent),
@@ -52,19 +52,19 @@
       var(--color-flow-start) 0 6px, var(--color-accent) 6px 12px, var(--color-flow-end) 12px 18px);
     --grad-hazard: repeating-linear-gradient(-45deg,
       var(--color-danger) 0 7px, var(--color-danger-solid) 7px 14px);
-    /* 钢青:仅环境辉光与星点,不作文字、不作第二强调色 */
-    --color-steel: oklch(0.78 0.055 215);        /* #8fc1cd */
-    /* 语义态:GO 绿 / 信号琥珀 / 警报红(实心+斜纹区别于品牌红)/ 钢铁灰蓝 */
-    --color-danger: oklch(0.64 0.21 25);         /* #f14445 */
-    --color-danger-solid: oklch(0.47 0.17 26);   /* #a51e21 */
+    /* 青蓝:仅环境辉光与星点,不作文字、不作第二强调色 */
+    --color-steel: oklch(0.7 0.09 205);          /* #50afb9 */
+    /* 语义态:在轨蓝(GO) / 信号琥珀 / 警报绯红(实心+斜纹区别于朱砂)/ 仪表暖灰 */
+    --color-danger: oklch(0.62 0.215 18);        /* #eb3552 */
+    --color-danger-solid: oklch(0.46 0.17 20);   /* #a1182d */
     --color-danger-dim: color-mix(in oklch, var(--color-danger) 14%, transparent);
     --color-warn: oklch(0.74 0.14 80);           /* #d9a02c */
     --color-warn-dim: color-mix(in oklch, var(--color-warn) 12%, transparent);
-    --color-success: oklch(0.72 0.12 165);       /* #4dbc92 */
+    --color-success: oklch(0.76 0.12 200);       /* #30c8cf 在轨蓝:青蓝提亮版——点火红之后是入轨蓝 */
     --color-success-dim: color-mix(in oklch, var(--color-success) 13%, transparent);
-    --color-queued: oklch(0.65 0.028 255);       /* #8490a0 */
+    --color-queued: oklch(0.66 0.014 70);        /* #989189 */
     --color-queued-dim: color-mix(in oklch, var(--color-queued) 12%, transparent);
-    /* 墨蓝玻璃:所有浮层基底,不再是中性灰黑 */
+    /* 油墨黑玻璃:所有浮层基底,不再是中性灰黑,也不再是蓝黑 */
     --color-glass: color-mix(in oklch, var(--color-surface) 72%, transparent);
     --color-glass-card: color-mix(in oklch, var(--color-surface) 86%, transparent);
     --color-glass-strong: color-mix(in oklch, var(--color-surface) 92%, transparent);
@@ -84,14 +84,14 @@
     --shadow-glow: 0 0 22px color-mix(in oklch, var(--color-accent) 28%, transparent);
 
     /* ── 默认主题兼容层:未覆盖规则里的三元组引用落到红色系 ── */
-    --color-accent-rgb: 206 36 27;        /* #ce241b */
-    --color-accent-hi-rgb: 252 105 76;    /* #fc694c */
-    --color-flow-start-rgb: 255 198 121;  /* #ffc679 */
-    --color-flow-end-rgb: 151 25 34;      /* #971922 */
-    --color-celadon: #8fc1cd;             /* 青瓷 → 钢青 */
-    /* Logo 徽章:墨蓝底 + 构成主义直角(Logo.tsx 读这两个变量) */
-    --color-logo-bg-hi: #1a1e27;
-    --color-logo-bg-lo: #0b0e14;
+    --color-accent-rgb: 207 54 22;        /* #cf3616 */
+    --color-accent-hi-rgb: 251 108 43;    /* #fb6c2b */
+    --color-flow-start-rgb: 249 210 128;  /* #f9d280 */
+    --color-flow-end-rgb: 155 32 20;      /* #9b2014 */
+    --color-celadon: #50afb9;             /* 青瓷 → 青蓝 */
+    /* Logo 徽章:油墨黑底 + 构成主义直角(Logo.tsx 读这两个变量) */
+    --color-logo-bg-hi: #211d19;
+    --color-logo-bg-lo: #090705;
     --logo-rx: 6px;
 
     /* R 版质感:胶片颗粒(fractalNoise 内联 SVG)与丝网半调网点 */
@@ -114,7 +114,7 @@
 
 /* ═══ ③ 基础层:环境基底、选区、滚动条 ═══ */
 @layer base {
-  /* 环境基底:左上一缕苏红、右上一缕钢青,如地平线两端的地光 */
+  /* 环境基底:左上一缕朱砂、右上一缕青蓝,如地平线两端的地光 */
   [data-theme="vostok"] body {
     background:
       radial-gradient(70% 55% at 8% -10%, color-mix(in oklch, var(--color-accent) 6%, transparent), transparent 62%),
@@ -307,7 +307,7 @@
 
   /* ── 输出区 / 画布:深空星图,结果是主角 ────────────────── */
   [data-theme="vostok"] .output-area {
-    /* 星图点阵:1px 钢青细点 28px 等距平铺,静态标尺质感 */
+    /* 星图点阵:1px 青蓝细点 28px 等距平铺,静态标尺质感 */
     background-image: radial-gradient(circle, color-mix(in oklch, var(--color-steel) 11%, transparent) 1px, transparent 1.5px);
   }
   [data-theme="vostok"] .canvas-float .mode-tabs,
@@ -363,7 +363,7 @@
     background: color-mix(in oklch, var(--color-elevated) 94%, transparent);
   }
 
-  /* ── 参数 Sheet / 任务队列抽屉:墨蓝玻璃 ───────────────── */
+  /* ── 参数 Sheet / 任务队列抽屉:油墨黑玻璃 ──────────────────── */
   [data-theme="vostok"] .sheet-backdrop {
     background: color-mix(in oklch, var(--color-well) 45%, transparent);
   }
@@ -642,22 +642,22 @@
   [data-theme="vostok"] .orb.failed::after {
     border-color: color-mix(in oklch, var(--color-danger) 45%, transparent);
   }
-  /* GO/NO-GO 检查单:就绪态统一收进苏红(与默认主题 accent-hi 同位),
-     不再引入语义绿——红色是本主题唯一强调色 */
+  /* GO/NO-GO 检查单:就绪态收进在轨蓝——点火红之后是入轨蓝;
+     全蓝时摘要泛在轨蓝光(任务控制 All-Go),红色只留给发射钮与进行中任务 */
   [data-theme="vostok"] .check-item:hover {
     background: color-mix(in oklch, var(--color-fg) 4%, transparent);
   }
-  [data-theme="vostok"] .check-summary.ready { color: var(--color-accent-hi) }
   [data-theme="vostok"] .check-summary.ready {
-    text-shadow: 0 0 12px color-mix(in oklch, var(--color-accent) 55%, transparent);
+    color: var(--color-success);
+    text-shadow: 0 0 12px color-mix(in oklch, var(--color-success) 55%, transparent);
   }
   [data-theme="vostok"] .check-item.done .check-dot {
-    border-color: color-mix(in oklch, var(--color-accent) 65%, transparent);
+    border-color: color-mix(in oklch, var(--color-success) 65%, transparent);
     background: radial-gradient(circle at 40% 35%,
-      var(--color-accent-hi), var(--color-accent));
-    box-shadow: 0 0 10px color-mix(in oklch, var(--color-accent) 50%, transparent);
+      color-mix(in oklch, var(--color-success) 80%, white), var(--color-success));
+    box-shadow: 0 0 10px color-mix(in oklch, var(--color-success) 50%, transparent);
   }
-  [data-theme="vostok"] .check-item.done .check-detail { color: var(--color-accent-hi) }
+  [data-theme="vostok"] .check-item.done .check-detail { color: var(--color-success) }
   /* 切换模型的影响确认条 */
   [data-theme="vostok"] .confirm-strip {
     border-color: color-mix(in oklch, var(--color-warn) 40%, transparent);

@@ -14,7 +14,7 @@
         if (t !== "lumina" && t !== "vostok") t = "lumina";
         document.documentElement.dataset.theme = t;
         var m = document.querySelector('meta[name="theme-color"]');
-        if (m) m.setAttribute("content", t === "vostok" ? "#0d1117" : "#0d0b09");
+        if (m) m.setAttribute("content", t === "vostok" ? "#110e0b" : "#0d0b09");
       } catch (e) {
         /* localStorage 不可用时保持默认主题 */
       }

@@ -53,7 +53,7 @@ describe("lib/theme 主题注册表与状态", () => {
     expect(document.documentElement.dataset.theme).toBe("vostok");
     expect(
       document.querySelector('meta[name="theme-color"]')?.getAttribute("content"),
-    ).toBe("#0d1117");
+    ).toBe("#110e0b");
     applyTheme("lumina");
     expect(document.documentElement.dataset.theme).toBe("lumina");
     expect(
