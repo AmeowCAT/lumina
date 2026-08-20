@@ -13,6 +13,7 @@ interface Props {
   vaeTilingParams: VaeTilingParams | undefined;
   cacheMode: string | undefined;
   clipSkip: number | undefined;
+  extraSampleArgs: string | undefined;
   onUpdate: (path: string, v: unknown) => void;
 }
 
@@ -23,6 +24,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   vaeTilingParams,
   cacheMode,
   clipSkip,
+  extraSampleArgs,
   onUpdate,
 }: Props) {
   return (
@@ -93,6 +95,25 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
             { value: "3", label: "3" },
           ]}
         />
+      </div>
+      <div className="form-row mt-2">
+        <label className="form-label" htmlFor="extra-sample-args">
+          额外采样参数
+        </label>
+        <input
+          id="extra-sample-args"
+          className="input"
+          type="text"
+          value={extraSampleArgs ?? ""}
+          onChange={(e) => onUpdate("sample_params.extra_sample_args", e.target.value)}
+          placeholder="例如 gamma=3,apg_eta=0.8,slg_uncond=true"
+        />
+        <div className="field-hint field-hint-flush mt-0.5">
+          上游 extra_sample_args 的 key=value 列表（逗号分隔），兜底界面未暴露的
+          采样器 / 调度器 / 引导参数：flux 的 base_shift·max_shift、lcm 的
+          noise_clip_std、euler_ge 的 gamma、APG 的 apg_*、slg_uncond、
+          guidance_schedule 等；同名键会覆盖上面的滑杆值
+        </div>
       </div>
     </Panel>
   );

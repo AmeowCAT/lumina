@@ -3,6 +3,8 @@ import {
   alignSizeUp,
   alignVideoFrames,
   FAMILY_CONFIG,
+  SAMPLER_NAMES,
+  SCHEDULER_NAMES,
   scaleSize,
   VIDEO_FRAME_MAX,
   VIDEO_FRAME_PRESETS,
@@ -16,6 +18,67 @@ import {
   persistFamilyDefaults,
   validateMaxVramSpec,
 } from "../launchConfig";
+
+// 上游 #1887 给 sample_method_to_str / scheduler_to_str 加了 static_assert，
+// 这里做等价的对照：GUI 的显示名表必须与 include/stable-diffusion.h 的枚举
+// 顺序及 src/stable-diffusion.cpp 的字符串表一一对应，不多不少。
+describe("sampler / scheduler token coverage", () => {
+  const UPSTREAM_SAMPLERS = [
+    "euler",
+    "euler_a",
+    "heun",
+    "dpm2",
+    "dpm++2s_a",
+    "dpm++2m",
+    "dpm++2mv2",
+    "ipndm",
+    "ipndm_v",
+    "lcm",
+    "ddim_trailing",
+    "tcd",
+    "res_multistep",
+    "res_2s",
+    "er_sde",
+    "euler_cfg_pp",
+    "euler_a_cfg_pp",
+    "euler_ge",
+    "dpm++2m_sde",
+    "dpm++2m_sde_bt",
+    "lms",
+  ];
+  // capabilities 在 discrete 之后额外返回 normal 别名（routes_sdcpp.cpp），
+  // "default" 是 GUI 自己的"未设置"哨兵。
+  const UPSTREAM_SCHEDULERS = [
+    "discrete",
+    "karras",
+    "exponential",
+    "ays",
+    "gits",
+    "sgm_uniform",
+    "simple",
+    "smoothstep",
+    "kl_optimal",
+    "lcm",
+    "bong_tangent",
+    "ltx2",
+    "logit_normal",
+    "flux2",
+    "flux",
+    "beta",
+  ];
+
+  it("names every upstream sampler and nothing else", () => {
+    expect(Object.keys(SAMPLER_NAMES).sort()).toEqual(
+      ["default", ...UPSTREAM_SAMPLERS].sort()
+    );
+  });
+
+  it("names every upstream scheduler plus the normal alias", () => {
+    expect(Object.keys(SCHEDULER_NAMES).sort()).toEqual(
+      ["default", "normal", ...UPSTREAM_SCHEDULERS].sort()
+    );
+  });
+});
 
 // 对齐步长依模型版本而定（src/stable-diffusion.cpp video_frames_to_latent_frames）。
 // api.md 笼统写作 "4n+1"，但 LTX-AV 实为 8，AnimateDiff 根本不对齐。
@@ -194,6 +257,113 @@ describe("launch configuration", () => {
     });
     expect(missing.missing).toContain("VAE 格式（--vae-format）");
     expect(missing.args["vae-format"]).toBeUndefined();
+  });
+
+  // 上游对除 FakeVAE 家族外的所有版本都会构建 TAE（stable-diffusion.cpp
+  // create_tae），MiniMax-H3 自 #1874（taeh3）起也支持。
+  it("offers an optional TAE component for every non-FakeVAE family", () => {
+    const fakeVae = ["chroma-radiance", "hidream", "minit2i"];
+    for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
+      const tae = config.fields.filter((field) => field.arg === "taesd");
+      if (fakeVae.includes(family)) {
+        expect(tae, `${family} 走 FakeVAE，不应暴露 TAE`).toHaveLength(0);
+        continue;
+      }
+      expect(tae, `${family} 缺少 TAE 组件`).toHaveLength(1);
+      expect(tae[0].required, `${family} 的 TAE 必须是可选项`).toBe(false);
+      expect(tae[0].cat).toBe("taesd");
+      expect(tae[0].description, `${family} 的 TAE 缺少权重说明`).toBeTruthy();
+    }
+  });
+
+  // TAE 权重说明按家族分组硬编码，家族名写错会静默退回通用文案——这里钉住。
+  it("keeps the TAE weight hints distinct per latent space", () => {
+    const hints = new Map<string, string>();
+    for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
+      const tae = config.fields.find((field) => field.arg === "taesd");
+      if (tae?.description) hints.set(family, tae.description);
+    }
+    expect(hints.get("sd")).toMatch(/taesd（SD 1\.x/);
+    expect(hints.get("sdxl")).toMatch(/taesdxl/);
+    expect(hints.get("sd3")).toMatch(/taesd3/);
+    expect(hints.get("flux")).toMatch(/taef1/);
+    expect(hints.get("kontext")).toMatch(/taef1/);
+    expect(hints.get("flux2")).toMatch(/Flux\.2/);
+    expect(hints.get("wan-t2v")).toMatch(/taew2_1/);
+    expect(hints.get("qwen-image")).toMatch(/taew2_1/);
+    // Wan2.2-TI2V-5B 用的是 taew2_2，与其余 Wan 不同（上游 docs/taesd.md）。
+    expect(hints.get("wan-ti2v")).toMatch(/taew2_2/);
+    expect(hints.get("hunyuan-video")).toMatch(/HunyuanVideo/);
+    expect(hints.get("ltx")).toMatch(/LTX-AV/);
+    expect(hints.get("minimax-h3-fl2va")).toMatch(/taeh3/);
+    expect(hints.get("minimax-h3-ref2va")).toMatch(/taeh3/);
+    // PiD 的 latent 随 --vae-format 变，不能给单一权重名。
+    expect(hints.get("pid")).toMatch(/--vae-format/);
+    // 未分组的家族拿到通用文案，而不是某个具体权重名。
+    expect(hints.get("custom")).toMatch(/按主模型 latent 空间/);
+  });
+
+  // 上游 docs/ip_adapter.md：IP-Adapter 只支持 SD 1.5 / SDXL，且需要
+  // --clip_vision（ViT-H/14）+ --ip-adapter 两个权重同时给出。
+  it("passes IP-Adapter and its CLIP-Vision encoder for SD / SDXL", () => {
+    for (const family of ["sd", "sdxl"]) {
+      const result = buildLaunchConfig({
+        family,
+        modelPath: "/models/base.safetensors",
+        components: {
+          clip_vision: "/models/clip_vision_h.safetensors",
+          "ip-adapter": "/models/ip-adapter-plus_sd15.safetensors",
+        },
+        runtime,
+      });
+
+      expect(result.missing).toEqual([]);
+      expect(result.args).toEqual(
+        expect.objectContaining({
+          clip_vision: "/models/clip_vision_h.safetensors",
+          "ip-adapter": "/models/ip-adapter-plus_sd15.safetensors",
+        })
+      );
+    }
+  });
+
+  it("exposes IP-Adapter only where upstream supports it", () => {
+    for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
+      const hasIpAdapter = config.fields.some((f) => f.arg === "ip-adapter");
+      // custom 家族按设计只做手动配置，其余非 SD/SDXL 家族不应出现该组件。
+      expect(hasIpAdapter, `${family}`).toBe(family === "sd" || family === "sdxl");
+    }
+  });
+
+  it("passes the selected TAE weights as --taesd", () => {
+    const result = buildLaunchConfig({
+      family: "wan-ti2v",
+      modelPath: "/models/wan2.2_ti2v_5B.safetensors",
+      components: {
+        vae: "/models/wan2.2_vae.safetensors",
+        t5xxl: "/models/umt5_xxl.safetensors",
+        taesd: "/models/taew2_2.safetensors",
+      },
+      runtime,
+    });
+
+    expect(result.missing).toEqual([]);
+    expect(result.args.taesd).toBe("/models/taew2_2.safetensors");
+  });
+
+  it("keeps startup GO/NO-GO green without a TAE file", () => {
+    const result = buildLaunchConfig({
+      family: "minimax-h3-fl2va",
+      modelPath: "/models/minimax_h3_fl2va-Q4_K_M.gguf",
+      components: {
+        vae: "/models/minimax_h3_video_vae_fp16.safetensors",
+        llm: "/models/qwen3vl_32b.gguf",
+      },
+      runtime,
+    });
+
+    expect(result.missing).toEqual([]);
+    expect(result.args.taesd).toBeUndefined();
   });
 
   it("builds HunyuanVideo's split components and video mode", () => {

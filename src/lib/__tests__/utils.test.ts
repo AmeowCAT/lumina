@@ -459,6 +459,130 @@ describe("buildRequestBody", () => {
     ).toBe("beta=0.4");
   });
 
+  // 上游 #1885：lms 采样器的 max_order / shift / divisions 可配。
+  it("sends lms args via extra_sample_args when lms is selected", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        sample_method: "lms",
+        lms_max_order: 3,
+        lms_shift: 0,
+        lms_divisions: 2000,
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "lms_max_order=3,lms_shift=0,lms_divisions=2000"
+    );
+  });
+
+  it("does not send lms args for other samplers", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        sample_method: "euler",
+        lms_max_order: 3,
+        lms_shift: 2,
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(
+      (body.sample_params as Record<string, unknown>).extra_sample_args
+    ).toBeUndefined();
+  });
+
+  // 上游 parse_strict_int 会整条忽略小数；越界值按上游 max(1,·)/max(0,·) 语义丢弃。
+  it("truncates lms args to integers and drops out-of-range ones", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        sample_method: "lms",
+        lms_max_order: 4.7,
+        lms_shift: -1,
+        lms_divisions: 0,
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "lms_max_order=4"
+    );
+  });
+
+  it("appends free-form extra_sample_args after the structured ones", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        sample_method: "lms",
+        scheduler: "beta",
+        beta_alpha: 0.8,
+        lms_max_order: 2,
+        // 上游 parse_key_value_args 后写覆盖先写，自由文本因此可以覆盖滑杆值。
+        extra_sample_args: " gamma=3 ; lms_max_order=6 , broken , empty= ",
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "alpha=0.8,lms_max_order=2,gamma=3,lms_max_order=6"
+    );
+  });
+
+  it("sends free-form extra args even when no structured arg applies", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        sample_method: "euler_ge",
+        scheduler: "karras",
+        extra_sample_args: "gamma=2.5",
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "gamma=2.5"
+    );
+  });
+
+  it("omits extra_sample_args when the free-form text has no valid pair", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: {
+        ...baseParams.sample_params,
+        extra_sample_args: "  , broken ; =3 ",
+      },
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(
+      (body.sample_params as Record<string, unknown>).extra_sample_args
+    ).toBeUndefined();
+  });
+
+  it("carries lms + free-form args on the high-noise stage independently", () => {
+    const p: GenParams = {
+      ...baseParams,
+      sample_params: { ...baseParams.sample_params, sample_method: "euler" },
+      high_noise_sample_params: {
+        sample_method: "lms",
+        sample_steps: 8,
+        lms_shift: 1,
+        shifted_timestep: 250,
+        extra_sample_args: "gamma=4",
+        guidance: { txt_cfg: 3.5 },
+      },
+    };
+    const body = buildRequestBody("vid_gen", p, {} as GenImages);
+    const hn = body.high_noise_sample_params as Record<string, unknown>;
+    expect(hn.extra_sample_args).toBe("lms_shift=1,gamma=4");
+    // 上游 parse_sample_params_json 对高噪段同样解析 shifted_timestep。
+    expect(hn.shifted_timestep).toBe(250);
+    expect(
+      (body.sample_params as Record<string, unknown>).extra_sample_args
+    ).toBeUndefined();
+  });
+
   // 上游 #1824 将 IP-Adapter 纳入 img_gen schema；vid_gen 不接受这两个字段。
   it("sends ip_adapter fields only for img_gen", () => {
     const images = {
@@ -697,5 +821,72 @@ describe("sdcppMetadataToGenParams", () => {
     });
     expect(p.sample_params?.beta_alpha).toBeUndefined();
     expect(p.sample_params?.beta_beta).toBeUndefined();
+  });
+
+  // 上游 #1885：lms 采样器的 lms_max_order / lms_shift / lms_divisions。
+  it("restores lms args and keeps unknown extra args verbatim", () => {
+    const p = sdcppMetadataToGenParams({
+      seed: 1,
+      sampling: {
+        steps: 20,
+        method: "lms",
+        extra_sample_args:
+          "lms_max_order=3; lms_shift=0 ,lms_divisions=2000, gamma=3,slg_uncond=true",
+      },
+    });
+    expect(p.sample_params).toMatchObject({
+      sample_method: "lms",
+      lms_max_order: 3,
+      lms_shift: 0,
+      lms_divisions: 2000,
+      // 结构化字段吃不下的键原样保留，"应用此配置" 才不会静默丢参数。
+      extra_sample_args: "gamma=3,slg_uncond=true",
+    });
+  });
+
+  it("drops lms args that upstream parse_strict_int would reject", () => {
+    const p = sdcppMetadataToGenParams({
+      seed: 1,
+      sampling: {
+        method: "lms",
+        extra_sample_args: "lms_max_order=2.5,lms_shift=-1,lms_divisions=0",
+      },
+    });
+    expect(p.sample_params?.lms_max_order).toBeUndefined();
+    expect(p.sample_params?.lms_shift).toBeUndefined();
+    expect(p.sample_params?.lms_divisions).toBeUndefined();
+    expect(p.sample_params?.extra_sample_args).toBeUndefined();
+  });
+
+  // 上游 common.cpp 只在启用时写 vae_tiling 段，键名与请求体一致。
+  it("restores the vae_tiling section", () => {
+    const p = sdcppMetadataToGenParams({
+      seed: 1,
+      vae_tiling: {
+        enabled: true,
+        temporal_tiling: true,
+        tile_size_x: 256,
+        tile_size_y: 192,
+        target_overlap: 0.25,
+        rel_size_x: 0.5,
+        rel_size_y: 0.5,
+        extra_tiling_args: "foo=1",
+      },
+    });
+    expect(p.vae_tiling_params).toEqual({
+      enabled: true,
+      temporal_tiling: true,
+      tile_size_x: 256,
+      tile_size_y: 192,
+      target_overlap: 0.25,
+      rel_size_x: 0.5,
+      rel_size_y: 0.5,
+      extra_tiling_args: "foo=1",
+    });
+  });
+
+  it("leaves vae_tiling_params unset when the metadata omits the section", () => {
+    const p = sdcppMetadataToGenParams({ seed: 1 });
+    expect(p.vae_tiling_params).toBeUndefined();
   });
 });

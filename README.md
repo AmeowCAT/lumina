@@ -3,7 +3,7 @@
   <h1>流光 Lumina</h1>
   <p><strong>stable-diffusion.cpp 的桌面工作台</strong>——暗房金色的本地生成工作室</p>
   <p>
-    <img src="https://img.shields.io/badge/版本-0.7.5-d9a441" alt="版本" />
+    <img src="https://img.shields.io/badge/版本-0.7.18-d9a441" alt="版本" />
     <img src="https://img.shields.io/badge/Tauri-2-b56a35" alt="Tauri 2" />
     <img src="https://img.shields.io/badge/平台-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-14110d" alt="平台" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-14110d" alt="MIT" /></a>
@@ -14,11 +14,16 @@
 
 [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) 的**第三方**桌面 GUI，独立于主仓库开发与发布。管理 `sd-server` 的生命周期，并提供完整的图片 / 视频生成界面，可替代其自带 webui。**控制台**负责配置、扫描与启动；服务器就绪后进入**画布优先的生成工作室**。界面文案为简体中文。
 
+> 当前对齐上游 `master` @ `97d2990`（2026-08-19）：已跟进 lms 采样器的可配参数（#1885）、MiniMax-H3 的 TAE 支持（taeh3，#1874）、采样器/调度器名表（#1887）与 IP-Adapter Plus（#1839）。
+
 ## 亮点
 
 - **GO/NO-GO 启动检查单**：路径 / 主模型 / 组件三项就绪实时可见，齐备后启动按钮点亮；切换模型就地列出受影响任务与结果供确认
 - **画布优先工作室**：提示栏参数 chip（尺寸 / 步数 / CFG）点击即在原位弹出滑杆；`Ctrl + ,` 召唤完整参数面板
 - **45+ 模型家族自动识别**：ComfyUI 目录结构、分片索引隐藏、组件清单与推荐参数，识别结果可手动覆盖
+- **TAE 快速解码**：除 FakeVAE 家族外的所有家族都可选配 TAE（taesd / taef1 / taef2 / taehv·taew2_x / taeh3），显存吃紧时替代完整 VAE
+- **采样参数直达上游**：`lms` 的阶数 / 历史偏移 / 积分分段、`beta` 调度器的 α·β 有专属控件，其余 `extra_sample_args` 键由自由文本兜底
+- **IP-Adapter 图像提示**：SD 1.5 / SDXL 可在控制台加载 IP-Adapter（含 Plus 变体）与配套 ViT-H CLIP-Vision，生成时直接给参考图
 - **结果即显影**：辉光结果网格、两段式删除确认、一键保存到输出目录与失败重试
 - **零原生弹窗**：所有确认就地完成；探测并接管同端口的外部 `sd-server`
 - **启动端口可配**：控制台内改端口（1024–65535，默认 1234），避免与已占用的服务冲突

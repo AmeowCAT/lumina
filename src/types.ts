@@ -132,6 +132,19 @@ export interface SampleParams {
   beta_alpha?: number;
   /** 仅 scheduler === "beta" 时生效，对应上游 extra_sample_args 的 beta（默认 0.6）。 */
   beta_beta?: number;
+  /** 仅 sample_method === "lms" 时生效，extra_sample_args 的 lms_max_order
+   *  （上游 #1885，默认 4，整数 ≥1；引擎再夹到步数，>12 可能出 NaN）。 */
+  lms_max_order?: number;
+  /** 仅 sample_method === "lms" 时生效，extra_sample_args 的 lms_shift
+   *  （上游 #1885，默认 1，整数 ≥0；0 = 原始 k-diffusion 历史顺序）。 */
+  lms_shift?: number;
+  /** 仅 sample_method === "lms" 时生效，extra_sample_args 的 lms_divisions
+   *  （黎曼积分分段数，默认 1000，整数 ≥1）。 */
+  lms_divisions?: number;
+  /** 用户自填的 extra_sample_args（结构化字段之外的 `key=value` 项）。
+   *  发请求时拼在结构化项**之后**——上游 parse_key_value_args 后写覆盖先写，
+   *  所以这里可以覆盖界面滑杆产生的同名键。 */
+  extra_sample_args?: string;
   eta?: number;
   flow_shift?: number;
   shifted_timestep?: number;
@@ -147,8 +160,18 @@ export interface HighNoiseSampleParams {
   beta_alpha?: number;
   /** 仅调度器为 beta 时生效，对应上游 extra_sample_args 的 beta（默认 0.6）。 */
   beta_beta?: number;
+  /** 仅采样器为 lms 时生效，extra_sample_args 的 lms_max_order（默认 4）。 */
+  lms_max_order?: number;
+  /** 仅采样器为 lms 时生效，extra_sample_args 的 lms_shift（默认 1）。 */
+  lms_shift?: number;
+  /** 仅采样器为 lms 时生效，extra_sample_args 的 lms_divisions（默认 1000）。 */
+  lms_divisions?: number;
+  /** 高噪段用户自填的 extra_sample_args，语义同 SampleParams.extra_sample_args。 */
+  extra_sample_args?: string;
   eta?: number;
   flow_shift?: number;
+  /** 上游 parse_sample_params_json 对高噪段同样解析 shifted_timestep。 */
+  shifted_timestep?: number;
   guidance: Guidance;
 }
 

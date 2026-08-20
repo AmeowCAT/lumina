@@ -1,9 +1,11 @@
 import { memo } from "react";
 import type { HighNoiseSampleParams } from "../../../types";
 import { SAMPLER_NAMES, SCHEDULER_NAMES } from "../../../config/families";
+import { LMS_DEFAULTS } from "../../../lib/utils";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
+import { NumberInput } from "../../ui/NumberInput";
 
 interface Props {
   samplers: string[];
@@ -83,6 +85,41 @@ export const HighNoisePanel = memo(function HighNoisePanel({
           options={schedulerOptions}
         />
       </div>
+      {sampler === "lms" && (
+        <>
+          <Slider
+            label="LMS 阶数 (高噪)"
+            value={hsp?.lms_max_order ?? LMS_DEFAULTS.maxOrder}
+            onChange={(v) => onUpdate("high_noise_sample_params.lms_max_order", v)}
+            min={1}
+            max={12}
+            step={1}
+            hint="线性多步的历史点数，上游默认 4"
+          />
+          <Slider
+            label="LMS 历史偏移 (高噪)"
+            value={hsp?.lms_shift ?? LMS_DEFAULTS.shift}
+            onChange={(v) => onUpdate("high_noise_sample_params.lms_shift", v)}
+            min={0}
+            max={4}
+            step={1}
+            hint="上游默认 1；0 为原始 k-diffusion 历史顺序"
+          />
+          <div className="form-row">
+            <label className="form-label" htmlFor="high-noise-lms-divisions">
+              LMS 积分分段 (高噪)
+            </label>
+            <NumberInput
+              id="high-noise-lms-divisions"
+              value={hsp?.lms_divisions ?? LMS_DEFAULTS.divisions}
+              onChange={(v) => onUpdate("high_noise_sample_params.lms_divisions", v)}
+              min={1}
+              max={30000000}
+              step={100}
+            />
+          </div>
+        </>
+      )}
       {scheduler === "beta" && (
         <>
           <Slider
@@ -157,6 +194,24 @@ export const HighNoisePanel = memo(function HighNoisePanel({
         step={0.05}
         hint="低噪段/高噪段分界比例"
       />
+      <div className="form-row mt-2">
+        <label className="form-label" htmlFor="high-noise-extra-sample-args">
+          额外采样参数 (高噪)
+        </label>
+        <input
+          id="high-noise-extra-sample-args"
+          className="input"
+          type="text"
+          value={hsp?.extra_sample_args ?? ""}
+          onChange={(e) =>
+            onUpdate("high_noise_sample_params.extra_sample_args", e.target.value)
+          }
+          placeholder="例如 gamma=3,apg_eta=0.8"
+        />
+        <div className="field-hint field-hint-flush mt-0.5">
+          仅作用于高噪段（上游 high_noise_sample_params.extra_sample_args）
+        </div>
+      </div>
     </Panel>
   );
 });

@@ -197,39 +197,124 @@ export function getImageSize(
   });
 }
 
-/** 上游 #1834：beta 调度器经 sample_params.extra_sample_args 自定义 alpha/beta。
- * common.cpp parse_sample_params_json 读取该字符串（api.md 未列但解析器支持），
- * denoiser.hpp 要求值 > 0，非法值忽略并回落默认 0.6。 */
-function buildBetaSchedulerArgs(p?: {
+/** 上游 sample_params.extra_sample_args 是 `key=value` 列表，逗号或分号分隔
+ * （src/core/util.cpp parse_key_value_args，键值两侧空白被 trim，缺 `=` 的段
+ * 只告警并忽略）。common.cpp parse_sample_params_json 读取该字符串
+ * （api.md 未列但解析器支持），各采样器 / 调度器只取用自己认识的键：
+ *  - beta 调度器：alpha / beta（denoiser.hpp BetaScheduler，要求 > 0，默认 0.6）
+ *  - lms 采样器：lms_max_order / lms_shift / lms_divisions（上游 #1885，
+ *    parse_strict_int，非整数整条忽略；默认 4 / 1 / 1000）
+ * 其余键（flux base_shift、lcm noise_*、euler_ge gamma、apg_*、slg_uncond、
+ * guidance_schedule、logit_normal、ltx2、sefi_* 等）没有专门的界面控件，
+ * 由「额外采样参数」自由文本兜底。
+ */
+export const LMS_DEFAULTS = { maxOrder: 4, shift: 1, divisions: 1000 } as const;
+/** 结构化字段已覆盖的键：解析元数据时归位到具体字段，不再留在自由文本里。 */
+const STRUCTURED_EXTRA_KEYS = new Set([
+  "alpha",
+  "beta",
+  "lms_max_order",
+  "lms_shift",
+  "lms_divisions",
+]);
+
+interface ExtraArgsSource {
   scheduler?: string;
+  sample_method?: string;
   beta_alpha?: number;
   beta_beta?: number;
-}): string | undefined {
-  if (!p || p.scheduler !== "beta") return undefined;
+  lms_max_order?: number;
+  lms_shift?: number;
+  lms_divisions?: number;
+  extra_sample_args?: string;
+}
+
+/** 只保留形如 `key=value` 的段（上游对缺 `=` 的段只告警并丢弃），顺序不变。 */
+function sanitizeExtraSampleArgs(raw?: string): string {
+  if (!raw) return "";
+  return raw
+    .split(/[,;]/)
+    .map((part) => part.trim())
+    .filter((part) => {
+      const eq = part.indexOf("=");
+      return eq > 0 && part.slice(eq + 1).trim().length > 0;
+    })
+    .join(",");
+}
+
+/** 拼装 extra_sample_args：结构化项在前，用户自由文本在后（后写覆盖先写）。 */
+function buildExtraSampleArgs(p?: ExtraArgsSource): string | undefined {
+  if (!p) return undefined;
   const parts: string[] = [];
   // 滑动条可能产生浮点尾数（如 0.6000000000000001），发请求前收窄到 4 位小数。
   const fmt = (v: number) => String(Math.round(v * 10000) / 10000);
-  if (p.beta_alpha != null && p.beta_alpha > 0) parts.push(`alpha=${fmt(p.beta_alpha)}`);
-  if (p.beta_beta != null && p.beta_beta > 0) parts.push(`beta=${fmt(p.beta_beta)}`);
+  if (p.scheduler === "beta") {
+    if (p.beta_alpha != null && p.beta_alpha > 0) parts.push(`alpha=${fmt(p.beta_alpha)}`);
+    if (p.beta_beta != null && p.beta_beta > 0) parts.push(`beta=${fmt(p.beta_beta)}`);
+  }
+  if (p.sample_method === "lms") {
+    // 上游 parse_strict_int：小数 / 带单位的值会被整条忽略，这里先截成整数。
+    const int = (v: number | undefined, min: number) => {
+      if (v == null || !Number.isFinite(v)) return undefined;
+      const i = Math.trunc(v);
+      return i < min ? undefined : i;
+    };
+    const maxOrder = int(p.lms_max_order, 1);
+    const shift = int(p.lms_shift, 0);
+    const divisions = int(p.lms_divisions, 1);
+    if (maxOrder != null) parts.push(`lms_max_order=${maxOrder}`);
+    if (shift != null) parts.push(`lms_shift=${shift}`);
+    if (divisions != null) parts.push(`lms_divisions=${divisions}`);
+  }
+  const free = sanitizeExtraSampleArgs(p.extra_sample_args);
+  if (free) parts.push(free);
   return parts.length ? parts.join(",") : undefined;
 }
 
-/** 解析 beta 调度器的 extra_sample_args（"alpha=0.8,beta=0.5"）回结构化字段。 */
-function parseBetaSchedulerArgs(extra?: unknown): {
+/** 解析 extra_sample_args（"alpha=0.8,lms_shift=0,gamma=3"）回结构化字段，
+ *  未被结构化字段吃掉的键原样留在 extra_sample_args 里，保证往返不丢参数。 */
+function parseExtraSampleArgs(extra?: unknown): {
   beta_alpha?: number;
   beta_beta?: number;
+  lms_max_order?: number;
+  lms_shift?: number;
+  lms_divisions?: number;
+  extra_sample_args?: string;
 } {
   if (typeof extra !== "string") return {};
-  const out: { beta_alpha?: number; beta_beta?: number } = {};
-  for (const part of extra.split(",")) {
+  const out: {
+    beta_alpha?: number;
+    beta_beta?: number;
+    lms_max_order?: number;
+    lms_shift?: number;
+    lms_divisions?: number;
+    extra_sample_args?: string;
+  } = {};
+  const rest: string[] = [];
+  // 上游同时接受 `,` 与 `;` 作为分隔符。
+  for (const part of extra.split(/[,;]/)) {
     const eq = part.indexOf("=");
     if (eq <= 0) continue;
     const key = part.slice(0, eq).trim();
-    const value = Number(part.slice(eq + 1).trim());
-    if (!Number.isFinite(value) || value <= 0) continue;
-    if (key === "alpha") out.beta_alpha = value;
-    else if (key === "beta") out.beta_beta = value;
+    const rawValue = part.slice(eq + 1).trim();
+    const value = Number(rawValue);
+    if (!STRUCTURED_EXTRA_KEYS.has(key)) {
+      if (key && rawValue) rest.push(`${key}=${rawValue}`);
+      continue;
+    }
+    if (!Number.isFinite(value)) continue;
+    // 上游 BetaScheduler 只接受 > 0；lms_* 走 parse_strict_int（lms_shift 允许 0）。
+    if (key === "alpha") {
+      if (value > 0) out.beta_alpha = value;
+    } else if (key === "beta") {
+      if (value > 0) out.beta_beta = value;
+    } else if (Number.isInteger(value)) {
+      if (key === "lms_max_order" && value >= 1) out.lms_max_order = value;
+      else if (key === "lms_shift" && value >= 0) out.lms_shift = value;
+      else if (key === "lms_divisions" && value >= 1) out.lms_divisions = value;
+    }
   }
+  if (rest.length) out.extra_sample_args = rest.join(",");
   return out;
 }
 
@@ -268,7 +353,7 @@ function mapSamplingMetadata(s: unknown): SampleParams | undefined {
     sample_method: metaStr(s.method),
     scheduler: metaStr(s.scheduler),
     custom_sigmas: metaNumArr(s.custom_sigmas),
-    ...parseBetaSchedulerArgs(s.extra_sample_args),
+    ...parseExtraSampleArgs(s.extra_sample_args),
     guidance: {
       txt_cfg: metaNum(g.txt_cfg),
       img_cfg: metaNum(g.img_cfg),
@@ -298,6 +383,7 @@ export function sdcppMetadataToGenParams(
   const video = isMetaObj(meta.video) ? meta.video : {};
   const hires = isMetaObj(meta.hires) ? meta.hires : undefined;
   const cache = isMetaObj(meta.cache) ? meta.cache : undefined;
+  const vaeTiling = isMetaObj(meta.vae_tiling) ? meta.vae_tiling : undefined;
 
   const out: Partial<GenParams> = {
     prompt: metaStr(prompt.positive),
@@ -337,6 +423,20 @@ export function sdcppMetadataToGenParams(
     out.cache_option = metaStr(cache.requested_option);
     out.scm_mask = metaStr(cache.scm_mask);
     out.scm_policy_dynamic = metaBool(cache.scm_policy_dynamic);
+  }
+  // 上游只在启用（或写了 extra_tiling_args）时才写 vae_tiling 段
+  // （common.cpp build_sdcpp_image_metadata_json），键名与请求体一致。
+  if (vaeTiling) {
+    out.vae_tiling_params = {
+      enabled: metaBool(vaeTiling.enabled) ?? true,
+      temporal_tiling: metaBool(vaeTiling.temporal_tiling),
+      tile_size_x: metaNum(vaeTiling.tile_size_x),
+      tile_size_y: metaNum(vaeTiling.tile_size_y),
+      target_overlap: metaNum(vaeTiling.target_overlap),
+      rel_size_x: metaNum(vaeTiling.rel_size_x),
+      rel_size_y: metaNum(vaeTiling.rel_size_y),
+      extra_tiling_args: metaStr(vaeTiling.extra_tiling_args),
+    };
   }
   if (Array.isArray(meta.loras) && availableLoras?.length) {
     const loras: LoraEntry[] = [];
@@ -385,8 +485,8 @@ export function buildRequestBody(
     (sampleParams.guidance as Record<string, unknown>).distilled_guidance =
       distilled;
   }
-  const betaArgs = buildBetaSchedulerArgs(sp);
-  if (betaArgs) sampleParams.extra_sample_args = betaArgs;
+  const extraArgs = buildExtraSampleArgs(sp);
+  if (extraArgs) sampleParams.extra_sample_args = extraArgs;
   const b: Record<string, unknown> = {
     prompt: params.prompt || "",
     negative_prompt: params.negative_prompt || "",
@@ -514,6 +614,9 @@ export function buildRequestBody(
     };
     if (h.eta != null) hn.eta = h.eta;
     if (h.flow_shift != null) hn.flow_shift = h.flow_shift;
+    // 上游 parse_sample_params_json 对高噪段同样解析 shifted_timestep
+    // （capabilities 的 high_noise_sample_params 默认值里也带这个键）。
+    if (h.shifted_timestep != null) hn.shifted_timestep = h.shifted_timestep;
     if (h.guidance?.img_cfg != null)
       (hn.guidance as Record<string, unknown>).img_cfg = h.guidance.img_cfg;
     if ((h.guidance?.slg?.scale ?? 0) > 0)
@@ -524,8 +627,8 @@ export function buildRequestBody(
       // 默认，外部 server 默认开启 SLG 时高噪声阶段无法真正关闭（审查 L3
       // 的对称缺口）。
       (hn.guidance as Record<string, unknown>).slg = { scale: 0 };
-    const hnBetaArgs = buildBetaSchedulerArgs(h);
-    if (hnBetaArgs) hn.extra_sample_args = hnBetaArgs;
+    const hnExtraArgs = buildExtraSampleArgs(h);
+    if (hnExtraArgs) hn.extra_sample_args = hnExtraArgs;
     b.high_noise_sample_params = hn;
   }
 

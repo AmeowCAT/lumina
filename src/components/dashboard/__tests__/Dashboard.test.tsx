@@ -307,6 +307,44 @@ describe("Dashboard onboarding validation", () => {
     );
   });
 
+  // 上游 #1874（taeh3）起 MiniMax-H3 也能用 TAE；GUI 对所有非 FakeVAE 家族
+  // 都暴露可选的 TAE 组件，并把选中的权重作为 --taesd 传给 sd-server。
+  it("passes the optional TAE weights to sd-server with its weight hint shown", async () => {
+    const scan = scanFor("sd");
+    scan.files.push({
+      name: "taesd.safetensors",
+      stem: "taesd",
+      path: "/models/taesd.safetensors",
+      relPath: "taesd.safetensors",
+      sizeMb: 5,
+      dir: "/models",
+      ext: "safetensors",
+      category: "taesd",
+    });
+    scan.count = 2;
+    mocks.scanModels.mockResolvedValue(scan);
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+    await pickOption("TAE 快速解码 (可选)", "taesd.safetensors (5 MB)");
+
+    // 组件说明（该家族该用哪种 TAE 权重）必须可见，否则用户只能靠猜。
+    expect(screen.getByText(/taesd（SD 1\.x/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "SD 1.x / 2.x",
+        null,
+        expect.objectContaining({ taesd: "/models/taesd.safetensors" }),
+        1234
+      )
+    );
+  });
+
   it("launches sd-server on the port configured in the dashboard", async () => {
     mocks.scanModels.mockResolvedValue(scanFor("sd"));
     mocks.startServer.mockResolvedValue({ pid: 123, sdPort: 8188 });

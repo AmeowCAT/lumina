@@ -1,8 +1,10 @@
 import { memo } from "react";
 import { SAMPLER_NAMES, SCHEDULER_NAMES } from "../../../config/families";
+import { LMS_DEFAULTS } from "../../../lib/utils";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
+import { NumberInput } from "../../ui/NumberInput";
 import { IC } from "../../ui/Icons";
 
 interface Props {
@@ -16,6 +18,9 @@ interface Props {
   showDistilled: boolean;
   betaAlpha: number | undefined;
   betaBeta: number | undefined;
+  lmsMaxOrder: number | undefined;
+  lmsShift: number | undefined;
+  lmsDivisions: number | undefined;
   onUpdate: (path: string, v: unknown) => void;
   onReset: () => void;
   /** 参数 chip 深链:召唤 Sheet 时强制展开本面板 */
@@ -33,6 +38,9 @@ export const SamplingPanel = memo(function SamplingPanel({
   showDistilled,
   betaAlpha,
   betaBeta,
+  lmsMaxOrder,
+  lmsShift,
+  lmsDivisions,
   onUpdate,
   onReset,
   forceOpen,
@@ -88,6 +96,44 @@ export const SamplingPanel = memo(function SamplingPanel({
           options={schedulerOptions}
         />
       </div>
+      {sampleMethod === "lms" && (
+        <>
+          <Slider
+            label="LMS 阶数"
+            value={lmsMaxOrder ?? LMS_DEFAULTS.maxOrder}
+            onChange={(v) => onUpdate("sample_params.lms_max_order", v)}
+            min={1}
+            max={12}
+            step={1}
+            hint="线性多步的历史点数，上游默认 4；1 等同 Euler，越高越锐利但需要更多步数（>12 可能出 NaN）"
+          />
+          <Slider
+            label="LMS 历史偏移"
+            value={lmsShift ?? LMS_DEFAULTS.shift}
+            onChange={(v) => onUpdate("sample_params.lms_shift", v)}
+            min={0}
+            max={4}
+            step={1}
+            hint="上游默认 1（少步数更稳）；0 为原始 k-diffusion 历史顺序"
+          />
+          <div className="form-row">
+            <label className="form-label" htmlFor="lms-divisions">
+              LMS 积分分段
+              <span className="form-sublabel">
+                系数积分的分段数，上游默认 1000；越大越精确也越慢
+              </span>
+            </label>
+            <NumberInput
+              id="lms-divisions"
+              value={lmsDivisions ?? LMS_DEFAULTS.divisions}
+              onChange={(v) => onUpdate("sample_params.lms_divisions", v)}
+              min={1}
+              max={30000000}
+              step={100}
+            />
+          </div>
+        </>
+      )}
       {scheduler === "beta" && (
         <>
           <Slider

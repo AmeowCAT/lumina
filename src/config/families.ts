@@ -440,7 +440,22 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("control-net", "ControlNet (可选)", "control-net", "control_net"),
 			F("photo-maker", "PhotoMaker (可选)", "photo-maker", "photo_maker"),
 			F("pulid-weights", "PuLID (可选)", "pulid-weights", "pulid"),
-			F("taesd", "TAESD (可选)", "taesd", "taesd"),
+			F(
+				"clip_vision",
+				"CLIP-Vision (可选)",
+				"clip_vision",
+				"clip_vision",
+				false,
+				"IP-Adapter 需要的 ViT-H/14 图像编码器（如 clip_vision_h），与下方 IP-Adapter 成对使用",
+			),
+			F(
+				"ip-adapter",
+				"IP-Adapter (可选)",
+				"ip-adapter",
+				"ip_adapter",
+				false,
+				"图像提示权重，如 ip-adapter_sdxl_vit-h；Plus 变体由上游按权重自动识别（#1839）",
+			),
 		],
 		fixedArgs: {},
 		genDefaults: {
@@ -468,7 +483,22 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			),
 			F("photo-maker", "PhotoMaker (可选)", "photo-maker", "photo_maker"),
 			F("pulid-weights", "PuLID (可选)", "pulid-weights", "pulid"),
-			F("taesd", "TAESD (可选)", "taesd", "taesd"),
+			F(
+				"clip_vision",
+				"CLIP-Vision (可选)",
+				"clip_vision",
+				"clip_vision",
+				false,
+				"IP-Adapter 需要的 ViT-H/14 图像编码器（如 clip_vision_h），与下方 IP-Adapter 成对使用",
+			),
+			F(
+				"ip-adapter",
+				"IP-Adapter (可选)",
+				"ip-adapter",
+				"ip_adapter",
+				false,
+				"图像提示权重，如 ip-adapter_sd15；Plus 变体由上游按权重自动识别（#1839）",
+			),
 		],
 		fixedArgs: {},
 		genDefaults: {
@@ -1444,6 +1474,90 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 		fixedArgs: {},
 	},
 };
+
+/**
+ * TAE（Tiny AutoEncoder）快速解码 —— 上游对**除 FakeVAE 家族外**的所有版本都会
+ * 构建 TAE（src/stable-diffusion.cpp `create_tae`、src/model/vae/tae.hpp）：
+ *   · SD 1.x / 2.x / XL（4ch latent）→ taesd / taesdxl
+ *   · 其余 DiT（16ch latent）→ 同 latent 空间的 TAE（taef1 / taesd3 …）
+ *   · Flux.2 VAE（32ch + patch 2）→ taef2
+ *   · Wan VAE 系（Wan / Qwen-Image / LingBot-Video / Krea2 / Anima）→ TAEHV
+ *   · HunyuanVideo（32ch）/ LTX-AV（128ch）→ 各自的视频 TAE
+ *   · MiniMax-H3（24ch）→ taeh3（上游 #1874 新增，此前引擎会拒绝 --taesd）
+ * Chroma-Radiance / HiDream-O1 / MiniT2I 走 FakeVAE（不解码 latent），
+ * FakeVAE 分支优先于 use_tae，传 --taesd 无意义，故不暴露该组件。
+ * 权重不匹配时上游只告警并回落到完整 VAE，不会启动失败。
+ */
+const FAKE_VAE_FAMILIES = ["chroma-radiance", "hidream", "minit2i"];
+
+const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
+	{ hint: "taesd（SD 1.x / 2.x latent）", families: ["sd"] },
+	{
+		hint: "taesdxl（SDXL latent；SDXS 的 TAE 内置于主模型，无需另选）",
+		families: ["sdxl", "distilled-sd"],
+	},
+	{ hint: "taesd3（16ch latent）", families: ["sd3"] },
+	{
+		hint: "taef1（Flux latent，16ch）",
+		families: ["flux", "kontext", "chroma", "ovis", "zimage", "zimage-turbo"],
+	},
+	{
+		// PiD 的 latent 布局随 --vae-format 变，TAE 也要跟着换。
+		hint: "按 --vae-format 选对应 latent 的 TAE：flux→taef1、sd3→taesd3、wan→taew2_1",
+		families: ["pid"],
+	},
+	{
+		hint: "Flux.2 的 TAE（32ch latent）",
+		families: ["flux2", "flux2-klein", "flux2-klein-base"],
+	},
+	{
+		hint: "TAEHV：taew2_1（Wan2.1 / Wan2.2-A14B / Qwen-Image，见上游 docs/taesd.md）",
+		families: [
+			"wan-t2v",
+			"wan-i2v",
+			"wan-a14b",
+			"lingbot-video",
+			"krea2",
+			"krea2-turbo",
+			"anima",
+			"qwen-image",
+			"qwen-image-layered",
+			"qwen-image-edit",
+		],
+	},
+	{
+		hint: "TAEHV：taew2_2（Wan2.2-TI2V-5B 专用，见上游 docs/taesd.md）",
+		families: ["wan-ti2v"],
+	},
+	{ hint: "HunyuanVideo 的视频 TAE（32ch latent）", families: ["hunyuan-video"] },
+	{ hint: "LTX-AV 的视频 TAE（128ch latent）", families: ["ltx"] },
+	{
+		hint: "taeh3（MiniMax-H3 视频 TAE，24ch latent；上游 #1874 起支持）",
+		families: ["minimax-h3-fl2va", "minimax-h3-ref2va"],
+	},
+];
+
+const DEFAULT_TAE_HINT = "按主模型 latent 空间选择对应 TAE 权重，显存不足时可替代完整 VAE";
+
+const TAE_HINT_BY_FAMILY: Record<string, string> = {};
+for (const group of TAE_WEIGHT_GROUPS) {
+	for (const family of group.families) TAE_HINT_BY_FAMILY[family] = group.hint;
+}
+
+for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
+	if (FAKE_VAE_FAMILIES.includes(family)) continue;
+	if (config.fields.some((field) => field.arg === "taesd")) continue;
+	config.fields.push(
+		F(
+			"taesd",
+			"TAE 快速解码 (可选)",
+			"taesd",
+			"taesd",
+			false,
+			TAE_HINT_BY_FAMILY[family] || DEFAULT_TAE_HINT,
+		),
+	);
+}
 
 // 家族检测唯一实现在 Rust（family.rs），前端经 api.detectFamily() 调用；
 // 此处不再保留正则副本（曾与 Rust 逻辑反复漂移）。

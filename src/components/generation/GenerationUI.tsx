@@ -1075,6 +1075,9 @@ export function GenerationUI() {
               showDistilled={showDistilled}
               betaAlpha={sp?.beta_alpha}
               betaBeta={sp?.beta_beta}
+              lmsMaxOrder={sp?.lms_max_order}
+              lmsShift={sp?.lms_shift}
+              lmsDivisions={sp?.lms_divisions}
               onUpdate={update}
               onReset={resetToDefaults}
               forceOpen={sheetTarget === "sampling"}
@@ -1086,6 +1089,7 @@ export function GenerationUI() {
               vaeTilingParams={params.vae_tiling_params}
               cacheMode={params.cache_mode}
               clipSkip={params.clip_skip}
+              extraSampleArgs={sp?.extra_sample_args}
               onUpdate={update}
             />
             {mode === "vid_gen" && family === "wan-a14b" && (

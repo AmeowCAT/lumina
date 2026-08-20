@@ -1026,6 +1026,11 @@ export function Dashboard() {
 														})),
 													]}
 												/>
+												{field.description && (
+													<div className="field-hint field-hint-flush mt-0.5">
+														{field.description}
+													</div>
+												)}
 											</div>
 										);
 									})}

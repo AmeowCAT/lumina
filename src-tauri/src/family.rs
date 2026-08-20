@@ -348,6 +348,34 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     if has_any(&test, &["embeddings_connector"]) {
         return "embeddings";
     }
+    // TAE (Tiny AutoEncoder) — must precede the generic VAE rules: every TAE
+    // family shares the "…autoencoder"/"…_vae" spellings the VAE branch below
+    // matches, and upstream takes them through `--taesd`, not `--vae`.
+    // Covers taesd/taesdxl/taesd3 (image), taef1/taef2 (Flux, Flux.2),
+    // taehv/taew2_1/taew2_2 (Wan VAE family incl. Qwen-Image) and taeh3
+    // (MiniMax-H3, upstream #1874). See upstream docs/taesd.md.
+    if has_any(
+        &test,
+        &[
+            "taesd",
+            "tae_sd",
+            "tae-sd",
+            "taef1",
+            "taef2",
+            "taehv",
+            "taew2",
+            "taeh3",
+            "taeltx",
+            "tiny_autoencoder",
+            "tiny-autoencoder",
+            "tae.safetensors",
+            "tae.sft",
+            "tae.gguf",
+        ],
+    ) && size_mb < 500.0
+    {
+        return "taesd";
+    }
     // VAE
     if has_any(&test, &["ae.safetensors", "ae.sft", "autoencoder"]) && size_mb < 2000.0 {
         return "vae";
@@ -397,6 +425,13 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     if has_any(&test, &["lora"]) && size_mb < 2000.0 {
         return "lora";
     }
+    // IP-Adapter (SD 1.5 / SDXL, incl. the Plus variants) — upstream loads it
+    // through `--ip-adapter` together with a ViT-H/14 `--clip_vision` encoder
+    // (docs/ip_adapter.md). Checked before ControlNet so an adapter sitting in
+    // a `controlnet/` folder is still classified by its own name.
+    if has_any(&test, &["ip-adapter", "ip_adapter", "ipadapter"]) && size_mb < 2000.0 {
+        return "ip_adapter";
+    }
     // ControlNet — check for "controlnet" prefix or specific mode keywords.
     if size_mb < 3000.0 {
         let mut is_ctrl = has_any(&test, &["controlnet", "control-net", "control_net"]);
@@ -422,10 +457,6 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     // PuLID
     if has_any(&test, &["pulid"]) {
         return "pulid";
-    }
-    // TAESD
-    if has_any(&test, &["taesd", "tae_sd", "tae-sd", "tiny_autoencoder"]) && size_mb < 500.0 {
-        return "taesd";
     }
     // ESRGAN upscaler
     if has_any(
@@ -550,6 +581,96 @@ mod tests {
     #[test]
     fn detects_wan_ti2v_before_i2v_substring() {
         assert_eq!(detect_family("Wan2.2-TI2V-5B.safetensors"), "wan-ti2v");
+    }
+
+    #[test]
+    fn classifies_every_tae_flavour_as_taesd() {
+        // 上游 docs/taesd.md + tae.hpp：taesd/taesdxl/taesd3（图像）、
+        // taef1/taef2（Flux、Flux.2）、taehv/taew2_x（Wan VAE 系）、
+        // taeh3（MiniMax-H3，上游 #1874）。
+        for (name, dir) in [
+            ("taesd.safetensors", "vae"),
+            ("taesdxl.safetensors", "vae"),
+            ("taesd3.safetensors", "vae"),
+            ("taef1.safetensors", "vae"),
+            ("taef2.safetensors", "vae"),
+            ("taehv.safetensors", "vae"),
+            ("taew2_1.safetensors", "vae"),
+            ("taew2_2.safetensors", "vae"),
+            ("taeh3.safetensors", "vae"),
+            ("tae.safetensors", "models"),
+        ] {
+            let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+            assert_eq!(
+                classify_file(name, stem, dir, 30.0),
+                "taesd",
+                "{name} should classify as taesd"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_ip_adapter_weights_and_their_clip_vision() {
+        // 上游 docs/ip_adapter.md：--ip-adapter 权重 + ViT-H/14 --clip_vision。
+        for name in [
+            "ip-adapter_sd15.safetensors",
+            "ip-adapter_sdxl_vit-h.safetensors",
+            "ip-adapter-plus_sd15.safetensors",
+            "ip-adapter-plus_sdxl_vit-h.safetensors",
+            "ip_adapter_sd15.safetensors",
+            "IPAdapter-SDXL.safetensors",
+        ] {
+            let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+            assert_eq!(
+                classify_file(name, stem, "controlnet", 100.0),
+                "ip_adapter",
+                "{name} should classify as ip_adapter"
+            );
+        }
+        assert_eq!(
+            classify_file(
+                "clip_vision_h.safetensors",
+                "clip_vision_h",
+                "clip_vision",
+                1200.0,
+            ),
+            "clip_vision"
+        );
+    }
+
+    #[test]
+    fn classifies_tae_before_the_generic_vae_rules() {
+        // "tiny_autoencoder" 命中 VAE 分支的 "autoencoder"，TAE 判定必须更早，
+        // 否则会被当成完整 VAE 交给 --vae。
+        assert_eq!(
+            classify_file(
+                "tiny_autoencoder_sdxl.safetensors",
+                "tiny_autoencoder_sdxl",
+                "vae",
+                10.0,
+            ),
+            "taesd"
+        );
+        assert_eq!(
+            classify_file("taesd_vae.safetensors", "taesd_vae", "vae", 5.0),
+            "taesd"
+        );
+        // 完整 VAE 不受影响。
+        assert_eq!(classify_file("ae.safetensors", "ae", "vae", 320.0), "vae");
+        assert_eq!(
+            classify_file("wan_2.1_vae.safetensors", "wan_2.1_vae", "vae", 250.0),
+            "vae"
+        );
+        // 大文件不是 TAE（TAE 权重只有几十 MB），避免误吞同名完整模型。
+        assert_eq!(
+            classify_file(
+                "taesd_like_model.safetensors",
+                "taesd_like_model",
+                "models",
+                6000.0
+            ),
+            "model"
+        );
     }
 
     #[test]
