@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { IC } from "./Icons";
 import { cn } from "./cn";
@@ -14,20 +14,27 @@ export function Panel({
   collapsed?: boolean;
   children: ReactNode;
   badge?: ReactNode;
-  /** 深链展开:参数 chip 召唤 Sheet 时强制展开目标面板(用户仍可手动折叠) */
+  /**
+   * 深链展开：参数 chip 召唤 Sheet 时把目标面板打开。
+   * 只在 forceOpen 从 false 变 true 的那一次生效（边沿触发），此后用户
+   * 可以正常点击标题收起。旧实现是电平覆盖（forceOpen 期间 c 被忽略），
+   * 点标题只有内部状态在翻、视觉纹丝不动，面板被永久钉在展开态。
+   */
   forceOpen?: boolean;
 }) {
   const [c, setC] = useState(!!collapsed);
-  const effective = forceOpen ? false : c;
+  useEffect(() => {
+    if (forceOpen) setC(false);
+  }, [forceOpen]);
   const toggle = () => setC((v) => !v);
   const bodyId = useId();
   return (
-    <div className={cn("panel", effective && "collapsed")}>
+    <div className={cn("panel", c && "collapsed")}>
       <div
         className="panel-head"
         role="button"
         tabIndex={0}
-        aria-expanded={!effective}
+        aria-expanded={!c}
         aria-controls={bodyId}
         onClick={toggle}
         onKeyDown={(e) => {
@@ -54,7 +61,7 @@ export function Panel({
       <motion.div
         id={bodyId}
         initial={false}
-        animate={{ height: effective ? 0 : "auto", opacity: effective ? 0 : 1 }}
+        animate={{ height: c ? 0 : "auto", opacity: c ? 0 : 1 }}
         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
         style={{ overflow: "hidden" }}
       >
