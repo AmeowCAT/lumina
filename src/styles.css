@@ -1045,8 +1045,11 @@
   .toast-dismiss:hover { background: rgb(255 255 255 / 0.08); color: var(--color-fg) }
 
   /* ── Lightbox ─────────────────────────────────────────── */
+  /* z-index 必须盖过自绘标题栏（.titlebar 450）：标题栏是 fixed 层,
+     Lightbox 又 Portal 到 body,两者在同一根层叠上下文比较;350 会让
+     全屏预览被标题栏压住,右上角关闭按钮与窗口按钮重合(且点不到)。 */
   .lightbox {
-    position: fixed; inset: 0; z-index: 350;
+    position: fixed; inset: 0; z-index: 500;
     background: rgb(5 5 7 / 0.92);
     display: grid; place-items: center; cursor: zoom-out;
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
@@ -1060,7 +1063,9 @@
   }
   .lightbox video { max-width: 90vw; max-height: 90vh; border-radius: var(--radius-md) }
   .lightbox-close {
-    position: absolute; top: 16px; right: 16px; width: 34px; height: 34px;
+    /* 顶部再让出标题栏高度,兜底窗口边框未隐藏(有原生框架)的场景 */
+    position: absolute; top: calc(var(--titlebar-h) + 12px); right: 16px;
+    width: 34px; height: 34px;
     border-radius: 50%; background: rgb(255 255 255 / 0.09);
     border: 1px solid rgb(255 255 255 / 0.1);
     color: #fff; font-size: 15px; cursor: pointer; display: grid; place-items: center;
