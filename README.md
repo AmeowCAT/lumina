@@ -75,7 +75,7 @@ src-tauri/target/release/lumina.exe
 
 ### 配置存在哪
 
-- 启动配置：系统配置目录下的 `lumina/settings.json`（Windows `%APPDATA%`，Linux `~/.config`，macOS `~/Library/Application Support`）。旧版 `sdcpp-gui/` 目录会自动迁移。每个模型的组件与运行参数按快照保存，下次选中同一模型自动恢复。
+- 启动配置：系统配置目录下的 `lumina/settings.json`（Windows `%APPDATA%`，Linux `~/.config`，macOS `~/Library/Application Support`）。每个模型的组件与运行参数按快照保存，下次选中同一模型自动恢复。
 - 生成参数：按模式缓存在 `localStorage`（`sdcpp:params:*`），不进 `settings.json`。
 - 端口：默认 `127.0.0.1:1234`，与上游 webui 一致，可在控制台改成 1024–65535 之间任意端口，重启服务器生效。
 
@@ -147,6 +147,10 @@ src-tauri/src/
 技术栈：Tauri 2、React 18、TypeScript、Zustand、Vite、Tailwind CSS 4、Radix UI、motion、Vitest。Rust 侧是 Tokio、reqwest、rfd。
 
 版本号以 `package.json` 为唯一来源，`npm version` 的钩子会同步到 `tauri.conf.json`、`Cargo.toml` 和 `Cargo.lock`。
+
+## 友情链接
+
+- [LINUX DO](https://linux.do/)
 
 ## 许可证
 
