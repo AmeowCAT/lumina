@@ -83,13 +83,22 @@ fn sanitize_component(value: &str) -> Option<String> {
         || ((stem.starts_with("com") || stem.starts_with("lpt"))
             && stem.len() == 4
             && stem.as_bytes()[3].is_ascii_digit());
-    Some(if reserved { format!("_{}", cleaned) } else { cleaned })
+    Some(if reserved {
+        format!("_{}", cleaned)
+    } else {
+        cleaned
+    })
 }
 
 /// 以 `create_new` 写入，同名已存在时追加 `_1`/`_2`…序号而不是截断覆盖：
 /// 用户输出目录里已有的同名文件不能被静默覆盖（对抗性审查 C）。返回实际
 /// 写入的路径。
-fn write_with_suffix(dir: &std::path::Path, name: &str, ext: &str, data: &[u8]) -> Result<std::path::PathBuf> {
+fn write_with_suffix(
+    dir: &std::path::Path,
+    name: &str,
+    ext: &str,
+    data: &[u8],
+) -> Result<std::path::PathBuf> {
     use std::io::Write;
     for i in 0..100 {
         let candidate = if i == 0 {
@@ -98,7 +107,11 @@ fn write_with_suffix(dir: &std::path::Path, name: &str, ext: &str, data: &[u8]) 
             format!("{}_{}.{}", name, i, ext)
         };
         let path = dir.join(&candidate);
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(mut file) => {
                 file.write_all(data)?;
                 return Ok(path);
@@ -136,8 +149,7 @@ pub fn save_output(b64: &str, ext: &str, name: &str, dir: &str) -> Result<String
     let data = base64::engine::general_purpose::STANDARD.decode(raw)?;
 
     let ext = sanitize_component(ext).unwrap_or_else(|| "png".into());
-    let name = sanitize_component(name)
-        .unwrap_or_else(|| format!("sdcpp_{}", chrono_like_ts()));
+    let name = sanitize_component(name).unwrap_or_else(|| format!("sdcpp_{}", chrono_like_ts()));
     let path = write_with_suffix(&dir_path, &name, &ext, &data)?;
     Ok(path.to_string_lossy().to_string())
 }
@@ -251,7 +263,10 @@ mod tests {
     #[test]
     fn sanitize_component_strips_traversal_and_separators() {
         assert_eq!(sanitize_component("..").as_deref(), None);
-        assert_eq!(sanitize_component("../../evil").as_deref(), Some("_.._evil"));
+        assert_eq!(
+            sanitize_component("../../evil").as_deref(),
+            Some("_.._evil")
+        );
         assert_eq!(
             sanitize_component(r"..\..\evil").as_deref(),
             Some("_.._evil")

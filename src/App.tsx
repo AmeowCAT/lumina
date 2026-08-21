@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "motion/react";
 import { api } from "./api";
 import { useStore, type LogEvent } from "./store";
-import { Dashboard } from "./components/dashboard/Dashboard";
 import { GenerationUI } from "./components/generation/GenerationUI";
 import { LogPanel } from "./components/ui/LogPanel";
 import { Logo } from "./components/ui/Logo";
@@ -12,6 +11,14 @@ import { ToastContainer } from "./components/ui/Toast";
 import { useJobPolling } from "./hooks/useJobPolling";
 import { useSystemIntegration } from "./hooks/useSystemIntegration";
 import { useTheme } from "./lib/theme";
+
+// 控制台（设置页）低频模块懒加载：首次进入控制台时才拉取 chunk，
+// 降低首屏解析成本。
+const Dashboard = lazy(() =>
+  import("./components/dashboard/Dashboard").then((m) => ({
+    default: m.Dashboard,
+  }))
+);
 
 type Phase = "checking" | "dashboard" | "running";
 
@@ -291,7 +298,15 @@ export default function App() {
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
         >
-          {phase === "running" ? <GenerationUI /> : <Dashboard />}
+          <Suspense
+            fallback={
+              <div className="empty-state">
+                <span className="spinner block mx-auto my-2" />
+              </div>
+            }
+          >
+            {phase === "running" ? <GenerationUI /> : <Dashboard />}
+          </Suspense>
         </motion.div>
       </AnimatePresence>
       <LogPanel />

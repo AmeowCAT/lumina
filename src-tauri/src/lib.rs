@@ -96,7 +96,7 @@ fn dir_is_within(dir: &str, root: &str) -> bool {
     match (canon(&root), canon(&dir)) {
         (Some(rc), Some(dc)) => {
             let rc_str = rc.to_string_lossy();
-            dc == rc || dc.starts_with(&format!("{}{}", rc_str, std::path::MAIN_SEPARATOR))
+            dc == rc || dc.starts_with(format!("{}{}", rc_str, std::path::MAIN_SEPARATOR))
         }
         // root 可解析而 dir 不可解析：dir 链上有坏链接，保守拒绝。
         (Some(_), None) => false,
@@ -166,10 +166,7 @@ mod tests {
         // 正常子目录仍放行。
         let sub = out.join("sub");
         std::fs::create_dir_all(&sub).unwrap();
-        assert!(dir_is_within(
-            &sub.to_string_lossy().to_string(),
-            &out_str
-        ));
+        assert!(dir_is_within(sub.to_string_lossy().as_ref(), &out_str));
         let _ = std::fs::remove_dir_all(&base);
     }
 }
@@ -317,7 +314,9 @@ async fn save_settings(
     settings.save().map_err(|e| e.to_string())?;
     *state.settings.lock().await = settings;
     *state.settings_warning.lock().await = None;
-    Ok(SaveSettingsResponse { port_kept: overridden })
+    Ok(SaveSettingsResponse {
+        port_kept: overridden,
+    })
 }
 
 // ── native dialogs ────────────────────────────────────────────────────
@@ -426,10 +425,7 @@ async fn list_output_files(
 const MAX_READ_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[tauri::command]
-async fn read_file_b64(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<String, String> {
+async fn read_file_b64(state: State<'_, AppState>, path: String) -> Result<String, String> {
     // 与 save_output 对等：任意路径读取同样收敛到输出目录内（对抗性审查 C）。
     // 历史画廊/恢复参数只用输出目录下的文件。
     let output_dir = state.settings.lock().await.output_dir.clone();
@@ -524,10 +520,7 @@ async fn read_thumbnail(
 /// 删除历史画廊中的单个输出文件。与 save_output / read_file_b64 对等：
 /// 任意删除入口同样收敛到输出目录内，且必须是文件（目录/目录本身拒删）。
 #[tauri::command]
-async fn delete_output_file(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<(), String> {
+async fn delete_output_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let output_dir = state.settings.lock().await.output_dir.clone();
     if !dir_is_within(&path, &output_dir) {
         return Err("文件必须位于已配置的输出目录内".into());

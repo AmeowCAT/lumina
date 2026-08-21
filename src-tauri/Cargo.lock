@@ -2254,13 +2254,14 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lumina"
-version = "0.7.19"
+version = "0.7.20"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "dirs 5.0.1",
  "env_logger",
  "image",
+ "libc",
  "log",
  "reqwest 0.12.28",
  "rfd",

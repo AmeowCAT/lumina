@@ -6,11 +6,16 @@ use std::time::Duration;
 /// Shared client: `SdClient::new` is called on every Tauri command (incl. the
 /// 2 s job poll), and each `Client::builder()` would create a fresh connection
 /// pool. `Client` is internally Arc'd, so cloning the singleton is cheap.
+///
+/// 重定向必须禁用：本项目只访问本机 127.0.0.1 上的 sd-server。若端口被恶意
+/// 服务占用并返回重定向，reqwest 默认会跟随到任意地址，形成 SSRF/外联
+/// 风险。
 fn shared_http() -> Client {
     static HTTP: OnceLock<Client> = OnceLock::new();
     HTTP.get_or_init(|| {
         Client::builder()
             .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("reqwest client")
     })
@@ -22,7 +27,11 @@ fn shared_http() -> Client {
 /// bug or a caller trying to reach a different endpoint — reject it here rather
 /// than sending a malformed URL.
 fn validate_job_id(id: &str) -> Result<()> {
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         anyhow::bail!("invalid job id: {}", id);
     }
     Ok(())

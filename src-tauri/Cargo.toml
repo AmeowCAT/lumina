@@ -1,6 +1,6 @@
 [package]
 name = "lumina"
-version = "0.7.19"
+version = "0.7.20"
 edition = "2021"
 description = "Lumina (流光) — desktop GUI for stable-diffusion.cpp sd-server"
 license = "AGPL-3.0-or-later"
@@ -34,3 +34,8 @@ env_logger = "0.11"
 # 时由 OS 兜底终止，避免孤儿进程占显存（对抗性审查 C）。
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+# Unix: Linux 的 PR_SET_PDEATHSIG（父死信号）与进程组终止，防止 GUI 崩溃后
+# 残留孤儿 sd-server 占用显存。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

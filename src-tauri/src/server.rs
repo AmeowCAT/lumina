@@ -71,6 +71,10 @@ pub struct ServerManager {
     /// Windows: KILL_ON_JOB_CLOSE 作业对象，随 child 一起创建/清理。
     #[cfg(windows)]
     job: Option<JobGuard>,
+    /// Unix: 非 Linux 平台的“父死看门狗”（sh 进程，见 spawn_unix_watchdog），
+    /// 随 child 一起创建/清理。
+    #[cfg(unix)]
+    watchdog: Option<std::process::Child>,
 }
 
 fn format_num(n: &serde_json::Number) -> String {
@@ -439,8 +443,12 @@ fn dir_has_small_embedding_files(dir: &Path) -> bool {
 /// 收窄会把它们从注册集合丢掉（上游只非递归扫描 embd-dir 顶层），此时
 /// 保持原值（审查 P4c）。
 fn refine_component_dirs(args: &mut serde_json::Value) {
-    let Some(obj) = args.as_object_mut() else { return };
-    let Some(embd) = obj.get("embd-dir").and_then(|v| v.as_str()) else { return };
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
+    let Some(embd) = obj.get("embd-dir").and_then(|v| v.as_str()) else {
+        return;
+    };
     let base = Path::new(embd);
     if !base.is_dir() {
         return;
@@ -536,8 +544,7 @@ fn backend_spec_tokens(spec: &str) -> Vec<String> {
 /// 不经设备列表校验的 token：通用 token（上游 is_default_backend_token /
 /// "gpu"）以及设备名不含 registry 名的后端（Metal/BLAS）。这些交给上游
 /// 解析，探测只拦"明显不存在的设备"（对抗性审查 A3）。
-const UNPROBABLE_BACKEND_TOKENS: &[&str] =
-    &["", "default", "auto", "gpu", "cpu", "metal", "blas"];
+const UNPROBABLE_BACKEND_TOKENS: &[&str] = &["", "default", "auto", "gpu", "cpu", "metal", "blas"];
 
 /// 单个 token 是否需要经 `--list-devices` 设备列表校验。只校验**以数字
 /// 结尾**的 token（cuda0/rocm2/vulkan1 这类带编号设备名）：上游
@@ -547,8 +554,7 @@ const UNPROBABLE_BACKEND_TOKENS: &[&str] =
 /// 其他非编号 token 交给上游启动时校验（审查 P2）。
 fn backend_token_needs_probe(token: &str) -> bool {
     let token = token.trim();
-    if token.is_empty()
-        || UNPROBABLE_BACKEND_TOKENS.contains(&token.to_ascii_lowercase().as_str())
+    if token.is_empty() || UNPROBABLE_BACKEND_TOKENS.contains(&token.to_ascii_lowercase().as_str())
     {
         return false;
     }
@@ -580,7 +586,8 @@ fn backend_spec_static_error(spec: &str) -> Option<String> {
             let device = device.trim().to_ascii_lowercase();
             if device == "disk" {
                 return Some(
-                    "--backend 不接受 disk（上游仅 params_backend 支持），请从 backend 配置中移除".into(),
+                    "--backend 不接受 disk（上游仅 params_backend 支持），请从 backend 配置中移除"
+                        .into(),
                 );
             }
             if is_list && matches!(device.as_str(), "default" | "auto" | "") {
@@ -592,6 +599,180 @@ fn backend_spec_static_error(spec: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// extra_args 中某个“取值型”参数的全部出现值（可能出现多次，逐次校验）。
+/// 识别 `--key value`、`--key=value` 两种形式，以及 `-b` / `-b=value` 短
+/// 别名（上游 ArgOptions 的 `-m`/`--model` 模式）。布尔 flag（无值）与
+/// 其他参数一律跳过：下一个词元以 `-` 开头时不视为值，与 build_args 的
+/// 路径校验口径一致。
+fn extra_arg_values(tokens: &[String], names: &[&str]) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = &tokens[i];
+        let mut matched: Option<&str> = None;
+        let mut inline: Option<&str> = None;
+        if let Some(rest) = t.strip_prefix("--") {
+            if let Some((key, value)) = rest.split_once('=') {
+                if names.contains(&key) {
+                    matched = Some(key);
+                    inline = Some(value);
+                }
+            } else if names.contains(&rest) {
+                matched = Some(rest);
+            }
+        } else if names.contains(&"b") {
+            // `-b`/`-b=value`：short alias 只匹配精确 token 或 =value 形式，
+            // 避免把 `-backend` 之类误当别名。
+            if let Some(rest) = t.strip_prefix("-b") {
+                if rest.is_empty() {
+                    matched = Some("b");
+                } else if let Some(value) = rest.strip_prefix('=') {
+                    matched = Some("b");
+                    inline = Some(value);
+                }
+            }
+        }
+        if let Some(name) = matched {
+            if let Some(value) = inline {
+                values.push(value.to_string());
+            } else if i + 1 < tokens.len() && !tokens[i + 1].starts_with('-') {
+                values.push(tokens[i + 1].clone());
+                i += 1;
+            } else {
+                // 缺值（`--backend --verbose`）：交给上游报 unknown/缺值，
+                // 这里不凭空造一个值去校验（保守口径）。
+                let _ = name;
+            }
+        }
+        i += 1;
+    }
+    values
+}
+
+/// 严格解析 C99 十进制/十六进制浮点（与上游 parse_strict_float 对齐）。
+/// 返回 None 表示形状非法；inf/nan（如 1e999、0x1p9999）由调用方 is_finite
+/// 拦截——与前端 isFiniteC99Float 同口径。
+fn parse_strict_vram_number(s: &str) -> Option<f64> {
+    let body = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if body.is_empty() {
+        return None;
+    }
+    if let Some(hex) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+        let (mant, exp) = match hex.split_once(['p', 'P']) {
+            Some((m, e)) => {
+                let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+                if e.is_empty() || !e.chars().all(|c| c.is_ascii_digit()) {
+                    return None;
+                }
+                (m, e.parse::<i32>().ok()?)
+            }
+            None => (hex, 0),
+        };
+        let (int_part, frac_part) = match mant.split_once('.') {
+            Some((i, f)) => (i, f),
+            None => (mant, ""),
+        };
+        if int_part.is_empty() && frac_part.is_empty() {
+            return None;
+        }
+        if !(int_part.chars().all(|c| c.is_ascii_hexdigit()))
+            || !frac_part.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return None;
+        }
+        let int_val = if int_part.is_empty() {
+            0.0
+        } else {
+            u64::from_str_radix(int_part, 16).ok()? as f64
+        };
+        let mut frac_val = 0.0f64;
+        let mut scale = 1.0f64 / 16.0;
+        for c in frac_part.chars() {
+            frac_val += c.to_digit(16)? as f64 * scale;
+            scale /= 16.0;
+        }
+        let mant_val = int_val + frac_val;
+        let value = if exp > 0 {
+            mant_val * 2f64.powi(exp) // 溢出 → inf，由调用方拦截
+        } else {
+            mant_val / 2f64.powi(-exp)
+        };
+        return Some(value);
+    }
+    // 十进制（含 C99 的 .5 / 1. / 1e3 形式）
+    let (mant, exp) = match body.split_once(['e', 'E']) {
+        Some((m, e)) => {
+            let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+            if e.is_empty() || !e.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            (m, Some(e))
+        }
+        None => (body, None),
+    };
+    let (int_part, frac_part) = match mant.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (mant, ""),
+    };
+    if (int_part.is_empty() && frac_part.is_empty())
+        || !int_part.chars().all(|c| c.is_ascii_digit())
+        || !frac_part.chars().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    // 1e999 这类超出 f64 范围的十进制按 inf 解析，由 is_finite 拦截。
+    let value: f64 = body.parse().ok()?;
+    if exp.is_some() && !value.is_finite() {
+        return None;
+    }
+    Some(value)
+}
+
+/// 设备名侧校验：与上游 ggml_extend_backend MaxVramAssignment 一致
+/// （字母数字 + `_ . + * -`）。
+fn is_valid_vram_device(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '+' | '*' | '-'))
+}
+
+/// 预校验 `--max-vram` 原始 spec（上游 ggml_graph_cut 解析失败会让
+/// sd-server 启动即退，GUI 提前拦截给出可读错误）。与前端
+/// `validateMaxVramSpec` 对齐：逗号分段，无 `=` 的段是全局默认预算
+/// （后写覆盖先写），`设备=数值` 段设置单设备预算，空段跳过。
+fn validate_max_vram_spec(spec: &str) -> Result<()> {
+    if spec.trim().is_empty() {
+        return Ok(());
+    }
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (value, label) = match part.split_once('=') {
+            None => (part, format!("全局默认预算 {}", part)),
+            Some((device_raw, value_raw)) => {
+                // 与前端一致：'=' 两侧允许空白（`cuda0 = 6`）。
+                let device = device_raw.trim();
+                let value = value_raw.trim();
+                if device.is_empty() {
+                    anyhow::bail!("设备分配项格式应为 设备=数值：{}", part);
+                }
+                if !is_valid_vram_device(device) {
+                    anyhow::bail!("设备名包含非法字符：{}", device);
+                }
+                (value, format!("设备 {} 的预算 {}", device, value))
+            }
+        };
+        let parsed = parse_strict_vram_number(value)
+            .ok_or_else(|| anyhow!("{} 应为数字（GiB）或负的保留余量，如 6 或 -2", label))?;
+        if !parsed.is_finite() {
+            anyhow::bail!("{} 超出可表示范围（溢出为 inf）", label);
+        }
+    }
+    Ok(())
 }
 
 /// 模拟上游 sd_backend_resolve_name 的宽松匹配（不区分大小写、token 为
@@ -644,9 +825,9 @@ impl JobGuard {
     fn attach(pid: u32) -> Option<Self> {
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JobObjectExtendedLimitInformation,
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         };
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
@@ -706,6 +887,79 @@ unsafe impl Send for JobGuard {}
 #[cfg(windows)]
 unsafe impl Sync for JobGuard {}
 
+// ── Unix: 孤儿进程防护 ──────────────────────────────────────────────
+// Windows 已由 JobObject KILL_ON_JOB_CLOSE 兜底；macOS/Linux 没有等价机制，
+// GUI 崩溃/被强杀时 sd-server 可能成为孤儿进程继续占用显存。
+// - Linux：pre_exec 设置 PR_SET_PDEATHSIG(SIGKILL)——父进程（GUI）退出时
+//   内核直接向 sd-server 发 SIGKILL，不留窗口。
+// - 其他 Unix：内核无等价机制，额外起一个极小的 sh 看门狗进程定期探测
+//   父进程是否存活，父进程没了就终止 sd-server。
+// - 所有 Unix：sd-server 放进独立进程组，正常退出时按组 SIGKILL 连带清理
+//   后代；同时隔离终端 Ctrl+C 对 sd-server 的误杀。
+
+/// 在 spawn 前配置 Unix 子进程：独立进程组 +（Linux）父死信号。
+#[cfg(unix)]
+fn prepare_unix_child_command(cmd: &mut Command, parent_pid: u32) {
+    // process_group(0)：子进程 pgid 取自身 pid（tokio/std 语义），独立成组。
+    cmd.process_group(0);
+    unsafe {
+        cmd.pre_exec(move || {
+            #[cfg(target_os = "linux")]
+            {
+                // 标准模式：设置父死信号后再校验一次 ppid，处理“设置完成前
+                // 父进程已死”的竞态；已孤儿则自杀。
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != parent_pid as libc::pid_t {
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = parent_pid;
+            }
+            Ok(())
+        });
+    }
+}
+
+/// 按进程组 SIGKILL（组 id 即子进程 pid，process_group(0) 时成立）。
+/// 进程组已不存在时 ESRCH，忽略即可。
+#[cfg(unix)]
+fn kill_unix_process_group(pid: u32) {
+    unsafe {
+        libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+    }
+}
+
+/// 非 Linux Unix 的父死看门狗：`sh -c` 每 2s 探测父进程存活，父死则
+/// SIGKILL sd-server。macOS/BSD 均自带 POSIX sh；spawn 失败（极简环境）
+/// 时静默降级，不影响启动本身。Linux 走内核 PDEATHSIG，不重复。
+#[cfg(unix)]
+fn spawn_unix_watchdog(parent_pid: u32, child_pid: u32) -> Option<std::process::Child> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let script = "p=$1; c=$2; while kill -0 \"$p\" 2>/dev/null; do sleep 2; done; kill -9 \"$c\" 2>/dev/null";
+        return std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .arg("lumina-pdeath")
+            .arg(parent_pid.to_string())
+            .arg(child_pid.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (parent_pid, child_pid);
+        None
+    }
+}
+
 impl ServerManager {
     pub fn new() -> Self {
         Self {
@@ -717,6 +971,8 @@ impl ServerManager {
             started_at: None,
             #[cfg(windows)]
             job: None,
+            #[cfg(unix)]
+            watchdog: None,
         }
     }
 
@@ -754,6 +1010,15 @@ impl ServerManager {
         #[cfg(windows)]
         {
             self.job = None;
+        }
+        #[cfg(unix)]
+        {
+            // 看门狗随子进程状态一起清：父进程仍在时它不能后台空转；
+            // 更重要的是父进程退出后不能再让它去 kill 已被复用的旧 pid。
+            if let Some(mut watchdog) = self.watchdog.take() {
+                let _ = watchdog.kill();
+                let _ = watchdog.wait();
+            }
         }
     }
 
@@ -807,6 +1072,8 @@ impl ServerManager {
         child
             .start_kill()
             .context("request sd-server termination")?;
+        #[cfg(unix)]
+        kill_unix_process_group(pid);
         match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
             Ok(Ok(status)) => {
                 log::info!("sd-server stopped with status {}", status);
@@ -854,6 +1121,29 @@ impl ServerManager {
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .unwrap_or_default();
+        // 结构化参数与附加启动参数（extra_args）统一预检：`--backend cuda999`
+        // 或 `--max-vram not-a-number` 写在自由文本里同样会原样传给
+        // sd-server 并让启动即退，必须在 GUI 侧拦下。
+        let extra_tokens = args_json
+            .get("extra_args")
+            .and_then(|v| v.as_str())
+            .map(split_args)
+            .transpose()?
+            .unwrap_or_default();
+        let extra_backend_specs = extra_arg_values(&extra_tokens, &["backend", "b"]);
+        if let Some(max_vram) = args_json.get("max-vram").and_then(|v| v.as_str()) {
+            validate_max_vram_spec(max_vram)
+                .map_err(|e| anyhow!("显存预算（--max-vram）格式无效：{}", e))?;
+        }
+        for spec in &extra_backend_specs {
+            if let Some(error) = backend_spec_static_error(spec) {
+                anyhow::bail!("附加启动参数中的 --backend 无效：{}", error);
+            }
+        }
+        for spec in extra_arg_values(&extra_tokens, &["max-vram"]) {
+            validate_max_vram_spec(&spec)
+                .map_err(|e| anyhow!("附加启动参数中的 --max-vram 格式无效：{}", e))?;
+        }
         let cmd_args = build_args(&args_json, port)?;
         // 结构性 backend 错误（disk / 列表内 default）不需要探测即可拦截。
         if let Some(error) = backend_spec_static_error(&backend_spec) {
@@ -868,7 +1158,11 @@ impl ServerManager {
         //   会让 sd-server 启动即退，先探测给出可读错误（对抗性审查 A3）。
         // 旧版二进制不支持该参数时（探测返回 None）跳过校验、维持旧行为。
         let name_ok = exe_name_looks_like_sd_server(&exe);
-        let need_probe = !name_ok || backend_spec_needs_probe(&backend_spec);
+        let need_probe = !name_ok
+            || backend_spec_needs_probe(&backend_spec)
+            || extra_backend_specs
+                .iter()
+                .any(|s| backend_spec_needs_probe(s));
         let probe_output = if need_probe {
             let exe_for_probe = exe.clone();
             tokio::time::timeout(
@@ -896,6 +1190,11 @@ impl ServerManager {
         if let Some(output) = &probe_output {
             if let Some(error) = find_backend_error(&backend_spec, output) {
                 anyhow::bail!(error);
+            }
+            for spec in &extra_backend_specs {
+                if let Some(error) = find_backend_error(spec, output) {
+                    anyhow::bail!("附加启动参数中的 --backend 无效：{}", error);
+                }
             }
         }
 
@@ -927,6 +1226,10 @@ impl ServerManager {
         // they render in the in-app log panel, not an external console.
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
+        // Unix: 独立进程组 +（Linux）PR_SET_PDEATHSIG，防 GUI 崩溃后孤儿
+        // sd-server。必须在 spawn 之前配置。
+        #[cfg(unix)]
+        prepare_unix_child_command(&mut command, std::process::id());
         // Windows: sd-server 是控制台程序，即便 stdout/stderr 已 pipe，系统仍会
         // 为它创建一个控制台窗口（弹出的黑框）。CREATE_NO_WINDOW 抑制该窗口，
         // 日志已通过上面的 pipe 接管到 GUI 内的日志面板。
@@ -948,6 +1251,8 @@ impl ServerManager {
 
         #[cfg(windows)]
         let job = JobGuard::attach(pid);
+        #[cfg(unix)]
+        let watchdog = spawn_unix_watchdog(std::process::id(), pid);
 
         self.child = Some(child);
         self.model = model_name.to_string();
@@ -958,6 +1263,10 @@ impl ServerManager {
         #[cfg(windows)]
         {
             self.job = job;
+        }
+        #[cfg(unix)]
+        {
+            self.watchdog = watchdog;
         }
 
         // Post-spawn health check: wait a short grace period then verify the
@@ -985,6 +1294,10 @@ impl ServerManager {
     pub fn kill(&mut self) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.start_kill();
+        }
+        #[cfg(unix)]
+        if let Some(pid) = self.child.as_ref().and_then(|c| c.id()) {
+            kill_unix_process_group(pid);
         }
         self.clear_child_state();
         log::info!("sd-server killed");
@@ -1194,10 +1507,18 @@ mod tests {
                 now_epoch_seconds()
             ));
             let mut map = serde_json::Map::new();
-            map.insert(key.to_string(), serde_json::Value::String(missing.to_string_lossy().into_owned()));
+            map.insert(
+                key.to_string(),
+                serde_json::Value::String(missing.to_string_lossy().into_owned()),
+            );
             let args = serde_json::Value::Object(map);
             let error = build_args(&args, DEFAULT_SD_PORT).unwrap_err().to_string();
-            assert!(error.contains("path does not exist"), "key {}: {}", key, error);
+            assert!(
+                error.contains("path does not exist"),
+                "key {}: {}",
+                key,
+                error
+            );
         }
     }
 
@@ -1219,6 +1540,59 @@ mod tests {
         let out = build_args(&args, DEFAULT_SD_PORT).unwrap();
         assert!(out.windows(2).any(|w| w[0] == "-m" && w[1] == "model.gguf"));
         assert!(!out.iter().any(|t| t == "-m=model.gguf"));
+    }
+
+    #[test]
+    fn extra_arg_values_extracts_value_flags_only() {
+        let tokens =
+            split_args("--backend cuda0 --max-vram 6 --verbose --threads=4 -b cpu -b=rocm0")
+                .unwrap();
+        assert_eq!(
+            extra_arg_values(&tokens, &["backend", "b"]),
+            vec!["cuda0", "cpu", "rocm0"]
+        );
+        assert_eq!(extra_arg_values(&tokens, &["max-vram"]), vec!["6"]);
+        // `--key=value` 与空格形式等价（build_args 会把它拆成两个 token）。
+        let tokens2 = split_args("--backend=cuda9 --max-vram=not-a-number").unwrap();
+        assert_eq!(extra_arg_values(&tokens2, &["backend", "b"]), vec!["cuda9"]);
+        assert_eq!(
+            extra_arg_values(&tokens2, &["max-vram"]),
+            vec!["not-a-number"]
+        );
+        // 布尔 flag 不被当成值；缺值（下一 token 是 flag）不凭空造值。
+        let tokens3 = split_args("--backend --verbose").unwrap();
+        assert!(extra_arg_values(&tokens3, &["backend", "b"]).is_empty());
+        // `-backend` 不是 `-b` 别名。
+        let tokens4 = split_args("-backend cpu").unwrap();
+        assert!(extra_arg_values(&tokens4, &["backend", "b"]).is_empty());
+    }
+
+    #[test]
+    fn max_vram_spec_validation_mirrors_frontend() {
+        assert!(validate_max_vram_spec("6").is_ok());
+        assert!(validate_max_vram_spec("-2").is_ok());
+        assert!(validate_max_vram_spec("6,cuda0=4,vulkan0=4").is_ok());
+        assert!(validate_max_vram_spec("1e3").is_ok());
+        assert!(validate_max_vram_spec("0x10").is_ok());
+        assert!(validate_max_vram_spec("0x.8p1").is_ok());
+        assert!(validate_max_vram_spec("  ").is_ok());
+        assert!(validate_max_vram_spec("cuda0 = 6").is_ok());
+        // 非法/溢出值必须拦下。
+        assert!(validate_max_vram_spec("not-a-number").is_err());
+        assert!(validate_max_vram_spec("1e999").is_err());
+        assert!(validate_max_vram_spec("0x1p9999").is_err());
+        assert!(validate_max_vram_spec("cuda0=inf").is_err());
+        assert!(validate_max_vram_spec("cuda0=").is_err());
+        assert!(validate_max_vram_spec("=6").is_err());
+        // 设备名只做字符白名单（与前端一致），具体设备名由上游解析。
+        assert!(validate_max_vram_spec("eq=6").is_ok());
+        // 前端等价断言（utils.test.ts）：形状与有限性分开校验。
+        assert!(parse_strict_vram_number("1e999").is_none());
+        // 十六进制溢出解析为 inf（与前端手算 2^exp 溢出为 Infinity 相同），
+        // 由 validate_max_vram_spec 的 is_finite 拦截。
+        assert!(!parse_strict_vram_number("0x1p9999").unwrap().is_finite());
+        assert!(parse_strict_vram_number("not-a-number").is_none());
+        assert_eq!(parse_strict_vram_number("0x.8p1"), Some(1.0));
     }
 
     #[test]
@@ -1361,9 +1735,15 @@ mod tests {
 
     #[test]
     fn exe_name_check_accepts_sd_server_prefix_only() {
-        assert!(exe_name_looks_like_sd_server(Path::new("C:/x/sd-server.exe")));
-        assert!(exe_name_looks_like_sd_server(Path::new("/x/sd-server-cuda")));
-        assert!(!exe_name_looks_like_sd_server(Path::new("C:/x/notepad.exe")));
+        assert!(exe_name_looks_like_sd_server(Path::new(
+            "C:/x/sd-server.exe"
+        )));
+        assert!(exe_name_looks_like_sd_server(Path::new(
+            "/x/sd-server-cuda"
+        )));
+        assert!(!exe_name_looks_like_sd_server(Path::new(
+            "C:/x/notepad.exe"
+        )));
         assert!(!exe_name_looks_like_sd_server(Path::new("/x/sd")));
     }
 

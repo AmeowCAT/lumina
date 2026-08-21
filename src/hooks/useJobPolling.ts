@@ -2,7 +2,12 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { useStore, type ImageSaveState, type ResultEntry } from "../store";
 import type { Job } from "../types";
-import { extractApiError, formatError, MAX_RESULTS } from "../lib/utils";
+import {
+  b64ByteLength,
+  extractApiError,
+  formatError,
+  MAX_RESULTS,
+} from "../lib/utils";
 import { flashWindow, notifyIfUnfocused } from "../lib/systemIntegration";
 
 const POLL_FAILURE_THRESHOLD = 3;
@@ -248,10 +253,49 @@ export function ingestCompletedJob(d: Job): boolean {
       config: cfg,
     };
     // 结果内存上限：最新在前，超出丢弃最旧（对抗性审查 B5）。
-    return [entry, ...r].slice(0, MAX_RESULTS);
+    // 字节预算：大视频/批次图一条可达数十~数百 MB，纯条数上限
+    // 挡不住数 GB 的总占用。从最旧开始淘汰，直到条数与字节双达标；
+    // 单条超过预算时保留（功能优先），总占用仍有整体 1GiB 封顶。
+    return trimResultsToBudget([entry, ...r], MAX_RESULTS, MAX_RESULTS_BYTES);
   });
   store.toast(`生成完成 · ${what}`);
   return true;
+}
+
+/**
+ * 结果区整体的 base64 字节预算（约 1 GiB）：按 4/3 换算的近似值。
+ * blob URL 与 base64 双份常驻，再乘 2 也远低于“60 条大视频”的失控叠加。
+ */
+export const MAX_RESULTS_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * 结果内存上限：最新在前，超出丢弃最旧。
+ * 字节预算：大视频/批次图一条可达数十~数百 MB，纯条数上限
+ * 挡不住数 GB 的总占用。从最旧开始淘汰，直到条数与字节双达标；
+ * 单条超过预算时保留（功能优先），总占用仍受整体预算封顶。
+ */
+export function trimResultsToBudget(
+  next: ResultEntry[],
+  countCap: number,
+  byteCap: number
+): ResultEntry[] {
+  let totalBytes = next.reduce((acc, e) => acc + resultEntryBytes(e), 0);
+  let end = next.length;
+  while (end > countCap || (end > 1 && totalBytes > byteCap)) {
+    end -= 1;
+    totalBytes -= resultEntryBytes(next[end]);
+  }
+  return next.slice(0, end);
+}
+
+/** 单条结果持有的 base64 字节估算（视频或批次图）。 */
+function resultEntryBytes(entry: ResultEntry): number {
+  let total = 0;
+  if (entry.result?.b64_json) total += b64ByteLength(entry.result.b64_json);
+  entry.result?.images?.forEach((img) => {
+    if (img.b64_json) total += b64ByteLength(img.b64_json);
+  });
+  return total;
 }
 
 /**

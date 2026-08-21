@@ -151,11 +151,7 @@ fn safetensors_index_info(path: &Path, context: &mut ScanContext) -> Option<Safe
         .unwrap_or(false)
     {
         context.stats.read_errors += 1;
-        context.warn(
-            "index_too_large",
-            path,
-            "Safetensors 索引超过 64MB，已跳过",
-        );
+        context.warn("index_too_large", path, "Safetensors 索引超过 64MB，已跳过");
         return None;
     }
     let contents = match fs::read_to_string(path) {

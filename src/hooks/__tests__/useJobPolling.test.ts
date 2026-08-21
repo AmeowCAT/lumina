@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../store";
-import { saveEntryPart } from "../useJobPolling";
+import { saveEntryPart, trimResultsToBudget } from "../useJobPolling";
 
 const mocks = vi.hoisted(() => ({ saveOutput: vi.fn() }));
 vi.mock("../../api", () => ({ api: mocks }));
@@ -112,5 +112,54 @@ describe("saveEntryPart (manual save to output dir)", () => {
     expect(mocks.saveOutput).not.toHaveBeenCalled();
     const toasts = useStore.getState().toasts;
     expect(toasts[toasts.length - 1]?.msg).toContain("未找到对应图片");
+  });
+});
+
+describe("trimResultsToBudget（按字节的内存上限）", () => {
+  const entry = (
+    jobId: string,
+    b64: string,
+    images: { index: number; b64_json: string }[] = []
+  ) =>
+    ({
+      jobId,
+      mode: "img_gen",
+      result: { b64_json: b64, images: images.length ? images : undefined },
+    }) as never as import("../../store").ResultEntry;
+
+  it("caps by count when the byte budget is not exceeded", () => {
+    const arr = [entry("a", "x"), entry("b", "y"), entry("c", "z"), entry("d", "w")];
+    const trimmed = trimResultsToBudget(arr, 3, 1000);
+    expect(trimmed.map((e) => e.jobId)).toEqual(["a", "b", "c"]);
+  });
+
+  it("evicts oldest results when the byte budget is exceeded", () => {
+    // 每条 ≈ 75 字节（"A".repeat(100) → 4 字节约 3 字节），三条共 225 字节。
+    const big = "A".repeat(100);
+    const arr = [
+      entry("new", big),
+      entry("mid", big),
+      entry("old", big),
+    ];
+    // 预算 150 字节 → 只挤出最旧的一条。
+    const trimmed = trimResultsToBudget(arr, 60, 150);
+    expect(trimmed.map((e) => e.jobId)).toEqual(["new", "mid"]);
+  });
+
+  it("keeps a single entry even when it alone exceeds the budget", () => {
+    const big = "A".repeat(100);
+    const trimmed = trimResultsToBudget([entry("only", big)], 60, 10);
+    expect(trimmed.map((e) => e.jobId)).toEqual(["only"]);
+  });
+
+  it("counts batch image bytes and video bytes together", () => {
+    const video = entry("v", "A".repeat(60)); // ≈ 45 字节（最新）
+    const batch = entry("b", "", [
+      { index: 0, b64_json: "A".repeat(60) },
+      { index: 1, b64_json: "A".repeat(60) },
+    ]); // ≈ 90 字节（更旧）
+    // 视频 + 批次 = 135 字节，超过 120 字节预算 → 挤出最旧的批次。
+    const trimmed = trimResultsToBudget([video, batch], 60, 120);
+    expect(trimmed.map((e) => e.jobId)).toEqual(["v"]);
   });
 });

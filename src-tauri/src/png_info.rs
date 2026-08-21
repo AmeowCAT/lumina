@@ -146,7 +146,8 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
     if !base.is_dir() {
         return Ok(vec![]);
     }
-    let canonical_base = strip_verbatim(&base.canonicalize().unwrap_or_else(|_| base.to_path_buf()));
+    let canonical_base =
+        strip_verbatim(&base.canonicalize().unwrap_or_else(|_| base.to_path_buf()));
     let mut entries = Vec::new();
     let mut dirs = vec![base.to_path_buf()];
     // visited 按规范化路径去重：`is_dir()` 跟随 symlink，a→b→a 的环会导致
@@ -183,8 +184,7 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
                     .file_type()
                     .map(|file_type| file_type.is_symlink())
                     .unwrap_or(false)
-                    && p
-                        .canonicalize()
+                    && p.canonicalize()
                         .map(|canonical_file| {
                             !strip_verbatim(&canonical_file).starts_with(&canonical_base)
                         })

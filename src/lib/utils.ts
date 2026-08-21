@@ -160,6 +160,14 @@ export function b64ToDataUrl(b64: string, mime: string): string {
   return `data:${mime};base64,${raw}`;
 }
 
+/** base64 字符串（可含 data: 前缀）对应的近似原始字节数：每 4 个字符
+ * ≈ 3 字节。只用于内存预算估算，不要求精确。 */
+export function b64ByteLength(b64: string): number {
+  const comma = b64.indexOf(",");
+  const raw = comma >= 0 ? b64.slice(comma + 1) : b64;
+  return Math.floor((raw.length * 3) / 4);
+}
+
 /** 结果 / 任务记录的内存上限：每条记录持有 base64，无上限会在长会话中
  * 耗尽内存（对抗性审查 B5）。超出时丢弃最旧的记录，blob 缓存随之剪枝。 */
 export const MAX_RESULTS = 60;

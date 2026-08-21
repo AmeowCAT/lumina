@@ -133,8 +133,11 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     expect(screen.getByLabelText("切换任务队列面板")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "当前结果" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "历史画廊" })).toBeTruthy();
-    // 参数面板移入召唤式 Sheet（关闭时保持挂载）,首个面板带仪表编号样式
-    expect(document.querySelector(".params-sheet .panel")).toBeTruthy();
+    // 参数面板移入召唤式 Sheet（懒加载后按需就绪,关闭时保持挂载）,
+    // 首个面板带仪表编号样式
+    await waitFor(() =>
+      expect(document.querySelector(".params-sheet .panel")).toBeTruthy()
+    );
     expect(screen.getByText("准备就绪")).toBeTruthy();
   });
 

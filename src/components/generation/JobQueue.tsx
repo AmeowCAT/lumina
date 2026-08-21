@@ -14,7 +14,14 @@ interface Props {
   onCancel: (id: string) => void;
   onRemove: (id: string) => void;
   onClear: () => void;
-  onDownload: (b64: string, fmt?: string, mime?: string) => void;
+  /** 逐张“另存为”下载；返回 Promise 以便批量场景串行 await */
+  onDownload: (
+    b64: string,
+    fmt?: string,
+    mime?: string,
+    seed?: number,
+    suffix?: string
+  ) => Promise<void>;
 }
 
 // 状态文案随主题语境:暗房用直白流程词;太空(vostok)走任务链语言
@@ -159,20 +166,31 @@ export const JobQueue = memo(function JobQueue({
                             ? `下载全部 ${jobResult.images!.length} 张`
                             : "下载结果"
                         }
-                        onClick={() => {
+                        onClick={async () => {
                           // 批次多图逐张下载，避免只取第一张静默丢图。
+                          // 串行 await：onDownload 内部是原生“另存为”对话框，
+                          // 并发触发多个对话框行为不稳定。
                           const images = jobResult.images?.length
                             ? jobResult.images
                             : jobResult.b64_json
                               ? [{ b64_json: jobResult.b64_json }]
                               : [];
-                          for (const img of images) {
-                            if (img.b64_json)
-                              onDownload(
-                                img.b64_json,
-                                jobResult.output_format,
-                                jobResult.mime_type
-                              );
+                          // 文件名带批次信息：有固定种子时各张种子唯一
+                          // （seed+k）；随机种子时追加 1-based 批次序号，
+                          // 避免同批全部落成同名文件。
+                          const baseSeed = j.config?.params?.seed;
+                          for (let i = 0; i < images.length; i++) {
+                            const img = images[i];
+                            if (!img.b64_json) continue;
+                            await onDownload(
+                              img.b64_json,
+                              jobResult.output_format,
+                              jobResult.mime_type,
+                              baseSeed != null && baseSeed >= 0
+                                ? baseSeed + (img.index ?? i)
+                                : undefined,
+                              images.length > 1 ? `_${i + 1}` : undefined
+                            );
                           }
                         }}
                       >

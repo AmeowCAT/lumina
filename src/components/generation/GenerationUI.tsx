@@ -1,15 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { SlidersHorizontal } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
-import {
-  DISTILL_FAMILIES,
-  FAMILY_CONFIG,
-  VIDEO_FRAME_PRESETS,
-  SIZE_PRESETS,
-  scaleSize,
-} from "../../config/families";
+import { scaleSize, FAMILY_CONFIG, DISTILL_FAMILIES } from "../../config/families";
 import {
   b64ToDataUrl,
   buildRequestBody,
@@ -29,19 +23,9 @@ import { ProgressBar } from "../ui/ProgressBar";
 import { cn } from "../ui/cn";
 import { ResultsGrid } from "./ResultsGrid";
 import { JobQueue } from "./JobQueue";
-import { HistoryGallery } from "./HistoryGallery";
 import { HeaderBar } from "./HeaderBar";
 import { PromptDock } from "./PromptDock";
 import { QueueDrawer } from "./QueueDrawer";
-import { ParamsSheet } from "./ParamsSheet";
-import { ImageInputsPanel } from "./panels/ImageInputsPanel";
-import { SizeSeedPanel } from "./panels/SizeSeedPanel";
-import { SamplingPanel } from "./panels/SamplingPanel";
-import { AdvancedSamplingPanel } from "./panels/AdvancedSamplingPanel";
-import { HighNoisePanel } from "./panels/HighNoisePanel";
-import { LoraPanel } from "./panels/LoraPanel";
-import { HiresPanel } from "./panels/HiresPanel";
-import { OutputPanel } from "./panels/OutputPanel";
 import { useBlobUrlCache } from "../../hooks/useBlobUrlCache";
 import { useTheme } from "../../lib/theme";
 import {
@@ -51,6 +35,17 @@ import {
   trackDetachedJob,
 } from "../../hooks/useJobPolling";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+
+// 低频模块懒加载：参数面板、历史画廊只有打开对应界面时才需要，
+// 动态 import() 让首屏只解析主视图代码。chunk 加载失败不阻断主界面。
+const GenerationParamsSheet = lazy(() =>
+  import("./GenerationParamsSheet").then((m) => ({
+    default: m.GenerationParamsSheet,
+  }))
+);
+const HistoryGallery = lazy(() =>
+  import("./HistoryGallery").then((m) => ({ default: m.HistoryGallery }))
+);
 
 // 引擎 seed 是 int64；取 JS 安全整数上限 2^53-1，覆盖完整的 64 位种子空间。
 const MAX_SEED = Number.MAX_SAFE_INTEGER;
@@ -228,7 +223,6 @@ export function GenerationUI() {
     clearProgress();
   }, [currentGen?.id, clearProgress]);
   const maxQueue = caps?.limits?.max_queue_size || settings.maxQueueSize || 4;
-  const sizePresets = SIZE_PRESETS[mode];
 
   // 尺寸缩放滑块的基准尺寸：由初始图片检测、预设/手动修改设定；缩放时
   // width/height = scaleSize(base)。null 表示尚未锚定（滑块显示 1×，
@@ -644,11 +638,19 @@ export function GenerationUI() {
   );
 
   const download = useCallback(
-    async (b64: string, fmt?: string, _mime?: string, seed?: number) => {
+    async (
+      b64: string,
+      fmt?: string,
+      _mime?: string,
+      seed?: number,
+      suffix?: string
+    ) => {
       if (!b64) return;
       try {
         const dt = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
-        const name = seed != null && seed >= 0 ? `seed_${seed}_${dt}` : `lumina_${dt}`;
+        const base =
+          seed != null && seed >= 0 ? `seed_${seed}_${dt}` : `lumina_${dt}`;
+        const name = suffix ? `${base}${suffix}` : base;
         const r = await api.saveAs(b64, fmt || "png", name);
         if (r.saved) toast("已保存：" + r.path);
       } catch (e) {
@@ -819,7 +821,6 @@ export function GenerationUI() {
 
   if (!caps || !params) return null;
   const sp = params.sample_params;
-  const hsp = params.high_noise_sample_params;
   // 滑块显示值：当前尺寸相对基准的几何平均倍率（宽高可能单独被改过），
   // 无基准时恒为 1×；超出滑块量程时钉在端点。
   const sizeScale =
@@ -834,7 +835,6 @@ export function GenerationUI() {
       : 1;
   const negativeVisible =
     showNegative || !!(params.negative_prompt && params.negative_prompt.trim());
-  const showDistilled = DISTILL_FAMILIES.includes(family);
   // 进行中文案随主题语境:暗房"显影" ↔ 太空"推进"(发动机工作段)
   const developing = theme === "vostok" ? "推进中" : "显影中";
   const dreamText = currentGen
@@ -964,10 +964,16 @@ export function GenerationUI() {
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                 >
                   <div className="history-workspace">
-                    <HistoryGallery
-                      onRestoreParams={restoreFromMetadata}
-                      onUseAsInit={useAsInit}
-                    />
+                    <Suspense
+                      fallback={
+                        <span className="spinner block mx-auto my-2" />
+                      }
+                    >
+                      <HistoryGallery
+                        onRestoreParams={restoreFromMetadata}
+                        onUseAsInit={useAsInit}
+                      />
+                    </Suspense>
                   </div>
                 </motion.div>
               )}
@@ -1008,126 +1014,40 @@ export function GenerationUI() {
               onDownload={download}
             />
           </QueueDrawer>
-          <ParamsSheet open={sheetOpen} onClose={closeSheet}>
-            {(features.init_image ||
-              features.mask_image ||
-              features.control_image ||
-              features.ip_adapter_image ||
-              features.end_image ||
-              refImagesSupported ||
-              controlFramesSupported) && (
-              <ImageInputsPanel
-                features={features}
-                mode={mode}
-                family={family}
-                initImage={initImage}
-                maskImage={maskImage}
-                controlImage={controlImage}
-                ipAdapterImage={ipAdapterImage}
-                endImage={endImage}
-                refImages={refImages}
-                controlFrames={controlFrames}
-                controlFramesSupported={controlFramesSupported}
-                refImagesSupported={refImagesSupported}
-                strength={params.strength}
-                controlStrength={params.control_strength}
-                ipAdapterStrength={params.ip_adapter_strength}
-                imgCfg={sp?.guidance?.img_cfg}
-                txtCfg={sp?.guidance?.txt_cfg}
-                onUpdate={update}
-                onSetImage={setImage}
-                onSetRefImages={setRefImages}
-                onSetControlFrames={setControlFrames}
-                onInitSize={handleInitSize}
-              />
-            )}
-            <SizeSeedPanel
+          <Suspense fallback={null}>
+            <GenerationParamsSheet
+              open={sheetOpen}
+              onClose={closeSheet}
+              caps={caps}
               mode={mode}
               family={family}
-              width={params.width}
-              height={params.height}
-              seed={params.seed}
+              features={features}
+              refImagesSupported={refImagesSupported}
+              controlFramesSupported={controlFramesSupported}
+              initImage={initImage}
+              maskImage={maskImage}
+              controlImage={controlImage}
+              ipAdapterImage={ipAdapterImage}
+              endImage={endImage}
+              refImages={refImages}
+              controlFrames={controlFrames}
+              params={params}
               seedRandom={seedRandom}
-              batchCount={params.batch_count}
-              videoFrames={params.video_frames}
-              fps={params.fps}
-              qwenLayers={params.qwen_image_layers}
-              limits={caps.limits}
-              sizePresets={sizePresets}
               sizeScale={sizeScale}
-              framePresets={VIDEO_FRAME_PRESETS[family]}
-              framePresetsLabel={`${FAMILY_CONFIG[family]?.name || "视频"} 帧数快捷项`}
+              showDistilled={DISTILL_FAMILIES.includes(family)}
+              sheetTarget={sheetTarget}
               onUpdate={update}
+              onSetImage={setImage}
+              onSetRefImages={setRefImages}
+              onSetControlFrames={setControlFrames}
+              onInitSize={handleInitSize}
               onSizeScale={handleSizeScale}
               onSizeBaseReset={handleSizeBaseReset}
               onSeedEdit={handleSeedEdit}
               onRandomSeed={randomSeed}
-              forceOpen={sheetTarget === "size"}
-            />
-            <SamplingPanel
-              samplers={caps.samplers || []}
-              schedulers={caps.schedulers || []}
-              sampleMethod={sp?.sample_method || "default"}
-              scheduler={sp?.scheduler || "default"}
-              steps={sp?.sample_steps}
-              txtCfg={sp?.guidance?.txt_cfg}
-              distilled={sp?.guidance?.distilled_guidance}
-              showDistilled={showDistilled}
-              betaAlpha={sp?.beta_alpha}
-              betaBeta={sp?.beta_beta}
-              lmsMaxOrder={sp?.lms_max_order}
-              lmsShift={sp?.lms_shift}
-              lmsDivisions={sp?.lms_divisions}
-              onUpdate={update}
               onReset={resetToDefaults}
-              forceOpen={sheetTarget === "sampling"}
             />
-            <AdvancedSamplingPanel
-              eta={sp?.eta}
-              flowShift={sp?.flow_shift}
-              slg={sp?.guidance?.slg}
-              vaeTilingParams={params.vae_tiling_params}
-              cacheMode={params.cache_mode}
-              clipSkip={params.clip_skip}
-              extraSampleArgs={sp?.extra_sample_args}
-              onUpdate={update}
-            />
-            {mode === "vid_gen" && family === "wan-a14b" && (
-              <HighNoisePanel
-                samplers={caps.samplers || []}
-                schedulers={caps.schedulers || []}
-                hsp={hsp}
-                fallbackSampleMethod={sp?.sample_method || "default"}
-                fallbackScheduler={sp?.scheduler || "default"}
-                moeBoundary={params.moe_boundary}
-                showDistilled={showDistilled}
-                betaAlpha={hsp?.beta_alpha}
-                betaBeta={hsp?.beta_beta}
-                onUpdate={update}
-              />
-            )}
-            {features.lora && (
-              <LoraPanel
-                loras={params.lora || []}
-                available={caps.loras || []}
-                onUpdate={update}
-              />
-            )}
-            {features.hires && (
-              <HiresPanel
-                hires={params.hires}
-                upscalers={(caps.upscalers || []).map((u) => u.name)}
-                onUpdate={update}
-              />
-            )}
-            <OutputPanel
-              mode={mode}
-              outputFormat={params.output_format}
-              formats={caps.output_formats_by_mode?.[mode] || ["png"]}
-              compression={params.output_compression}
-              onUpdate={update}
-            />
-          </ParamsSheet>
+          </Suspense>
         </div>
       </div>
       <AnimatePresence>

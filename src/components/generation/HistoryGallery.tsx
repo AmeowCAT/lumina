@@ -15,7 +15,9 @@ import { Panel } from "../ui/Panel";
 import { Select } from "../ui/Select";
 import { TwoTapButton } from "../ui/TwoTapButton";
 import { Lightbox, type LightboxItem } from "../ui/Lightbox";
-import { formatError } from "../../lib/utils";
+import { ByteBudgedCache } from "../../lib/byteCache";
+import { b64ByteLength, b64ToBlobUrl, formatError } from "../../lib/utils";
+import { cn } from "../ui/cn";
 import {
   computeGridLayout,
   computeVisibleRange,
@@ -29,6 +31,42 @@ interface OutputEntry {
   modified: number;
   ext: string;
   metadata?: Record<string, unknown>;
+}
+
+/** 历史画廊支持的视频扩展名（结果区淘汰后仍可回看已保存视频）。
+ * sd-server 视频输出为 webm/mp4，其余常见容器一并收录（只列入、不预判解码）。 */
+const VIDEO_EXTS = new Set(["webm", "mp4", "mkv", "mov", "avi", "m4v"]);
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
+
+function isVideoFile(f: OutputEntry): boolean {
+  return VIDEO_EXTS.has(f.ext);
+}
+
+function videoMime(ext: string): string {
+  switch (ext) {
+    case "mp4":
+      return "video/mp4";
+    case "m4v":
+      return "video/x-m4v";
+    case "mov":
+      return "video/quicktime";
+    case "mkv":
+      return "video/x-matroska";
+    case "avi":
+      return "video/x-msvideo";
+    default:
+      return "video/webm";
+  }
+}
+
+/** ByteBudgedCache → 普通 Map 快照（渲染层只读；按 thumbVersion 重建）。 */
+function cacheSnapshot(cache: ByteBudgedCache<string>): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const key of cache.keys()) {
+    const value = cache.get(key);
+    if (value != null) m.set(key, value);
+  }
+  return m;
 }
 
 interface Props {
@@ -54,6 +92,7 @@ function HistoryTile({
   file,
   style,
   src,
+  videoUrl,
   retryToken,
   onOpen,
   onNeedSrc,
@@ -61,32 +100,53 @@ function HistoryTile({
   file: OutputEntry;
   style?: CSSProperties;
   src: string;
+  videoUrl: string;
   retryToken: number;
   onOpen: (file: OutputEntry) => void;
   onNeedSrc: () => void;
 }) {
   const date = new Date(file.modified * 1000).toLocaleString();
+  const isVideo = isVideoFile(file);
 
-  // 缩略图经后端 read_thumbnail（输出目录白名单 + 降采样）按需加载。
+  // 缩略图经后端 read_thumbnail（输出目录白名单 + 降采样）按需加载；
+  // 视频无法解码缩略图，瓦片直接内嵌 <video>（preload=metadata 只拉头）。
   // retryToken 仅在用户点"刷新"时变化，让首次读取失败的瓦片有机会重试；
   // 平时只随 src 变化触发一次，失败不会被父级重渲染反复重试。
   useEffect(() => {
-    if (!src) onNeedSrc();
+    if (!src && !videoUrl) onNeedSrc();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, retryToken]);
+  }, [src, videoUrl, retryToken]);
 
   return (
     <button
       type="button"
-      className="history-item"
+      className={cn("history-item", isVideo && "history-video-item")}
       style={style}
       title={`${file.name}\n${date}`}
-      aria-label={`查看历史图片 ${file.name}${
+      aria-label={`查看历史${isVideo ? "视频" : "图片"} ${file.name}${
         file.metadata ? "（含生成参数）" : ""
       }`}
       onClick={() => onOpen(file)}
     >
-      <img src={src} alt="" loading="lazy" />
+      {isVideo ? (
+        videoUrl ? (
+          <video
+            src={videoUrl}
+            muted
+            playsInline
+            preload="metadata"
+            tabIndex={-1}
+            aria-hidden="true"
+          />
+        ) : null
+      ) : (
+        src && <img src={src} alt="" loading="lazy" />
+      )}
+      {isVideo && (
+        <span className="history-play" aria-hidden="true" title="点击回放">
+          ▶
+        </span>
+      )}
       {file.metadata && (
         <span className="history-badge" aria-hidden="true" title="含参数">
           参
@@ -118,22 +178,31 @@ export const HistoryGallery = memo(function HistoryGallery({
   const scrollRef = useRef({ top: 0, height: 0 });
   const rafRef = useRef<number | null>(null);
 
+  // 加载竞态防护：快速切换输出目录时，较慢的旧目录请求可能
+  // 在新目录请求之后返回并覆盖列表。每次 load 递增请求序号，响应只在
+  // 序号仍是当前值时落地（与 Dashboard 扫描逻辑同构）。
+  const loadRequestId = useRef(0);
+
   const load = useCallback(async () => {
     if (!settings.outputDir) {
       setFiles([]);
       return;
     }
+    const requestId = ++loadRequestId.current;
     setLoading(true);
-    // 给此前读取失败的缩略图一次重试机会（HistoryTile 的 retryToken 依赖）。
+    // 给此前读取失败的缩略图/视频一次重试机会（HistoryTile 的 retryToken 依赖）。
     failedThumbs.current.clear();
+    failedVideos.current.clear();
     setRetryToken((t) => t + 1);
     try {
       const f = await api.listOutputFiles(settings.outputDir);
+      if (requestId !== loadRequestId.current) return;
       setFiles(f);
     } catch (e) {
+      if (requestId !== loadRequestId.current) return;
       toast("加载历史失败: " + formatError(e), true);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   }, [settings.outputDir, toast]);
 
@@ -142,20 +211,25 @@ export const HistoryGallery = memo(function HistoryGallery({
   }, [load]);
 
   // 缩略图 dataURL 懒缓存：只为实际渲染过的文件调用后端 read_thumbnail
-  // （输出目录白名单 + 降采样到 384px），小图常驻成本低；仍设 FIFO 上限
-  // 防极端目录。失败的路径进 failedThumbs，避免重渲染风暴式重试，
+  // （输出目录白名单 + 降采样到 384px），小图常驻成本低；仍设字节预算
+  // 兜底极端目录（按条数上限会被“几万张 10KB 小图”绕过）。
+  // 失败的路径进 failedThumbs，避免重渲染风暴式重试，
   // 用户点"刷新"时清空重试（retryToken）。
-  const THUMB_CACHE_MAX = 2000;
-  /** 并发读取上限：快速滚动时避免几十个解码/IPC 同时打满后端（审查 H2） */
+  const THUMB_CACHE_BYTES = 128 * 1024 * 1024;
+  /** 并发读取上限：快速滚动时避免几十个解码/IPC 同时打满后端 */
   const THUMB_CONCURRENCY = 4;
-  const thumbSrcsRef = useRef(new Map<string, string>());
+  const thumbSrcsRef = useRef(new ByteBudgedCache<string>(THUMB_CACHE_BYTES));
   const failedThumbs = useRef(new Set<string>());
   const pendingThumbs = useRef(new Set<string>());
   const thumbQueue = useRef<OutputEntry[]>([]);
   const activeThumbReads = useRef(0);
   const [thumbVersion, setThumbVersion] = useState(0);
   const [retryToken, setRetryToken] = useState(0);
-  const thumbSrcs = useMemo(() => new Map(thumbSrcsRef.current), [thumbVersion]);
+  const thumbSrcs = useMemo(
+    () => cacheSnapshot(thumbSrcsRef.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [thumbVersion]
+  );
 
   const pumpThumbQueue = useCallback(() => {
     while (
@@ -173,13 +247,8 @@ export const HistoryGallery = memo(function HistoryGallery({
         .then(({ b64, mime }) => {
           const cache = thumbSrcsRef.current;
           if (!cache.has(f.path)) {
-            // FIFO 淘汰：Map 迭代顺序即插入顺序。
-            while (cache.size >= THUMB_CACHE_MAX) {
-              const oldest = cache.keys().next().value;
-              if (oldest == null) break;
-              cache.delete(oldest);
-            }
-            cache.set(f.path, `data:${mime};base64,${b64}`);
+            // 字节预算淘汰在 cache 内部完成（超预算即挤出最旧）。
+            cache.set(f.path, `data:${mime};base64,${b64}`, b64ByteLength(b64));
             setThumbVersion((v) => v + 1);
           }
         })
@@ -209,13 +278,14 @@ export const HistoryGallery = memo(function HistoryGallery({
     [pumpThumbQueue]
   );
 
-  // Lightbox 用原图（缩略图放大会糊）：按需读取 + 小容量 FIFO 缓存 +
-  // 并发闸——快速翻页会串起多张全量读取（单张上限 256MB），无闸时瞬时
-  // 内存尖峰可达数 GB（审查 H1 的 Lightbox 侧 / L4）。
-  const FULL_CACHE_MAX = 6;
+  // Lightbox 用原图（缩略图放大会糊）：按需读取 + 字节预算 + 并发闸——
+  // 快速翻页会串起多张全量读取（单张上限 256MB），无闸时瞬时内存尖峰
+  // 可达数 GB；老实现按条数上限 6 条则 6 张 256MB 原图同时驻留 1.5GB——
+  // 统一改成 512MB 字节预算。
+  const FULL_CACHE_BYTES = 512 * 1024 * 1024;
   /** 原图并发读取上限:与缩略图 THUMB_CONCURRENCY 同构 */
   const FULL_CONCURRENCY = 2;
-  const fullSrcsRef = useRef(new Map<string, string>());
+  const fullSrcsRef = useRef(new ByteBudgedCache<string>(FULL_CACHE_BYTES));
   const pendingFull = useRef(new Set<string>());
   const fullQueue = useRef<OutputEntry[]>([]);
   const activeFullReads = useRef(0);
@@ -236,13 +306,8 @@ export const HistoryGallery = memo(function HistoryGallery({
           const ext = f.ext === "jpg" || f.ext === "jpeg" ? "jpeg" : f.ext || "png";
           const cache = fullSrcsRef.current;
           if (!cache.has(f.path)) {
-            // FIFO 淘汰:Map 迭代顺序即插入顺序(命中不重插,不是 LRU)。
-            while (cache.size >= FULL_CACHE_MAX) {
-              const oldest = cache.keys().next().value;
-              if (oldest == null) break;
-              cache.delete(oldest);
-            }
-            cache.set(f.path, `data:image/${ext};base64,${b64}`);
+            // FIFO + 字节预算淘汰在 cache 内部完成（dataURL 无需 revoke）。
+            cache.set(f.path, `data:image/${ext};base64,${b64}`, b64ByteLength(b64));
             setThumbVersion((v) => v + 1);
           }
         })
@@ -267,6 +332,66 @@ export const HistoryGallery = memo(function HistoryGallery({
     [pumpFullQueue]
   );
 
+  // 历史视频：整读 b64 → blob URL 供 <video> 流式播放。后端
+  // read_file_b64 已有 256MB 单文件上限；缓存给 512MB 字节预算——大视频
+  // 一条动辄上百 MB，条数上限会让画廊翻几页就超 GB。淘汰时
+  // revoke 被挤出的 blob URL 释放解码缓冲。
+  const VIDEO_CACHE_BYTES = 512 * 1024 * 1024;
+  const VIDEO_CONCURRENCY = 1;
+  const videoSrcsRef = useRef(new ByteBudgedCache<string>(VIDEO_CACHE_BYTES));
+  const failedVideos = useRef(new Set<string>());
+  const pendingVideos = useRef(new Set<string>());
+  const videoQueue = useRef<OutputEntry[]>([]);
+  const activeVideoReads = useRef(0);
+  const pumpVideoQueue = useCallback(() => {
+    while (
+      activeVideoReads.current < VIDEO_CONCURRENCY &&
+      videoQueue.current.length > 0
+    ) {
+      const f = videoQueue.current.shift()!;
+      if (videoSrcsRef.current.has(f.path)) {
+        pendingVideos.current.delete(f.path);
+        continue;
+      }
+      activeVideoReads.current += 1;
+      api
+        .readFileB64(f.path)
+        .then((b64) => {
+          if (videoSrcsRef.current.has(f.path)) return;
+          const url = b64ToBlobUrl(b64, videoMime(f.ext));
+          const evicted = videoSrcsRef.current.set(
+            f.path,
+            url,
+            b64ByteLength(b64)
+          );
+          for (const [, oldUrl] of evicted) URL.revokeObjectURL(oldUrl);
+          setThumbVersion((v) => v + 1);
+        })
+        .catch(() => {
+          // 失败记录在案：瓦片保持占位，点击/刷新再重试（读超大文件
+          // 256MB 上限被拒时给用户可见的占位而非报错弹窗）。
+          failedVideos.current.add(f.path);
+        })
+        .finally(() => {
+          activeVideoReads.current -= 1;
+          pendingVideos.current.delete(f.path);
+          pumpVideoQueue();
+        });
+    }
+  }, []);
+  const ensureVideo = useCallback(
+    (f: OutputEntry, force = false) => {
+      if (videoSrcsRef.current.has(f.path)) return;
+      if (pendingVideos.current.has(f.path)) return;
+      if (failedVideos.current.has(f.path) && !force) return;
+      failedVideos.current.delete(f.path);
+      pendingVideos.current.add(f.path);
+      videoQueue.current.push(f);
+      pumpVideoQueue();
+    },
+    [pumpVideoQueue]
+  );
+
   // 搜索文本一次性预计算：旧实现每次键击对每个文件 JSON.stringify(metadata)
   // 过滤，上千文件时明显卡顿（对抗性审查）。这里只随 files 变化重建。
   const searchIndex = useMemo(() => {
@@ -286,18 +411,19 @@ export const HistoryGallery = memo(function HistoryGallery({
     return m;
   }, [files]);
 
-  const imgFiles = useMemo(
-    () => files.filter((f) => ["png", "jpg", "jpeg", "webp"].includes(f.ext)),
+  const mediaFiles = useMemo(
+    () =>
+      files.filter((f) => IMAGE_EXTS.has(f.ext) || VIDEO_EXTS.has(f.ext)),
     [files]
   );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredFiles = normalizedQuery
-    ? imgFiles.filter((file) => {
+    ? mediaFiles.filter((file) => {
         const searchable =
           searchIndex.get(file.path) || file.name.toLocaleLowerCase();
         return searchable.includes(normalizedQuery);
       })
-    : imgFiles;
+    : mediaFiles;
   const sortedFiles = useMemo(() => {
     const arr = [...filteredFiles];
     if (sort === "newest") arr.sort((a, b) => b.modified - a.modified);
@@ -348,49 +474,59 @@ export const HistoryGallery = memo(function HistoryGallery({
       window.removeEventListener("resize", read);
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
-  }, [imgFiles.length === 0, virtualize]);
+  }, [mediaFiles.length === 0, virtualize]);
 
-  // 统一 Lightbox 的导航列表与动作条。当前项优先用原图（LRU 缓存），
-  // 未就绪时回退缩略图，加载完成经 thumbVersion 触发刷新。
+  // 统一 Lightbox 的导航列表与动作条。当前项优先用原图（字节预算缓存），
+  // 未就绪时回退缩略图；视频条目读整文件 blob URL。加载完成经
+  // thumbVersion 触发刷新。
   const lightboxItems = useMemo<LightboxItem[]>(
     () =>
       sortedFiles.map((f) => ({
-        type: "image",
-        src: fullSrcsRef.current.get(f.path) || thumbSrcs.get(f.path) || "",
+        type: isVideoFile(f) ? "video" : "image",
+        src: isVideoFile(f)
+          ? videoSrcsRef.current.get(f.path) || ""
+          : fullSrcsRef.current.get(f.path) || thumbSrcs.get(f.path) || "",
         title: f.name,
       })),
     [sortedFiles, thumbSrcs]
   );
 
-  // Lightbox 当前项拉原图，相邻项预取缩略图：虚拟滚动下导航可能落到
-  // 尚未渲染过的文件,这里直接走同一缓存通道。
+  // Lightbox 当前项拉原图/视频，相邻项预取缩略图/视频：虚拟滚动下导航
+  // 可能落到尚未渲染过的文件,这里直接走同一缓存通道。
   useEffect(() => {
     if (lightboxIndex == null) return;
     const current = sortedFiles[lightboxIndex];
     if (current) {
-      ensureThumb(current, true);
-      ensureFull(current);
+      if (isVideoFile(current)) {
+        ensureVideo(current, true);
+      } else {
+        ensureThumb(current, true);
+        ensureFull(current);
+      }
     }
     for (const idx of [lightboxIndex - 1, lightboxIndex + 1]) {
       const entry = sortedFiles[idx];
-      if (entry) ensureThumb(entry);
+      if (!entry) continue;
+      if (isVideoFile(entry)) ensureVideo(entry);
+      else ensureThumb(entry);
     }
-  }, [lightboxIndex, sortedFiles, ensureThumb, ensureFull]);
+  }, [lightboxIndex, sortedFiles, ensureThumb, ensureFull, ensureVideo]);
 
   const openTile = useCallback(
     (file: OutputEntry) => {
       // force：读取失败过的瓦片点开时再试一次。
-      ensureThumb(file, true);
+      if (isVideoFile(file)) ensureVideo(file, true);
+      else ensureThumb(file, true);
       const idx = sortedFiles.findIndex((f) => f.path === file.path);
       if (idx >= 0) setLightboxIndex(idx);
     },
-    [sortedFiles, ensureThumb]
+    [sortedFiles, ensureThumb, ensureVideo]
   );
 
   const onRestore = useCallback(
     async (entry: OutputEntry) => {
       if (!entry.metadata) {
-        toast("该图片不含生成参数", true);
+        toast("该文件不含生成参数", true);
         return false;
       }
       try {
@@ -433,6 +569,11 @@ export const HistoryGallery = memo(function HistoryGallery({
         thumbSrcsRef.current.delete(entry.path);
         fullSrcsRef.current.delete(entry.path);
         failedThumbs.current.delete(entry.path);
+        // 视频缓存：blob URL 必须 revoke，否则删除后解码缓冲仍驻留。
+        const videoUrl = videoSrcsRef.current.get(entry.path);
+        if (videoUrl) URL.revokeObjectURL(videoUrl);
+        videoSrcsRef.current.delete(entry.path);
+        failedVideos.current.delete(entry.path);
         setThumbVersion((v) => v + 1);
         setLightboxIndex(null);
         toast(`已删除：${entry.name}`);
@@ -444,14 +585,14 @@ export const HistoryGallery = memo(function HistoryGallery({
   );
 
   return (
-    <Panel title={vostok ? "回传档案" : "历史画廊"} badge={imgFiles.length || null}>
+    <Panel title={vostok ? "回传档案" : "历史画廊"} badge={mediaFiles.length || null}>
       {!settings.outputDir ? (
         <p className="text-muted text-xs py-1">请在控制台设置输出目录</p>
       ) : loading ? (
         <span className="spinner block mx-auto my-2" />
-      ) : imgFiles.length === 0 ? (
+      ) : mediaFiles.length === 0 ? (
         <p className="text-muted text-xs py-1">
-          {vostok ? "暂无回传图像" : "暂无历史图片"}
+          {vostok ? "暂无回传记录" : "暂无历史记录"}
         </p>
       ) : (
         <>
@@ -492,7 +633,7 @@ export const HistoryGallery = memo(function HistoryGallery({
           </div>
           {sortedFiles.length === 0 ? (
             <div className="empty-state">
-              {vostok ? "没有匹配的回传图像" : "没有匹配的历史图片"}
+              {vostok ? "没有匹配的回传记录" : "没有匹配的历史记录"}
             </div>
           ) : virtualize ? (
             <div
@@ -509,9 +650,12 @@ export const HistoryGallery = memo(function HistoryGallery({
                     key={file.path}
                     file={file}
                     src={thumbSrcs.get(file.path) || ""}
+                    videoUrl={videoSrcsRef.current.get(file.path) || ""}
                     retryToken={retryToken}
                     onOpen={openTile}
-                    onNeedSrc={() => ensureThumb(file)}
+                    onNeedSrc={() =>
+                      isVideoFile(file) ? ensureVideo(file) : ensureThumb(file)
+                    }
                     style={{
                       position: "absolute",
                       left: pos.left,
@@ -530,9 +674,12 @@ export const HistoryGallery = memo(function HistoryGallery({
                   key={f.path}
                   file={f}
                   src={thumbSrcs.get(f.path) || ""}
+                  videoUrl={videoSrcsRef.current.get(f.path) || ""}
                   retryToken={retryToken}
                   onOpen={openTile}
-                  onNeedSrc={() => ensureThumb(f)}
+                  onNeedSrc={() =>
+                    isVideoFile(f) ? ensureVideo(f) : ensureThumb(f)
+                  }
                 />
               ))}
             </div>
@@ -557,7 +704,7 @@ export const HistoryGallery = memo(function HistoryGallery({
               if (!entry) return null;
               return (
                 <>
-                  {onUseAsInit && (
+                  {onUseAsInit && !isVideoFile(entry) && (
                     <button
                       type="button"
                       className="btn btn-sm"
@@ -589,7 +736,7 @@ export const HistoryGallery = memo(function HistoryGallery({
                   </button>
                   <TwoTapButton
                     className="btn btn-sm btn-danger"
-                    label="删除此图片"
+                    label="删除此文件"
                     armedLabel="确认删除该文件"
                     armedTitle="文件将从磁盘永久删除，再次点击确认"
                     needsConfirm
