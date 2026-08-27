@@ -1281,6 +1281,11 @@ export function Dashboard() {
 								{ value: "q5_1", label: "Q5_1" },
 								{ value: "q4_0", label: "Q4_0" },
 								{ value: "q4_1", label: "Q4_1" },
+								{ value: "q2_0", label: "Q2_0" },
+								// FP8 直载权重（上游 #1913 起 sd_type_t 新增 F8_E4M3/E5M2，
+								// 如 Ideogram4 官方 FP8 safetensors 可免转换直接加载）
+								{ value: "f8_e4m3", label: "F8_E4M3（FP8）" },
+								{ value: "f8_e5m2", label: "F8_E5M2（FP8）" },
 								// IQ 系列（需 imatrix 才有可用质量）
 								{ value: "iq4_xs", label: "IQ4_XS（需 imatrix）" },
 								{ value: "iq4_nl", label: "IQ4_NL（需 imatrix）" },

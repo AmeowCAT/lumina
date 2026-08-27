@@ -88,7 +88,7 @@ src-tauri/target/release/lumina.exe
 
 ## 与上游的关系
 
-推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。所以：
+推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`be0e344`](https://github.com/leejet/stable-diffusion.cpp/commit/be0e34480dada95f8ce9a021bbb95c5de85d67c7)（2026-08-27）：含 scaled FP8 权重直载（#1913，量化项含 F8_E4M3 / F8_E5M2）、MiniMax-H3 支持标准 Qwen3-VL 权重（#1910）。所以：
 
 - 界面、启动流程、参数映射有问题 → 提到[本仓库 Issues](https://github.com/AmeowCAT/lumina/issues)
 - 出图质量、加载失败、显存不足、模型不被识别 → 提到[上游仓库](https://github.com/leejet/stable-diffusion.cpp/issues)
