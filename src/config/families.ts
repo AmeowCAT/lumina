@@ -251,6 +251,8 @@ export const VIDEO_FRAME_ALIGN: Record<string, number> = {
 	"lingbot-video": 4,
 	"hunyuan-video": 4,
 	ltx: 8,
+	// LTX-2.5 与 2.3 共用视频 VAE 架构（上游 #1893），latent 对齐同为 8n+1。
+	ltx25: 8,
 };
 
 /** 返回该家族下 `frames` 实际生效的帧数；不对齐的家族原样返回。 */
@@ -1040,13 +1042,13 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 	},
 	ltx: {
 		name: "LTX-Video",
-		hint: "视频生成 + Gemma",
+		hint: "视频生成 + Gemma 3",
 		mode: "vid",
 		fields: [
 			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
 			F("vae", "视频 VAE", "vae", "vae"),
 			F("audio_vae", "音频 VAE", "audio-vae", "audio_vae"),
-			F("llm", "LLM (Gemma)", "llm", "llm"),
+			F("llm", "LLM (Gemma 3 12B)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 			F("embeddings", "嵌入连接器", "embeddings-connectors", "embeddings"),
 		],
@@ -1062,6 +1064,58 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				guidance: { txt_cfg: 6.0 },
 			},
 			video_frames: 33,
+			fps: 24,
+		},
+	},
+	// 上游 #1893 / docs/ltx2.md：LTX-2.5 与 2.3 共用 transformer 与视频/音频
+	// VAE 架构、由引擎按权重自动区分；组件差异在文本编码器——配套的 Gemma 4
+	// 12B 为 LTX 微调版、文本投影内置，不再需要 --embeddings-connectors。
+	// 推荐参数取自上游 T2V 示例：cfg 3.0、121 帧 @24fps（2.3 为 cfg 6.0、33 帧）。
+	ltx25: {
+		name: "LTX-2.5",
+		hint: "视频生成 + Gemma 4（投影内置，无需嵌入连接器）",
+		mode: "vid",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F(
+				"vae",
+				"视频 VAE",
+				"vae",
+				"vae",
+				true,
+				"必须选 conv 变体（ltx-2.5-video-vae-conv-bf16.safetensors）；默认的 video-vae 是 diffusion 解码器，上游未实现",
+			),
+			F("audio_vae", "音频 VAE", "audio-vae", "audio_vae"),
+			F(
+				"llm",
+				"LLM (Gemma 4 12B)",
+				"llm",
+				"llm",
+				true,
+				"须用 LTX 微调版 gemma4-12b-with-proj-ltx-2.5（文本投影内置），Google 原版 Gemma 4 不可替代",
+			),
+			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+			F(
+				"embeddings",
+				"嵌入连接器 (可选)",
+				"embeddings-connectors",
+				"embeddings",
+				false,
+				"LTX-2.5 的文本投影已内置于 Gemma 4，无需此文件；它是 LTX-2.3 的必需组件",
+			),
+		],
+		fixedArgs: { "diffusion-fa": true },
+		genDefaults: {
+			seed: -1,
+			width: 1280,
+			height: 720,
+			sample_params: {
+				sample_steps: 20,
+				sample_method: "euler",
+				scheduler: "ltx2",
+				guidance: { txt_cfg: 3.0 },
+			},
+			video_frames: 121,
 			fps: 24,
 		},
 	},
@@ -1530,7 +1584,7 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
 		families: ["wan-ti2v"],
 	},
 	{ hint: "HunyuanVideo 的视频 TAE（32ch latent）", families: ["hunyuan-video"] },
-	{ hint: "LTX-AV 的视频 TAE（128ch latent）", families: ["ltx"] },
+	{ hint: "LTX-AV 的视频 TAE（128ch latent）", families: ["ltx", "ltx25"] },
 	{
 		hint: "taeh3（MiniMax-H3 视频 TAE，24ch latent；上游 #1874 起支持）",
 		families: ["minimax-h3-fl2va", "minimax-h3-ref2va"],

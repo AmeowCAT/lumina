@@ -99,11 +99,14 @@ describe("alignVideoFrames", () => {
   });
 
   it("aligns LTX to 8n+1, not 4n+1", () => {
-    expect(alignVideoFrames("ltx", 33)).toBe(33);
-    expect(alignVideoFrames("ltx", 34)).toBe(33);
-    // 4n+1 会得到 37；8n+1 必须回落到 33。
-    expect(alignVideoFrames("ltx", 40)).toBe(33);
-    expect(alignVideoFrames("ltx", 41)).toBe(41);
+    // LTX-2.5 与 2.3 共用视频 VAE 架构（上游 #1893），latent 对齐同为 8n+1。
+    for (const family of ["ltx", "ltx25"]) {
+      expect(alignVideoFrames(family, 33)).toBe(33);
+      expect(alignVideoFrames(family, 34)).toBe(33);
+      // 4n+1 会得到 37；8n+1 必须回落到 33。
+      expect(alignVideoFrames(family, 40)).toBe(33);
+      expect(alignVideoFrames(family, 41)).toBe(41);
+    }
   });
 
   it("aligns MiniMax-H3 upward to 17k+5 with a floor of 5", () => {
@@ -295,12 +298,42 @@ describe("launch configuration", () => {
     expect(hints.get("wan-ti2v")).toMatch(/taew2_2/);
     expect(hints.get("hunyuan-video")).toMatch(/HunyuanVideo/);
     expect(hints.get("ltx")).toMatch(/LTX-AV/);
+    expect(hints.get("ltx25")).toMatch(/LTX-AV/);
     expect(hints.get("minimax-h3-fl2va")).toMatch(/taeh3/);
     expect(hints.get("minimax-h3-ref2va")).toMatch(/taeh3/);
     // PiD 的 latent 随 --vae-format 变，不能给单一权重名。
     expect(hints.get("pid")).toMatch(/--vae-format/);
     // 未分组的家族拿到通用文案，而不是某个具体权重名。
     expect(hints.get("custom")).toMatch(/按主模型 latent 空间/);
+  });
+
+  // 上游 #1893 / docs/ltx2.md：LTX-2.5 的 Gemma 4 文本编码器内置文本投影，
+  // --embeddings-connectors 只服务于 LTX-2.3，故 ltx25 不把它列为必需。
+  it("requires embeddings connectors for LTX-2.3 but not LTX-2.5", () => {
+    const ltx25 = buildLaunchConfig({
+      family: "ltx25",
+      modelPath: "/models/ltx-2.5-22b-dev-transformer-Q8_0.gguf",
+      components: {
+        vae: "/models/ltx-2.5-video-vae-conv-bf16.safetensors",
+        audio_vae: "/models/ltx-2.5-audio-vae-bf16.safetensors",
+        llm: "/models/gemma4-12b-with-proj-ltx-2.5-Q8_0.gguf",
+      },
+      runtime,
+    });
+    expect(ltx25.missing).toEqual([]);
+    expect(ltx25.args["embeddings-connectors"]).toBeUndefined();
+
+    const ltx = buildLaunchConfig({
+      family: "ltx",
+      modelPath: "/models/ltx-2.3-22b-dev-UD-Q4_K_M.gguf",
+      components: {
+        vae: "/models/ltx-2.3-video_vae.safetensors",
+        audio_vae: "/models/ltx-2.3-audio_vae.safetensors",
+        llm: "/models/gemma-3-12b-it.gguf",
+      },
+      runtime,
+    });
+    expect(ltx.missing).toContain("嵌入连接器");
   });
 
   // 上游 docs/ip_adapter.md：IP-Adapter 只支持 SD 1.5 / SDXL，且需要

@@ -88,15 +88,15 @@ src-tauri/target/release/lumina.exe
 
 ## 与上游的关系
 
-推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`be0e344`](https://github.com/leejet/stable-diffusion.cpp/commit/be0e34480dada95f8ce9a021bbb95c5de85d67c7)（2026-08-27）：含 scaled FP8 权重直载（#1913，量化项含 F8_E4M3 / F8_E5M2）、MiniMax-H3 支持标准 Qwen3-VL 权重（#1910）。所以：
+推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`6b3edaa`](https://github.com/leejet/stable-diffusion.cpp/commit/6b3edaaf32cc19e5bb2d819c788bd557eddc8eba)（2026-08-31）：含 LTX-2.5 支持（#1893，GUI 拆为独立家族）、scaled FP8 权重直载（#1913，量化项含 F8_E4M3 / F8_E5M2）、backend 原生 FP8 matmul（#1916）、时间分块泛化到各视频 VAE（#1926）。所以：
 
 - 界面、启动流程、参数映射有问题 → 提到[本仓库 Issues](https://github.com/AmeowCAT/lumina/issues)
 - 出图质量、加载失败、显存不足、模型不被识别 → 提到[上游仓库](https://github.com/leejet/stable-diffusion.cpp/issues)
 
 <details>
-<summary>已适配的模型家族（47 个，外加"自定义"）</summary>
+<summary>已适配的模型家族（48 个，外加"自定义"）</summary>
 
-Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Qwen-Image（含 Layered/Edit）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS），以及"自定义"（手动配置全部组件）。
+Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Qwen-Image（含 Layered/Edit）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS），以及"自定义"（手动配置全部组件）。
 
 </details>
 

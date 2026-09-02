@@ -115,6 +115,11 @@ pub fn detect_family(path: &str) -> &'static str {
     if has_any(&t, &["ideogram"]) {
         return "ideogram";
     }
+    // LTX-2.5 单独成族（上游 #1893）：与 2.3 共用架构、按权重自动区分，
+    // 但组件需求不同——Gemma 4 文本编码器内置投影，无需 --embeddings-connectors。
+    if has_any(&t, &["ltx-2.5", "ltx_2_5", "ltx2.5", "ltx-2_5"]) {
+        return "ltx25";
+    }
     if has_any(&t, &["ltx"]) {
         return "ltx";
     }
@@ -573,6 +578,63 @@ mod tests {
                 "minimax_h3_fl2va-Q4_K_M",
                 "diffusion_models",
                 9000.0,
+            ),
+            "model"
+        );
+    }
+
+    #[test]
+    fn detects_ltx25_before_generic_ltx() {
+        // 上游 #1893 / docs/ltx2.md：LTX-2.5 与 2.3 共用架构但组件需求不同
+        // （Gemma 4 内置投影，无 --embeddings-connectors），单独成族。
+        assert_eq!(
+            detect_family("ltx-2.5-22b-dev-transformer-Q8_0.gguf"),
+            "ltx25"
+        );
+        assert_eq!(detect_family("LTX-2.5-22B-dev.safetensors"), "ltx25");
+        assert_eq!(detect_family("ltx_2_5_22b_dev.gguf"), "ltx25");
+        // 2.3 与旧 LTX-Video 仍归 ltx 家族。
+        assert_eq!(detect_family("ltx-2.3-22b-dev-UD-Q4_K_M.gguf"), "ltx");
+        assert_eq!(detect_family("ltx-video-2b.safetensors"), "ltx");
+    }
+
+    #[test]
+    fn classifies_ltx25_components() {
+        // gemma4 文件名同时命中 llm 关键词（gemma）与扩散模型关键词（ltx-2），
+        // 依赖 is_llm_encoder 分支在前才能正确归类。
+        assert_eq!(
+            classify_file(
+                "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+                "gemma4-12b-with-proj-ltx-2.5-bf16",
+                "text_encoders",
+                24000.0,
+            ),
+            "llm"
+        );
+        assert_eq!(
+            classify_file(
+                "ltx-2.5-video-vae-conv-bf16.safetensors",
+                "ltx-2.5-video-vae-conv-bf16",
+                "vae",
+                900.0,
+            ),
+            "vae"
+        );
+        assert_eq!(
+            classify_file(
+                "ltx-2.5-audio-vae-bf16.safetensors",
+                "ltx-2.5-audio-vae-bf16",
+                "vae",
+                400.0,
+            ),
+            "audio_vae"
+        );
+        assert_eq!(
+            classify_file(
+                "ltx-2.5-22b-dev-transformer-Q8_0.gguf",
+                "ltx-2.5-22b-dev-transformer-Q8_0",
+                "diffusion_models",
+                12000.0,
             ),
             "model"
         );
