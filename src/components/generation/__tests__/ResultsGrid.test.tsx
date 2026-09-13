@@ -169,6 +169,12 @@ describe("ResultsGrid 聚焦区 + 瀑布流", () => {
     expect(screen.getByRole("button", { name: /查看本次生成/ })).toBeTruthy();
   });
 
+  it("hides image-edit shortcuts in both result sections when unsupported", () => {
+    render(<ResultsGrid results={[imageEntry("new"), imageEntry("old")]} {...baseProps} onUseAsInit={undefined} />);
+    expect(screen.queryByRole("button", { name: "用作初始图片" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "保存到输出目录" })).toHaveLength(2);
+  });
+
   it("两条结果时第一条聚焦、第二条进瀑布流", () => {
     render(
       <ResultsGrid results={[imageEntry("new"), imageEntry("old")]} {...baseProps} />

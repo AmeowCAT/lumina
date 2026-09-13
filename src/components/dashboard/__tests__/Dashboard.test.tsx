@@ -155,6 +155,38 @@ describe("Dashboard onboarding validation", () => {
     expect(screen.getByLabelText("最大队列数量")).toHaveValue(7);
   });
 
+  it("persists diagnostic edits before launch and clears absent fields in a legacy snapshot", async () => {
+    const base = scanFor("hidream").files[0];
+    mocks.loadSettings.mockResolvedValue({
+      ...settings,
+      modelSnapshots: { "/models/b.safetensors": {
+        familyOverride: "hidream", components: {}, backend: "", refImagePreset: "",
+        extraArgs: "", offloadCpu: false, quantType: "", maxQueueSize: 4,
+      } },
+    });
+    mocks.scanModels.mockResolvedValue({
+      ...scanFor("hidream"), count: 2,
+      families: { "/models/a.safetensors": "hidream", "/models/b.safetensors": "hidream" },
+      files: [
+        { ...base, name: "a.safetensors", path: "/models/a.safetensors" },
+        { ...base, name: "b.safetensors", path: "/models/b.safetensors" },
+      ],
+    });
+    render(<Dashboard />);
+    await pickOption("主模型", "a.safetensors (1.0 GB)");
+    fireEvent.click(screen.getByRole("button", { name: /诊断与数值稳定性/ }));
+    fireEvent.change(screen.getByLabelText("Linear 输入缩放（--linear-scale）"), { target: { value: "0.0078125" } });
+    await pickOption("日志等级（--log-level）", "debug · 最详细");
+    await waitFor(() => expect(useStore.getState().settings.modelSnapshots["/models/a.safetensors"]).toMatchObject({ linearScale: "0.0078125", logLevel: "debug" }));
+    expect(mocks.startServer).not.toHaveBeenCalled();
+    await pickOption("主模型", "b.safetensors (1.0 GB)");
+    expect(screen.getByLabelText("Linear 输入缩放（--linear-scale）")).toHaveValue("");
+    expect(screen.getByLabelText("日志等级（--log-level）")).toHaveTextContent("内核默认");
+    await pickOption("主模型", "a.safetensors (1.0 GB)");
+    expect(screen.getByLabelText("Linear 输入缩放（--linear-scale）")).toHaveValue("0.0078125");
+    expect(screen.getByLabelText("日志等级（--log-level）")).toHaveTextContent("debug");
+  });
+
   it("records component config on change and restores it after switching away and back", async () => {
     // 回归：快照曾只在启动成功后保存，且切换路径的防抖保存会随 Dashboard
     // 卸载被丢弃——"选中后组件配置没有记录并沿用"的根因。这里验证：

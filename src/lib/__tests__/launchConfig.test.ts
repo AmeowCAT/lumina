@@ -265,7 +265,7 @@ describe("launch configuration", () => {
   // 上游对除 FakeVAE 家族外的所有版本都会构建 TAE（stable-diffusion.cpp
   // create_tae），MiniMax-H3 自 #1874（taeh3）起也支持。
   it("offers an optional TAE component for every non-FakeVAE family", () => {
-    const fakeVae = ["chroma-radiance", "hidream", "minit2i"];
+    const fakeVae = ["chroma-radiance", "hidream", "minit2i", "sensenova-u1"];
     for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
       const tae = config.fields.filter((field) => field.arg === "taesd");
       if (fakeVae.includes(family)) {

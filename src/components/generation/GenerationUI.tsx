@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { SlidersHorizontal } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
-import { scaleSize, FAMILY_CONFIG, DISTILL_FAMILIES } from "../../config/families";
+import { alignSizeUp, scaleSize, FAMILY_CONFIG, DISTILL_FAMILIES } from "../../config/families";
 import {
   b64ToDataUrl,
   buildRequestBody,
@@ -16,7 +16,7 @@ import {
   sdcppMetadataToGenParams,
   validateLingbotPrompt,
 } from "../../lib/utils";
-import { familyDefaults, missingRequiredInputs } from "../../lib/launchConfig";
+import { applyFamilyFeatureLimits, familyDefaults, filterFamilyInputs, missingRequiredInputs } from "../../lib/launchConfig";
 import type { GenImages, GenMode, GenParams, Job, JobConfig } from "../../types";
 import { Lightbox, type LightboxItem } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
@@ -176,11 +176,6 @@ export function GenerationUI() {
   // requires hooks to run unconditionally on every render; an early return
   // placed before them skips the params-init effect, leaving `params` null
   // forever → blank screen. The null guard lives just before the JSX return.
-  const features = caps?.features_by_mode?.[mode] || {};
-  // 上游目前把 control_frames 作为 vid_gen 的通用协议能力返回，但实际仅
-  // VACE 模型消费；LTX-AV 会明确拒绝非空条件帧。
-  const controlFramesSupported =
-    mode === "vid_gen" && !!features.control_frames && isVaceModel(caps?.model);
   // 家族检测走 Rust detect_family（唯一实现）；异步就位前先按 custom 渲染。
   const activeFamilyOverride =
     familyOverride &&
@@ -190,6 +185,10 @@ export function GenerationUI() {
       : "";
   const [detectedFamily, setDetectedFamily] = useState("custom");
   const family = activeFamilyOverride || detectedFamily;
+  const features = applyFamilyFeatureLimits(caps?.features_by_mode?.[mode] || {}, FAMILY_CONFIG[family]);
+  // The protocol's control_frames flag is generic; only VACE consumes it.
+  const controlFramesSupported =
+    mode === "vid_gen" && !!features.control_frames && isVaceModel(caps?.model);
   // MiniMax-H3 Ref2VA 半支持：vid_gen 协议已接受 ref_images（参考图像条件），
   // 但 capabilities 的 vid_gen features 未广告 ref_images，按家族声明判定。
   const refImagesSupported =
@@ -316,17 +315,16 @@ export function GenerationUI() {
       toast("队列已满", true);
       return;
     }
-    const submittedControlFrames = controlFramesSupported ? controlFrames : [];
-    const submittedRefImages = refImagesSupported ? refImages : [];
-    const missingInputs = missingRequiredInputs(FAMILY_CONFIG[family], mode, {
+    const images = filterFamilyInputs({
       initImage,
       maskImage,
       controlImage,
       ipAdapterImage,
       endImage,
-      refImages: submittedRefImages,
-      controlFrames: submittedControlFrames,
-    });
+      refImages: refImagesSupported ? refImages : [],
+      controlFrames: controlFramesSupported ? controlFrames : [],
+    }, FAMILY_CONFIG[family]);
+    const missingInputs = missingRequiredInputs(FAMILY_CONFIG[family], mode, images);
     if (missingInputs.length > 0) {
       toast("请先提供: " + missingInputs.join("、"), true);
       return;
@@ -336,21 +334,18 @@ export function GenerationUI() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      let activeParams = params;
+      let activeParams: GenParams = {
+        ...params,
+        width: alignSizeUp(family, params.width),
+        height: alignSizeUp(family, params.height),
+        ...(features.hires === false ? { hires: { enabled: false } } : {}),
+        ...(features.vae_tiling === false ? { vae_tiling_params: { enabled: false } } : {}),
+      };
       if (seedRandom || params.seed < 0) {
         const rs = randSeed();
-        activeParams = { ...params, seed: rs };
+        activeParams = { ...activeParams, seed: rs };
         update("seed", rs);
       }
-      const images: GenImages = {
-        initImage,
-        maskImage,
-        controlImage,
-        ipAdapterImage,
-        endImage,
-        refImages: submittedRefImages,
-        controlFrames: submittedControlFrames,
-      };
       const body = buildRequestBody(mode, activeParams, images);
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
       if (status === 202) {
@@ -666,6 +661,10 @@ export function GenerationUI() {
   // 即被 revoke），且 sd-server 无法解码 blob: 协议（对抗性审查 B2）。
   const useAsInit = useCallback(
     (src: string, fmt?: string) => {
+      if (features.init_image === false) {
+        toast("当前模型不支持初始图片输入", true);
+        return;
+      }
       const dataUrl = src.startsWith("data:")
         ? src
         : b64ToDataUrl(src, fmt ? `image/${fmt}` : "image/png");
@@ -673,7 +672,7 @@ export function GenerationUI() {
       if (mode !== "img_gen") setMode("img_gen");
       toast("已设为初始图片，可在「图片输入」面板中调整");
     },
-    [mode, setImage, setMode, toast]
+    [mode, features.init_image, setImage, setMode, toast]
   );
 
   // 从 PNG Info 恢复参数（历史画廊）。
@@ -946,7 +945,7 @@ export function GenerationUI() {
                     onDownload={download}
                     onRemove={removeResult}
                     onSaveImage={saveImageStable}
-                    onUseAsInit={useAsInit}
+                    onUseAsInit={features.init_image === false ? undefined : useAsInit}
                     getVideoUrl={getVideoUrl}
                     getImageUrl={getImageUrl}
                   />
@@ -971,7 +970,7 @@ export function GenerationUI() {
                     >
                       <HistoryGallery
                         onRestoreParams={restoreFromMetadata}
-                        onUseAsInit={useAsInit}
+                        onUseAsInit={features.init_image === false ? undefined : useAsInit}
                       />
                     </Suspense>
                   </div>

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ApiErrorBody,
   Capabilities,
+  CliCapabilities,
   GenMode,
   Job,
   ScanResult,
@@ -35,6 +36,10 @@ export const api = {
       "stop_server"
     ),
   serverStatus: () => invoke<ServerStatus>("server_status"),
+  inspectServer: (exePath: string) =>
+    invoke<CliCapabilities>("inspect_server", { exePath }),
+  preflightServer: (exePath: string, args: ServerArgs, port: number) =>
+    invoke<CliCapabilities>("preflight_server", { exePath, args, port }),
   scanModels: (dir: string) => invoke<ScanResult>("scan_models", { dir }),
   /** 家族检测的唯一实现在 Rust family.rs，前端不再维护正则副本。 */
   detectFamily: (path: string) => invoke<string>("detect_family", { path }),

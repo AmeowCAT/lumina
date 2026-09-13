@@ -654,6 +654,35 @@ mod tests {
     }
 
     #[test]
+    fn sensenova_package_reuses_index_scanning_and_hides_shards() {
+        let dir = test_dir("sensenova");
+        let package = dir.join("SenseNova-U1.5-8B-MoT");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("model-00001-of-00002.safetensors"), b"one").unwrap();
+        fs::write(package.join("model-00002-of-00002.safetensors"), b"two").unwrap();
+        fs::write(package.join("tokenizer.json"), b"{}").unwrap();
+        fs::write(package.join("model.safetensors.index.json"),
+            r#"{"weight_map":{"a":"model-00001-of-00002.safetensors","b":"model-00002-of-00002.safetensors"}}"#).unwrap();
+        let result = scan_models(dir.to_str().unwrap()).unwrap();
+        assert_eq!(result.files.len(), 1);
+        let entry = &result.files[0];
+        assert_eq!(entry.name, "model.safetensors.index.json");
+        assert_eq!(entry.category, "model");
+        assert_eq!(result.families[&entry.path], "sensenova-u1");
+        fs::remove_file(package.join("model-00002-of-00002.safetensors")).unwrap();
+        let incomplete = scan_models(dir.to_str().unwrap()).unwrap();
+        assert!(incomplete
+            .warnings
+            .iter()
+            .any(|w| w.code == "index_shard_missing"));
+        assert!(incomplete
+            .files
+            .iter()
+            .all(|f| f.ext != "safetensors.index.json"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn scan_includes_sft_files_used_by_common_vaes() {
         let dir = test_dir("sft-extension");
         fs::write(dir.join("ae.sft"), b"vae").unwrap();

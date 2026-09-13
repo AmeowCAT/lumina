@@ -31,6 +31,13 @@ pub struct Settings {
     /// Raw --max-vram spec; empty = 启动时不传该参数。
     #[serde(default)]
     pub max_vram: String,
+    /// Startup diagnostics; absent/empty fields preserve the executable defaults.
+    #[serde(default)]
+    pub log_level: String,
+    #[serde(default)]
+    pub linear_scale: String,
+    #[serde(default)]
+    pub attn_scale: String,
     #[serde(default = "default_max_queue_size")]
     pub max_queue_size: u32,
     /// Port sd-server listens on. Configurable from the dashboard; older
@@ -57,6 +64,9 @@ impl Default for Settings {
             offload_cpu: false,
             quant_type: String::new(),
             max_vram: String::new(),
+            log_level: String::new(),
+            linear_scale: String::new(),
+            attn_scale: String::new(),
             max_queue_size: default_max_queue_size(),
             sd_port: default_sd_port(),
             model_snapshots: HashMap::new(),
@@ -86,6 +96,13 @@ pub struct ModelConfigSnapshot {
     /// Raw --max-vram spec; empty = 启动时不传该参数。
     #[serde(default)]
     pub max_vram: String,
+    /// Startup diagnostics; absent/empty fields preserve the executable defaults.
+    #[serde(default)]
+    pub log_level: String,
+    #[serde(default)]
+    pub linear_scale: String,
+    #[serde(default)]
+    pub attn_scale: String,
     #[serde(default = "default_max_queue_size")]
     pub max_queue_size: u32,
 }
@@ -442,6 +459,37 @@ mod tests {
         assert!(settings.vae_format.is_empty());
         // Pre-0.7.4 files have no `sdPort` key — they must keep the old port.
         assert_eq!(settings.sd_port, 1234);
+    }
+
+    #[test]
+    fn diagnostic_settings_and_snapshots_round_trip_with_legacy_defaults() {
+        let settings: Settings = serde_json::from_str(
+            r#"{
+            "logLevel":"debug", "linearScale":"0.0078125", "attnScale":"0",
+            "modelSnapshots": {
+                "new": {"logLevel":"verbose", "linearScale":"0x1p-7", "attnScale":"1"},
+                "legacy": {"components":{}}
+            }
+        }"#,
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(&settings).unwrap();
+        assert_eq!(encoded["logLevel"], "debug");
+        assert_eq!(encoded["linearScale"], "0.0078125");
+        assert_eq!(encoded["attnScale"], "0");
+        assert_eq!(encoded["modelSnapshots"]["new"]["linearScale"], "0x1p-7");
+        let legacy = &settings.model_snapshots["legacy"];
+        assert!(
+            legacy.log_level.is_empty()
+                && legacy.linear_scale.is_empty()
+                && legacy.attn_scale.is_empty()
+        );
+        let defaults: Settings = serde_json::from_str("{}").unwrap();
+        assert!(
+            defaults.log_level.is_empty()
+                && defaults.linear_scale.is_empty()
+                && defaults.attn_scale.is_empty()
+        );
     }
 
     #[test]

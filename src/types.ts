@@ -4,7 +4,14 @@
  *  (--key value), and arrays (repeated --key). */
 export type ServerArgs = Record<string, string | number | boolean | string[]>;
 
-export interface ModelConfigSnapshot {
+/** Startup-only diagnostics; missing values in old settings mean engine defaults. */
+export interface RuntimeDiagnostics {
+  logLevel?: string;
+  linearScale?: string;
+  attnScale?: string;
+}
+
+export interface ModelConfigSnapshot extends RuntimeDiagnostics {
   familyOverride: string;
   components: Record<string, string>;
   backend: string;
@@ -19,7 +26,7 @@ export interface ModelConfigSnapshot {
   maxQueueSize: number;
 }
 
-export interface Settings {
+export interface Settings extends RuntimeDiagnostics {
   exeDir: string;
   modelDir: string;
   outputDir: string;
@@ -76,6 +83,16 @@ export interface ScanResult {
     warningsOmitted: number;
     elapsedMs: number;
   };
+}
+
+export interface CliCapabilities {
+  executable: string;
+  version: string | null;
+  verified: boolean;
+  options: string[];
+  autoFit: "unknown" | "unsupported" | "flag" | "on-off";
+  memoryMode: "unknown" | "legacy" | "automatic";
+  warnings: string[];
 }
 
 export interface ServerStatus {

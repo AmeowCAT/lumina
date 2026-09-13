@@ -5,6 +5,7 @@ import {
   type RequiredInput,
 } from "../config/families";
 import type {
+  Features,
   GenImages,
   GenMode,
   ModelConfigSnapshot,
@@ -12,6 +13,7 @@ import type {
   Settings,
 } from "../types";
 import { deepMerge } from "./utils";
+import { buildDiagnosticArgs } from "./diagnostics";
 
 /** Runtime settings shared by the dashboard and model-switch workflow. */
 export type LaunchRuntime = Pick<
@@ -23,6 +25,9 @@ export type LaunchRuntime = Pick<
   | "offloadCpu"
   | "quantType"
   | "maxVram"
+  | "logLevel"
+  | "linearScale"
+  | "attnScale"
 >;
 
 export interface BuildLaunchConfigInput {
@@ -102,9 +107,12 @@ export function buildLaunchConfig({
   if (refImagePreset) args["ref-image-args"] = `preset=${refImagePreset}`;
   if (runtimeValue(runtime, "offloadCpu")) args["offload-to-cpu"] = true;
   if (quantType) args.type = quantType;
-  // --max-vram 为空/纯空白时不传该参数：引擎不设置图切分预算。
+  // 空值不传显式预算；9 月内核仍可按实时显存自动分段，不能解释为禁用分段。
   if (maxVram && maxVram.trim()) args["max-vram"] = maxVram.trim();
   if (extraArgs) args.extra_args = extraArgs;
+  const diagnostics = buildDiagnosticArgs(runtime);
+  Object.assign(args, diagnostics.args);
+  missing.push(...diagnostics.errors);
 
   if (family === "pid") {
     const validVaeFormat = PID_VAE_FORMATS.some(
@@ -253,6 +261,27 @@ export function validateMaxVramSpec(raw: string): string | null {
     }
   }
   return null;
+}
+
+/** Native capabilities describe the protocol, not every model's input support. */
+export function applyFamilyFeatureLimits(features: Features, config?: FamilyConfig): Features {
+  const limited = { ...features };
+  for (const key of config?.disabledFeatures || []) limited[key] = false;
+  return limited;
+}
+
+/** Do not submit stale image inputs restored from another model's state/jobs. */
+export function filterFamilyInputs(images: GenImages, config?: FamilyConfig): GenImages {
+  const disabled = new Set(config?.disabledFeatures || []);
+  return {
+    initImage: disabled.has("init_image") ? null : images.initImage,
+    maskImage: disabled.has("mask_image") ? null : images.maskImage,
+    controlImage: disabled.has("control_image") ? null : images.controlImage,
+    ipAdapterImage: disabled.has("ip_adapter_image") ? null : images.ipAdapterImage,
+    endImage: disabled.has("end_image") ? null : images.endImage,
+    refImages: disabled.has("ref_images") ? [] : images.refImages,
+    controlFrames: disabled.has("control_frames") ? [] : images.controlFrames,
+  };
 }
 
 export function requiredInputLabel(input: RequiredInput): string {

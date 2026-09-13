@@ -11,6 +11,19 @@ fn has_any(s: &str, patterns: &[&str]) -> bool {
 /// Map a model file path to one of the supported family ids.
 pub fn detect_family(path: &str) -> &'static str {
     let t = path.to_lowercase();
+    // SenseNova is a complete RGB-space MoT model, not a separate LLM/DiT.
+    // Include the parent directory: the official entry is model.safetensors.index.json.
+    if has_any(
+        &t,
+        &[
+            "sensenova-u1",
+            "sensenova_u1",
+            "sensenovau1",
+            "sensenova u1",
+        ],
+    ) {
+        return "sensenova-u1";
+    }
     // PiD checkpoints often include their backbone name (for example
     // `pid_flux1_...`), so detect them before the generic Flux rules below.
     if has_any(
@@ -332,6 +345,7 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "minit2i",
             "mini-t2i",
             "minimax",
+            "sensenova",
         ],
     )
 }
@@ -517,6 +531,27 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_sensenova_packages_and_classifies_the_index() {
+        for path in [
+            "/models/SenseNova-U1.5-8B-MoT/model.safetensors.index.json",
+            "D:\\models\\sensenova_u1_5\\model.safetensors.index.json",
+            "SenseNovaU1.5-8B-MoT.safetensors",
+        ] {
+            assert_eq!(detect_family(path), "sensenova-u1");
+        }
+        assert_eq!(
+            classify_file(
+                "model.safetensors.index.json",
+                "model",
+                "SenseNova-U1.5-8B-MoT",
+                0.01
+            ),
+            "model"
+        );
+        assert_eq!(detect_family("unrelated-model.gguf"), "custom");
+    }
 
     #[test]
     fn detects_minimax_h3_variants() {

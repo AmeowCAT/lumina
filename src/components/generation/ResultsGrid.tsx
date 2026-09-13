@@ -37,7 +37,7 @@ interface Props {
   onSaveImage: (jobId: string, key: string) => void;
   /** 传入原始 b64_json + 输出格式，由调用方转成 dataURL（blob: URL 无法被
    * sd-server 解码，且切回控制台即被 revoke——对抗性审查 B2）。 */
-  onUseAsInit: (b64: string, fmt: string) => void;
+  onUseAsInit?: (b64: string, fmt: string) => void;
   getVideoUrl: (jobId: string, b64: string, mime: string) => string;
   getImageUrl: (b64: string, fmt: string) => string;
 }
@@ -260,14 +260,16 @@ function FeaturedResult({
                     ariaLabel="保存到输出目录"
                     onSave={() => onSaveImage(entry.jobId, key)}
                   />
-                  <button
-                    className="btn btn-sm"
-                    title="用作初始图片（发送到 img2img）"
-                    aria-label="用作初始图片"
-                    onClick={() => onUseAsInit(img.b64_json, fmt)}
-                  >
-                    {IC.image}
-                  </button>
+                  {onUseAsInit && (
+                    <button
+                      className="btn btn-sm"
+                      title="用作初始图片（发送到 img2img）"
+                      aria-label="用作初始图片"
+                      onClick={() => onUseAsInit(img.b64_json, fmt)}
+                    >
+                      {IC.image}
+                    </button>
+                  )}
                   <button
                     className="btn btn-sm"
                     title={
@@ -613,14 +615,16 @@ export const ResultsGrid = memo(function ResultsGrid({
                             ariaLabel="保存到输出目录"
                             onSave={() => onSaveImage(r.jobId, key)}
                           />
-                          <button
-                            className="btn btn-sm"
-                            title="用作初始图片（发送到 img2img）"
-                            aria-label="用作初始图片"
-                            onClick={() => onUseAsInit(img.b64_json, fmt)}
-                          >
-                            {IC.image}
-                          </button>
+                          {onUseAsInit && (
+                            <button
+                              className="btn btn-sm"
+                              title="用作初始图片（发送到 img2img）"
+                              aria-label="用作初始图片"
+                              onClick={() => onUseAsInit(img.b64_json, fmt)}
+                            >
+                              {IC.image}
+                            </button>
+                          )}
                           <button
                             className="btn btn-sm"
                             title={

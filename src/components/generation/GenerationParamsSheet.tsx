@@ -101,7 +101,10 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
 
   const sp = params.sample_params;
   const hsp = params.high_noise_sample_params;
-  const sizePresets = useMemo(() => SIZE_PRESETS[mode], [mode]);
+  const sizePresets = useMemo(
+    () => FAMILY_CONFIG[family]?.sizePresetsByMode?.[mode] || SIZE_PRESETS[mode],
+    [family, mode]
+  );
   const framePresets = useMemo(
     () => VIDEO_FRAME_PRESETS[family],
     [family]
@@ -109,6 +112,9 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
 
   return (
     <ParamsSheet open={open} onClose={onClose}>
+      {FAMILY_CONFIG[family]?.generationHint && (
+        <p className="field-hint" role="note">{FAMILY_CONFIG[family].generationHint}</p>
+      )}
       {(features.init_image ||
         features.mask_image ||
         features.control_image ||
@@ -187,6 +193,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         flowShift={sp?.flow_shift}
         slg={sp?.guidance?.slg}
         vaeTilingParams={params.vae_tiling_params}
+        showVaeTiling={features.vae_tiling !== false}
         cacheMode={params.cache_mode}
         clipSkip={params.clip_skip}
         extraSampleArgs={sp?.extra_sample_args}

@@ -9,6 +9,7 @@ import type {
   ServerArgs,
 } from "../types";
 import { formatError, normalizeSdPort } from "../lib/utils";
+import { diagnosticsFor } from "../lib/diagnostics";
 import {
   buildLaunchConfig as buildLaunchArgs,
   inferPidVaeFormat,
@@ -140,8 +141,17 @@ export function useModelSwitch() {
         offloadCpu: settings.offloadCpu,
         quantType: settings.quantType,
         maxVram: settings.maxVram,
+        ...diagnosticsFor(settings),
         maxQueueSize: settings.maxQueueSize,
       });
+      // A stale --stream-layers / --auto-fit or unsupported diagnostic option
+      // must not unload the working model before the backend reports the error.
+      const preflight = await api.preflightServer(
+        settings.exeDir || "sd-server",
+        nextConfig.args,
+        normalizeSdPort(settings.sdPort)
+      );
+      if (preflight.warnings.length) toast(preflight.warnings.join("；"));
       if (previousPath && previousPath !== modelPath) {
         try {
           previousConfig = await buildLaunchConfig(

@@ -1,4 +1,4 @@
-import type { GenMode, Limits, ServerArgs } from "../types";
+import type { Features, GenMode, Limits, ServerArgs } from "../types";
 
 // ── Display name maps (sampler / scheduler indices come from capabilities) ──
 export const SAMPLER_NAMES: Record<string, string> = {
@@ -196,6 +196,10 @@ export interface FamilyConfig {
 	genDefaultsByMode?: Partial<Record<GenMode, Record<string, unknown>>>;
 	/** Inputs that must be present before a request can be submitted. */
 	requiredInputsByMode?: Partial<Record<GenMode, RequiredInput[]>>;
+	/** Protocol capabilities are generic; these model-specific restrictions win. */
+	disabledFeatures?: (keyof Features)[];
+	generationHint?: string;
+	sizePresetsByMode?: Partial<Record<GenMode, SizeGroup[]>>;
 	/**
 	 * 非空表示该家族已被识别但暂时无法经 sd-server 使用，值为展示给用户的原因；
 	 * 启动检查单保持 NO-GO 并阻断启动（如 MiniMax-H3 Ref2VA 的参考视频/音频
@@ -272,10 +276,11 @@ export function alignVideoFrames(family: string, frames: number): number {
 /**
  * 宽高的空间对齐基数。上游 `align_image_size`（src/stable-diffusion.cpp）
  * 把请求宽高**向上**对齐到 `vae_scale_factor × diffusion_model_down_factor`。
- * 目前只有 MiniMax-H3 的基数（16×2=32）会被常用尺寸（720/1080 → 736/1088）
- * 触发；其余家族基数 ≤16、常规预设天然满足，故不列入本表。
+ * MiniMax-H3（16×2）与 SenseNova U1.5（RGB 像素块）均按 32 对齐；
+ * 常用尺寸 720/1080 实际为 736/1088。
  */
 export const SIZE_SPATIAL_ALIGN: Record<string, number> = {
+	"sensenova-u1": 32,
 	"minimax-h3-fl2va": 32,
 	"minimax-h3-ref2va": 32,
 };
@@ -321,6 +326,25 @@ const F = (
 ): FieldDef => ({ key, label, arg, cat, required, description });
 
 export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
+	"sensenova-u1": {
+		name: "SenseNova U1.5",
+		hint: "完整 MoT 模型目录 / 分片索引，无需独立文本编码器或 VAE（上游 #1935）",
+		mode: "img",
+		fields: [F("model", "完整模型 / 分片索引", "model", "model")],
+		fixedArgs: { fa: true, rng: "cuda" },
+		generationHint: "SenseNova U1.5 当前仅支持 non-thinking 文生图，不支持参考图编辑、视觉理解或思考模式。推荐 2048×2048 / Euler 50 步 / CFG 4 / Flow Shift 3 / 空负向提示词；宽高按 32 对齐，低分辨率仅用于非训练尺寸冒烟测试。",
+		disabledFeatures: ["init_image", "mask_image", "control_image", "ip_adapter_image", "end_image", "ref_images", "control_frames", "vae_tiling", "hires"],
+		sizePresetsByMode: {
+			img_gen: [
+				{ label: "训练尺寸", sizes: [["2048", 2048, 2048]] },
+				{ label: "冒烟测试（非训练尺寸）", sizes: [["512", 512, 512], ["1024", 1024, 1024]] },
+			],
+		},
+		genDefaults: {
+			seed: -1, width: 2048, height: 2048,
+			sample_params: { sample_steps: 50, sample_method: "euler", flow_shift: 3, guidance: { txt_cfg: 4 } },
+		},
+	},
 	flux: {
 		name: "Flux.1",
 		hint: "Diffusion + VAE + CLIP-L + T5-XXL",
@@ -1542,7 +1566,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
  * FakeVAE 分支优先于 use_tae，传 --taesd 无意义，故不暴露该组件。
  * 权重不匹配时上游只告警并回落到完整 VAE，不会启动失败。
  */
-const FAKE_VAE_FAMILIES = ["chroma-radiance", "hidream", "minit2i"];
+const FAKE_VAE_FAMILIES = ["chroma-radiance", "hidream", "minit2i", "sensenova-u1"];
 
 const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
 	{ hint: "taesd（SD 1.x / 2.x latent）", families: ["sd"] },

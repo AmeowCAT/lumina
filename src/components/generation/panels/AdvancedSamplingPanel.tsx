@@ -11,6 +11,7 @@ interface Props {
   flowShift: number | undefined;
   slg: SlgGuidance | undefined;
   vaeTilingParams: VaeTilingParams | undefined;
+  showVaeTiling?: boolean;
   cacheMode: string | undefined;
   clipSkip: number | undefined;
   extraSampleArgs: string | undefined;
@@ -22,6 +23,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   flowShift,
   slg,
   vaeTilingParams,
+  showVaeTiling = true,
   cacheMode,
   clipSkip,
   extraSampleArgs,
@@ -61,14 +63,20 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
         step={0.1}
         hint="跳层引导，0 表示关闭"
       />
-      <Toggle
-        label="VAE 分块"
-        checked={!!vaeTilingParams?.enabled}
-        onChange={(v) =>
-          // 展开保留 caps 默认带下来的 tile_size 等字段，只翻转开关
-          onUpdate("vae_tiling_params", { ...vaeTilingParams, enabled: v })
-        }
-      />
+      {showVaeTiling && (
+        <>
+          <Toggle
+            label="VAE 分块"
+            checked={!!vaeTilingParams?.enabled}
+            onChange={(v) =>
+              onUpdate("vae_tiling_params", { ...vaeTilingParams, enabled: v })
+            }
+          />
+          <div className="field-hint field-hint-flush">
+            设置初始解码策略；新版内核在解码失败时仍可能自动回退到分块，不受 auto-fit 开关限制。
+          </div>
+        </>
+      )}
       <div className="form-row mt-2">
         <label className="form-label" htmlFor="cache-mode">
           缓存

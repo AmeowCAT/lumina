@@ -203,7 +203,13 @@ fn build_args(args: &serde_json::Value, port: u16) -> Result<Vec<String>> {
         "127.0.0.1".into(),
     ];
     if let Some(obj) = args.as_object() {
-        for (key, val) in obj {
+        // Explicit extra args are last, so their precedence is consistent for
+        // all options (not dependent on serde_json's alphabetical map order).
+        for (key, val) in obj
+            .iter()
+            .filter(|(key, _)| key.as_str() != "extra_args")
+            .chain(obj.iter().filter(|(key, _)| key.as_str() == "extra_args"))
+        {
             if key == "extra_args" {
                 if let Some(s) = val.as_str() {
                     let tokens = split_args(s)?;
@@ -295,6 +301,27 @@ fn build_args(args: &serde_json::Value, port: u16) -> Result<Vec<String>> {
         }
     }
     Ok(out)
+}
+
+/// Inspect without loading a model or stopping the running server.
+pub async fn inspect_cli(exe_path: &str) -> Result<crate::cli::CliCapabilities> {
+    let exe = resolve_executable(exe_path)?;
+    Ok(crate::cli::probe(&exe).await)
+}
+
+/// Used before the frontend unloads a model during a switch. The authoritative
+/// validation is repeated by start(), using the same short-lived probe cache.
+pub async fn preflight_cli(
+    exe_path: &str,
+    args: &serde_json::Value,
+    port: u16,
+) -> Result<crate::cli::CliCapabilities> {
+    let cmd_args = build_args(args, validate_port(port)?)?;
+    let mut capabilities = inspect_cli(exe_path).await?;
+    capabilities
+        .warnings
+        .extend(crate::cli::validate_args(&cmd_args, &capabilities)?);
+    Ok(capabilities)
 }
 
 fn find_in_path(name: &str) -> Option<PathBuf> {
@@ -1073,7 +1100,9 @@ impl ServerManager {
             .start_kill()
             .context("request sd-server termination")?;
         #[cfg(unix)]
-        kill_unix_process_group(pid);
+        if let Some(pid) = pid {
+            kill_unix_process_group(pid);
+        }
         match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
             Ok(Ok(status)) => {
                 log::info!("sd-server stopped with status {}", status);
@@ -1145,6 +1174,13 @@ impl ServerManager {
                 .map_err(|e| anyhow!("附加启动参数中的 --max-vram 格式无效：{}", e))?;
         }
         let cmd_args = build_args(&args_json, port)?;
+        // Validate against this executable before unloading the current model.
+        // Unknown help is a warning, not proof that an old executable lacks a flag.
+        let cli = crate::cli::probe(&exe).await;
+        let compatibility_warnings = crate::cli::validate_args(&cmd_args, &cli)?;
+        for warning in cli.warnings.iter().chain(compatibility_warnings.iter()) {
+            emit_line(app, &format!("[WARN] {}", warning));
+        }
         // 结构性 backend 错误（disk / 列表内 default）不需要探测即可拦截。
         if let Some(error) = backend_spec_static_error(&backend_spec) {
             anyhow::bail!(error);
@@ -1612,12 +1648,90 @@ mod tests {
                 "127.0.0.1",
                 "--backend",
                 "cuda",
+                "--offload-to-cpu",
                 "--verbose",
                 "--threads",
                 "4",
-                "--offload-to-cpu",
             ]
         );
+    }
+
+    #[test]
+    fn extra_args_override_diagnostic_controls_consistently() {
+        let args = serde_json::json!({
+            "log-level": "info", "linear-scale": "1", "attn-scale": "1",
+            "extra_args": "--log-level=debug --linear-scale=0.5 --attn-scale=0.25"
+        });
+        let out = build_args(&args, DEFAULT_SD_PORT).unwrap();
+        let tail: Vec<String> = [
+            "--log-level",
+            "debug",
+            "--linear-scale",
+            "0.5",
+            "--attn-scale",
+            "0.25",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(out.ends_with(&tail));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cli_preflight_probes_caches_and_rechecks_replaced_executables() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-cli-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("sd-server");
+        let model = dir.join("model.gguf");
+        fs::write(&model, b"fixture").unwrap();
+        let write_executable = |options: &str| {
+            let help = format!("  -m, --model <string>     model\n  --listen-port <int>      port\n  -p, --prompt <string>    prompt\n{}", options);
+            let script = format!("#!/bin/sh\nprintf x >> \"$0.calls\"\ncase \"$1\" in\n--help) printf '%s\\n' '{}'; exit 1;;\n--version) printf '%s\\n' 'fixture-version';;\n*) touch \"$0.generation\"; exit 2;;\nesac\n", help);
+            fs::write(&exe, script).unwrap();
+            fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
+        };
+        write_executable("  --auto-fit       on|off (default: on)\n  --disable-segmented-compute  force monolithic\n  --linear-scale    scale\n  --log-level       level\n");
+        let args = serde_json::json!({"model": model.to_str().unwrap(), "extra_args": "--auto-fit on --linear-scale=0.125 --log-level debug --prompt \"--stream-layers\""});
+        let caps = preflight_cli(exe.to_str().unwrap(), &args, 1234)
+            .await
+            .unwrap();
+        assert!(caps.verified);
+        assert_eq!(caps.auto_fit, crate::cli::AutoFitSyntax::OnOff);
+        assert_eq!(caps.version.as_deref(), Some("fixture-version"));
+        let bad = serde_json::json!({"extra_args": "--stream-layers"});
+        assert!(preflight_cli(exe.to_str().unwrap(), &bad, 1234)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("删除"));
+        assert_eq!(
+            fs::read(exe.with_extension("calls")).unwrap().len(),
+            2,
+            "second preflight should use cached help"
+        );
+        write_executable(
+            "  --auto-fit       pick placements\n  --stream-layers   stream weights\n",
+        );
+        let legacy = serde_json::json!({"extra_args": "--stream-layers --auto-fit"});
+        let caps = preflight_cli(exe.to_str().unwrap(), &legacy, 1234)
+            .await
+            .unwrap();
+        assert_eq!(caps.auto_fit, crate::cli::AutoFitSyntax::Flag);
+        assert_eq!(fs::read(exe.with_extension("calls")).unwrap().len(), 4);
+        assert!(
+            !exe.with_extension("generation").exists(),
+            "preflight must never load a model"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

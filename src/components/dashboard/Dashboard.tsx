@@ -30,6 +30,9 @@ import { TwoTapButton } from "../ui/TwoTapButton";
 import { useModelSwitch } from "../../hooks/useModelSwitch";
 import { useTheme } from "../../lib/theme";
 import { cn } from "../ui/cn";
+import { CliCompatibility } from "./CliCompatibility";
+import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { diagnosticsFor } from "../../lib/diagnostics";
 
 export function Dashboard() {
 	const settings = useStore((s) => s.settings);
@@ -295,6 +298,7 @@ export function Dashboard() {
 		offloadCpu: settings.offloadCpu,
 		quantType: settings.quantType,
 		maxVram: settings.maxVram || "",
+		...diagnosticsFor(settings),
 		maxQueueSize: settings.maxQueueSize,
 	});
 
@@ -327,6 +331,7 @@ export function Dashboard() {
 			offloadCpu: snapshot.offloadCpu,
 			quantType: snapshot.quantType,
 			maxVram: snapshot.maxVram || "",
+			...diagnosticsFor(snapshot),
 			maxQueueSize: snapshot.maxQueueSize,
 		}));
 		toast("已恢复该模型上次启动配置");
@@ -361,9 +366,12 @@ export function Dashboard() {
 				[mainModel]: buildSnapshot(),
 			},
 		}));
-		// 只依赖这三者：settings 本身每帧变化（后端/端口等），不必跟随。
+		// Track scalar runtime values, not settings/modelSnapshots identity: controls
+		// must survive switching away without starting, without a save-effect loop.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [mainModel, components, familyOverride]);
+	}, [mainModel, components, familyOverride, settings.backend, settings.refImagePreset,
+		settings.vaeFormat, settings.extraArgs, settings.offloadCpu, settings.quantType,
+		settings.maxVram, settings.maxQueueSize, settings.logLevel, settings.linearScale, settings.attnScale]);
 
 	// 端口输入允许中途处于空/越界状态，落到启动与展示时统一夹回合法区间。
 	const sdPort = normalizeSdPort(settings.sdPort);
@@ -1125,9 +1133,10 @@ export function Dashboard() {
 							placeholder="例如 cuda0 或 clip=cpu,vae=cuda0,diffusion=vulkan0"
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							支持组件级分配，如 clip=cpu,diffusion=cuda0
+							支持组件级分配，如 clip=cpu,diffusion=cuda0。新版显式 backend / params-backend 会关闭 auto-fit；“自动”且无手动放置时默认启用单 GPU 自动放置。
 						</div>
 					</div>
+					<CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
 				</Panel>
 
 				<Panel title="参考图处理" collapsed>
@@ -1179,7 +1188,7 @@ export function Dashboard() {
 							}
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							将部分层卸载到 CPU 以节省显存，适合低显存跑大模型
+							强制将权重放在 CPU 内存、按需搬到计算设备；新版会因此关闭 auto-fit。不勾选也不禁止 auto-fit 自动使用 RAM 或磁盘。
 						</div>
 					</div>
 					<div className="form-row mt-2">
@@ -1195,7 +1204,7 @@ export function Dashboard() {
 								value={maxVramMode}
 								onChange={setMaxVramMode}
 								options={[
-									{ value: "unset", label: "不限（默认，不传该参数）" },
+									{ value: "unset", label: "引擎默认（不传显式预算）" },
 									{ value: "fixed", label: "固定预算（GiB）" },
 									{ value: "auto", label: "自动探测（保留空闲余量）" },
 									{ value: "custom", label: "按设备自定义" },
@@ -1246,9 +1255,9 @@ export function Dashboard() {
 						</div>
 						<div className="field-hint field-hint-flush mt-0.5">
 							{maxVramMode === "unset" &&
-								"不传 --max-vram：不做图切分预算，引擎使用全部可用显存"}
+								"不传显式预算：新版内核仍会按可用显存自动分段，auto-fit 会预留安全余量"}
 							{maxVramMode === "fixed" &&
-								"图切分分段执行的显存上限（GiB）；0 = 禁用图切分"}
+								"受管理权重与计算缓冲的预算（非物理显存硬上限）；新版 0 = 按实时空闲显存自动分段，旧版 0 才禁用图切分"}
 							{maxVramMode === "auto" &&
 								"自动探测空闲显存并保留指定余量（以负值传给 --max-vram）"}
 							{maxVramMode === "custom" &&
@@ -1318,10 +1327,10 @@ export function Dashboard() {
 							onChange={(e) =>
 								setSettings((s) => ({ ...s, extraArgs: e.target.value }))
 							}
-							placeholder="例如 --threads 8 --mmap --stream-layers"
+							placeholder="例如 --threads 8 --mmap"
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							原样拼接到 sd-server 命令行，兜底所有未在界面暴露的参数
+							最后追加到 sd-server 命令行，同名值优先于控件；启动前按实际内核预检，不会改写保存值
 						</div>
 					</div>
 					<div className="form-row mt-2">
@@ -1367,6 +1376,7 @@ export function Dashboard() {
 						</div>
 					</div>
 				</Panel>
+				<DiagnosticsPanel />
 
 				</motion.div>
 		</div>

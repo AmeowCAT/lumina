@@ -225,6 +225,32 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     ).toEqual([]);
   });
 
+  it("restricts SenseNova to text-to-image and filters stale editing inputs", async () => {
+    const caps = {
+      ...CAPS,
+      model: { name: "SenseNova-U1.5", path: "D:/models/SenseNova-U1.5/model.safetensors.index.json" },
+      features_by_mode: { img_gen: { init_image: true, mask_image: true, control_image: true, ip_adapter_image: true, ref_images: true, vae_tiling: true, hires: true } },
+      defaults_by_mode: { img_gen: { ...CAPS.defaults_by_mode.img_gen, width: 2049, height: 2048, hires: { enabled: true }, vae_tiling_params: { enabled: true } } },
+    };
+    useStore.setState({
+      caps: caps as never, params: null, mainModel: caps.model.path, familyOverride: "sensenova-u1",
+      initImage: "stale-init", maskImage: "stale-mask", controlImage: "stale-control", ipAdapterImage: "stale-adapter",
+      refImages: ["stale-reference"], seedRandom: false,
+    });
+    render(<GenerationUI />);
+    await screen.findByRole("button", { name: "生成" });
+    fireEvent.click(screen.getByLabelText("打开参数面板"));
+    expect(await screen.findByRole("note")).toHaveTextContent("仅支持 non-thinking 文生图");
+    expect(screen.queryByText("VAE 分块")).not.toBeInTheDocument();
+    expect(screen.queryByText("初始图片")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "生成" }));
+    await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
+    const body = apiMocks.sdcppSubmit.mock.calls[0][1];
+    for (const key of ["init_image", "mask_image", "control_image", "ip_adapter_image", "ref_images"]) expect(body).not.toHaveProperty(key);
+    expect(body).toMatchObject({ width: 2080, height: 2048, hires: { enabled: false }, vae_tiling_params: { enabled: false } });
+    expect(useStore.getState().jobs[0]?.config?.images?.initImage).toBeNull();
+  });
+
   it("shows control frames for a VACE model", async () => {
     const caps = {
       ...CONTROL_FRAME_VIDEO_CAPS,

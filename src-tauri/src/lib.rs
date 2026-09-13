@@ -2,6 +2,7 @@
 //! output saving, and proxies the sd-server `/sdcpp/v1` HTTP API to the frontend
 //! via typed Tauri commands.
 
+mod cli;
 mod family;
 mod png_info;
 mod save;
@@ -41,6 +42,10 @@ async fn effective_port(state: &AppState) -> u16 {
 /// `root` 为空时恒为 false。save_output / read_file_b64 是 webview 可调用的
 /// 任意读写入口，收敛到用户配置的输出目录子树（对抗性审查 C）。
 fn dir_is_within(dir: &str, root: &str) -> bool {
+    // Keep original absolute paths for filesystem checks. Lexical normalization
+    // below drops the leading slash and must never be passed to canonicalize.
+    let raw_dir = dir.trim();
+    let raw_root = root.trim();
     let norm = |s: &str| {
         // 词法归一化：折叠 "."、弹出 ".."，再统一分隔符与大小写。
         let replaced = s.replace('\\', "/");
@@ -93,7 +98,7 @@ fn dir_is_within(dir: &str, root: &str) -> bool {
         }
         Some(resolved)
     };
-    match (canon(&root), canon(&dir)) {
+    match (canon(raw_root), canon(raw_dir)) {
         (Some(rc), Some(dc)) => {
             let rc_str = rc.to_string_lossy();
             dc == rc || dc.starts_with(format!("{}{}", rc_str, std::path::MAIN_SEPARATOR))
@@ -104,7 +109,7 @@ fn dir_is_within(dir: &str, root: &str) -> bool {
         // 为真实目录，无 symlink 可逃逸）才退回词法结果；root 存在却解析
         // 失败（ACL/长路径等）说明 symlink 兜底已失效，保守拒绝——与注释
         // "canonicalize 失败宁可拒绝"的口径一致（对抗性审查）。
-        (None, _) => !std::path::Path::new(&root).exists(),
+        (None, _) => !std::path::Path::new(raw_root).exists(),
     }
 }
 
@@ -172,6 +177,24 @@ mod tests {
 }
 
 // ── sd-server lifecycle ───────────────────────────────────────────────
+
+#[tauri::command]
+async fn inspect_server(exe_path: String) -> Result<cli::CliCapabilities, String> {
+    server::inspect_cli(&exe_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn preflight_server(
+    exe_path: String,
+    args: serde_json::Value,
+    port: u16,
+) -> Result<cli::CliCapabilities, String> {
+    server::preflight_cli(&exe_path, &args, port)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn start_server(
@@ -655,6 +678,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             start_server,
+            inspect_server,
+            preflight_server,
             stop_server,
             server_status,
             scan_models,
