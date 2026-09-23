@@ -103,6 +103,24 @@ pub fn detect_family(path: &str) -> &'static str {
     if has_any(&t, &["chroma"]) {
         return "chroma";
     }
+    // Qwen Image 2.1 单独成族（上游 #1994）：自带 VAE（与 Qwen Image / Wan2.2
+    // 的 VAE 不通用）、Qwen3-VL-8B 文本编码器、宽高需 32 对齐。规则必须排在
+    // 通用 qwen-image 之前，否则 qwen_image_2.1 会被子串命中误判成旧家族。
+    if has_any(
+        &t,
+        &[
+            "qwen-image-2.1",
+            "qwen_image_2.1",
+            "qwenimage2.1",
+            "qwen-image-2_1",
+            "qwen_image_2_1",
+            "qwen-image-21",
+            "qwen_image_21",
+            "qwenimage21",
+        ],
+    ) {
+        return "qwen-image-2.1";
+    }
     if has_any(
         &t,
         &[
@@ -127,6 +145,16 @@ pub fn detect_family(path: &str) -> &'static str {
     }
     if has_any(&t, &["ideogram"]) {
         return "ideogram";
+    }
+    // LLaDA-Image / LLaDA-Image-Turbo（上游 #1968）：NextDiT + LLaDA2-MoE 文本
+    // 编码器 + Flux.2 VAE + --embeddings-connectors。两个 checkpoint 的
+    // transformer / 文本编码器 / QueryFormer 互不通用，只有 VAE、SigVQ 与
+    // tokenizer 共用，所以拆成两族避免默认值互相污染。
+    if has_any(&t, &["llada-image", "llada_image", "lladaimage"]) {
+        if has_any(&t, &["turbo"]) {
+            return "llada-image-turbo";
+        }
+        return "llada-image";
     }
     // LTX-2.5 单独成族（上游 #1893）：与 2.3 共用架构、按权重自动区分，
     // 但组件需求不同——Gemma 4 文本编码器内置投影，无需 --embeddings-connectors。
@@ -240,8 +268,17 @@ pub fn detect_family(path: &str) -> &'static str {
 }
 
 fn is_llm_encoder(test: &str) -> bool {
+    // LLaDA-Image 的扩散模型本体与文本编码器共用 "llada-image" 前缀
+    // （llada-image-text_encoder-q8_0.gguf），必须靠 text_encoder 标记区分。
+    if has_any(test, &["llada"]) && has_any(test, &["text_encoder", "text-encoder", "text encoder"])
+    {
+        return true;
+    }
     // qwen-image is a diffusion model, not an LLM encoder.
     if has_any(test, &["qwen-image", "qwen_image", "qwen-image-edit"]) {
+        return false;
+    }
+    if has_any(test, &["llada-image", "llada_image", "lladaimage"]) {
         return false;
     }
     has_any(
@@ -346,6 +383,11 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "mini-t2i",
             "minimax",
             "sensenova",
+            // LLaDA-Image 扩散模型（llada-image-f16.gguf / llada-image-turbo-f16.gguf）；
+            // 文本编码器带 text_encoder 标记，在 is_llm_encoder 里先被拦下。
+            "llada-image",
+            "llada_image",
+            "lladaimage",
         ],
     )
 }
@@ -363,8 +405,8 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     if has_any(&test, &["audio_vae", "audio-vae"]) {
         return "audio_vae";
     }
-    // Embedding connectors (LTX)
-    if has_any(&test, &["embeddings_connector"]) {
+    // Embedding connectors (LTX, LLaDA-Image)
+    if has_any(&test, &["embeddings_connector", "connectors"]) {
         return "embeddings";
     }
     // TAE (Tiny AutoEncoder) — must precede the generic VAE rules: every TAE
@@ -775,6 +817,81 @@ mod tests {
         assert_eq!(
             detect_family("Qwen-Image-Layered.safetensors.index.json"),
             "qwen-image-layered"
+        );
+    }
+
+    #[test]
+    fn detects_qwen_image_2_1_before_generic_qwen_image() {
+        // 2.1 单独成族：自带 VAE / Qwen3-VL，不能被通用 qwen-image 子串吞掉。
+        for path in [
+            "/models/qwen_image_2.1-Q4_K.gguf",
+            "D:\\models\\Qwen-Image-2.1\\diffusion_models\\qwen_image_2.1_int8_convrot.safetensors",
+            "qwen_image_21_f16.gguf",
+        ] {
+            assert_eq!(detect_family(path), "qwen-image-2.1", "{path}");
+        }
+        // 旧 Qwen Image 仍留在原族。
+        assert_eq!(detect_family("qwen_image_fp16.safetensors"), "qwen-image");
+    }
+
+    #[test]
+    fn classifies_qwen_image_2_1_components() {
+        assert_eq!(
+            classify_file(
+                "qwen_image_2.1_vae_bf16.safetensors",
+                "qwen_image_2.1_vae_bf16",
+                "vae",
+                250.0
+            ),
+            "vae"
+        );
+        // Qwen3-VL 文本编码器按 qwen3- 规则归到 llm，而不是被 qwen-image 规则吞掉。
+        assert_eq!(
+            classify_file(
+                "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+                "Qwen3VL-8B-Instruct-Q4_K_M",
+                "text_encoders",
+                5000.0
+            ),
+            "llm"
+        );
+    }
+
+    #[test]
+    fn detects_and_classifies_llada_image() {
+        assert_eq!(detect_family("llada-image-f16.gguf"), "llada-image");
+        assert_eq!(
+            detect_family("/models/LLaDA-Image-Turbo-GGUF/llada-image-turbo-f16.gguf"),
+            "llada-image-turbo"
+        );
+
+        // 本体是扩散模型，文本编码器带 text_encoder 标记必须归 llm。
+        assert_eq!(
+            classify_file("llada-image-f16.gguf", "llada-image-f16", "models", 3000.0),
+            "model"
+        );
+        assert_eq!(
+            classify_file(
+                "llada-image-turbo-text_encoder-q8_0.gguf",
+                "llada-image-turbo-text_encoder-q8_0",
+                "models",
+                4000.0,
+            ),
+            "llm"
+        );
+        // 预合并 connectors 走 --embeddings-connectors；VAE 复用 Flux.2 那份。
+        assert_eq!(
+            classify_file(
+                "llada-image-turbo-connectors.safetensors",
+                "llada-image-turbo-connectors",
+                "models",
+                1500.0,
+            ),
+            "embeddings"
+        );
+        assert_eq!(
+            classify_file("llada_vae.safetensors", "llada_vae", "vae", 300.0),
+            "vae"
         );
     }
 

@@ -18,6 +18,12 @@ export interface ModelConfigSnapshot extends RuntimeDiagnostics {
   refImagePreset: string;
   /** PiD VAE latent layout override (flux / sd3 / flux2 / wan). */
   vaeFormat?: string;
+  /** 外部 HuggingFace tokenizer.json（--tokenizer）；PiD / Lens / LLaDA-Image 必需。 */
+  tokenizer?: string;
+  /** 原生 CUDA SageAttention（--sage-attn）；不可用时内核会拒绝建上下文。 */
+  sageAttn?: boolean;
+  /** 条件结果缓存上限（--conditioning-cache-size）；空 = 走内核默认。 */
+  conditioningCacheSize?: string;
   extraArgs: string;
   offloadCpu: boolean;
   quantType: string;
@@ -34,6 +40,12 @@ export interface Settings extends RuntimeDiagnostics {
   refImagePreset: string;
   /** PiD VAE latent layout override (flux / sd3 / flux2 / wan). */
   vaeFormat?: string;
+  /** 外部 HuggingFace tokenizer.json（--tokenizer）；PiD / Lens / LLaDA-Image 必需。 */
+  tokenizer?: string;
+  /** 原生 CUDA SageAttention（--sage-attn）。 */
+  sageAttn?: boolean;
+  /** 条件结果缓存上限（--conditioning-cache-size）；空 = 走内核默认。 */
+  conditioningCacheSize?: string;
   extraArgs: string;
   offloadCpu: boolean;
   quantType: string;
@@ -236,7 +248,12 @@ export interface GenParams {
   strength?: number;
   batch_count?: number;
   qwen_image_layers?: number;
+  /** 旧字段（上游 #2028 起服务端不再读取，仅为兼容旧内核保留）。 */
   auto_resize_ref_image?: boolean;
+  /** 新版参考图参数串（如 `preset=flux_kontext,resize_before_vae=false`）。 */
+  ref_image_args?: string;
+  /** 新版输入几何规则（上游 #2028 `--image-preprocess` / 请求体 image_preprocess）。 */
+  image_preprocess?: string[];
   increase_ref_index?: boolean;
   control_strength?: number;
   ip_adapter_strength?: number;

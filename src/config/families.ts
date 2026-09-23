@@ -47,6 +47,9 @@ export const SCHEDULER_NAMES: Record<string, string> = {
 	flux2: "Flux2",
 	flux: "Flux",
 	beta: "Beta",
+	// LLaDA-Image 默认调度器（上游 #1968）：Kumaraswamy sigma 网格，
+	// `--extra-sample-args uniform=1` 可切换成均匀网格。
+	llada_image: "LLaDA-Image",
 };
 
 export const BUILTIN_UPSCALERS = [
@@ -217,6 +220,34 @@ export const PID_VAE_FORMATS = [
 	{ value: "wan", label: "Qwen-Image / Wan" },
 ] as const;
 
+/**
+ * 上游 #1974 / #1968 起，这些家族不再内嵌词表，必须提供外部 HuggingFace
+ * tokenizer.json（`--tokenizer`）；缺省会在建文本编码器时初始化失败。
+ * PiD/PiD 1.5 用 Gemma 2 的 tokenizer，Lens/Lens Turbo 用 GPT-OSS 的，
+ * LLaDA-Image 两个 checkpoint 共用同一个 LLaDA2 tokenizer。
+ */
+export const EXTERNAL_TOKENIZER_FAMILIES = [
+	"pid",
+	"lens",
+	"lens-turbo",
+	"llada-image",
+	"llada-image-turbo",
+] as const;
+
+/** 家族专属的 --tokenizer 说明（没有条目时用通用文案）。 */
+export const EXTERNAL_TOKENIZER_HINT: Record<string, string> = {
+	pid: "必须用与 Gemma 2 文本编码器 checkpoint 匹配的 tokenizer.json（PiD / PiD 1.5 不再内嵌 Gemma 2 词表）；仅 ID 落在嵌入表内不代表两份词表含义一致。",
+	lens: "必须用与 GPT-OSS 文本编码器 checkpoint 匹配的 tokenizer.json（Lens 不再内嵌 GPT-OSS 词表）。",
+	"lens-turbo": "必须用与 GPT-OSS 文本编码器 checkpoint 匹配的 tokenizer.json（Lens Turbo 不再内嵌 GPT-OSS 词表）。",
+	"llada-image": "必须用 LLaDA2 的 tokenizer.json（两个 LLaDA-Image checkpoint 共用同一份）。",
+	"llada-image-turbo": "必须用 LLaDA2 的 tokenizer.json（两个 LLaDA-Image checkpoint 共用同一份）。",
+};
+
+/** 该家族是否强制要求外部 tokenizer。 */
+export function familyNeedsExternalTokenizer(family: string): boolean {
+	return (EXTERNAL_TOKENIZER_FAMILIES as readonly string[]).includes(family);
+}
+
 /** Frame shortcuts for models whose native temporal context is known. */
 export const VIDEO_FRAME_PRESETS: Record<string, number[]> = {
 	sd: [8, 16, 24, 32],
@@ -283,6 +314,12 @@ export const SIZE_SPATIAL_ALIGN: Record<string, number> = {
 	"sensenova-u1": 32,
 	"minimax-h3-fl2va": 32,
 	"minimax-h3-ref2va": 32,
+	// Qwen Image 2.1：上游要求宽高为 32 的倍数（docs/qwen_image_2.1.md）。
+	"qwen-image-2.1": 32,
+	// LLaDA-Image：文生图按 16 向上取整，但编辑路径要求 32 整除，统一按 32
+	// 对齐同时满足两者。
+	"llada-image": 32,
+	"llada-image-turbo": 32,
 };
 
 /** 返回该家族下 `dim` 实际生效的宽/高；无对齐要求的家族原样返回。 */
@@ -930,6 +967,96 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				scheduler: "discrete",
 				guidance: { txt_cfg: 2.5 },
 				flow_shift: 3,
+			},
+		},
+	},
+	// Qwen Image 2.1（上游 #1994）：单独的 VAE 与 Qwen3-VL-8B 文本编码器，
+	// 与旧 Qwen Image / Wan2.2 的 VAE 权重不通用；宽高按 32 对齐；
+	// RGBA 输出由提示词决定，且只在 png / webp 下保留 alpha。
+	"qwen-image-2.1": {
+		name: "Qwen Image 2.1",
+		hint: "Diffusion + qwen_image_2.1 VAE + Qwen3-VL-8B（宽高需 32 对齐）",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("vae", "VAE (qwen_image_2.1)", "vae", "vae"),
+			F("llm", "LLM (Qwen3-VL-8B)", "llm", "llm"),
+			F("llm_vision", "LLM Vision (编辑用，可选)", "llm_vision", "llm_vision"),
+		],
+		fixedArgs: { "diffusion-fa": true },
+		generationHint:
+			"上游 docs/qwen_image_2.1.md：宽高需为 32 的倍数，flow schedule 按分辨率自动选择；必须使用 qwen_image_2.1 专用 VAE（旧 Qwen Image / Wan2.2 的 VAE 不通用）。图片编辑需 --llm_vision。透明输出由提示词决定（如 “This is an RGBA image with transparency. …”），且只在 png / webp 下保留 alpha；前缀 KV 缓存默认开启，可用 --model-args qwen_image_2_1_prefix_cache=false 关闭。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 20,
+				sample_method: "euler",
+				guidance: { txt_cfg: 6.0 },
+			},
+		},
+	},
+	// LLaDA-Image（上游 #1968）：NextDiT + LLaDA2-MoE 文本编码器 + Flux.2 VAE
+	// + 预合并的 connectors（编辑版还需含 SigVQ 权重），并且强制要求外部
+	// LLaDA2 tokenizer.json。两个 checkpoint 的文件不可混用。
+	"llada-image": {
+		name: "LLaDA-Image (50 步)",
+		hint: "Diffusion + LLaDA2-MoE + Flux.2 VAE + 连接器；需外部 tokenizer",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("vae", "VAE (Flux.2)", "vae", "vae"),
+			F("llm", "LLM (LLaDA2-MoE)", "llm", "llm"),
+			F(
+				"embeddings",
+				"嵌入连接器（QueryFormer + 文本投影，编辑需含 SigVQ）",
+				"embeddings-connectors",
+				"embeddings",
+			),
+		],
+		fixedArgs: { "diffusion-fa": true },
+		generationHint:
+			"上游 docs/llada_image.md：基础模型用 50 步 / CFG 5，Turbo 用 4 步 / CFG 1.0（CFG 蒸馏掉了，调高会劣化并让文本编码器开销翻倍）。默认调度器为 llada_image，可用 --extra-sample-args uniform=1 换成均匀网格。宽高按 32 对齐；编辑需要带 SigVQ 的 connectors，且参考图与目标在同一序列里跑，约需两倍 token。必须提供 LLaDA2 tokenizer.json。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 50,
+				sample_method: "euler",
+				scheduler: "llada_image",
+				guidance: { txt_cfg: 5.0 },
+			},
+		},
+	},
+	"llada-image-turbo": {
+		name: "LLaDA-Image Turbo (4 步)",
+		hint: "Diffusion + LLaDA2-MoE + Flux.2 VAE + 连接器；需外部 tokenizer",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("vae", "VAE (Flux.2)", "vae", "vae"),
+			F("llm", "LLM (LLaDA2-MoE Turbo)", "llm", "llm"),
+			F(
+				"embeddings",
+				"嵌入连接器（QueryFormer + 文本投影，编辑需含 SigVQ）",
+				"embeddings-connectors",
+				"embeddings",
+			),
+		],
+		fixedArgs: { "diffusion-fa": true },
+		generationHint:
+			"上游 docs/llada_image.md：Turbo 用 4 步 / CFG 1.0；512 与 1024 都能正确编辑，而 50 步基础模型在 512 下几乎不改图。Turbo 与基础模型的 transformer / 文本编码器 / QueryFormer 互不通用，混用只会劣化输出而不报错。默认调度器 llada_image，宽高按 32 对齐，必须提供 LLaDA2 tokenizer.json。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 4,
+				sample_method: "euler",
+				scheduler: "llada_image",
+				guidance: { txt_cfg: 1.0 },
 			},
 		},
 	},
@@ -1586,7 +1713,14 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
 	},
 	{
 		hint: "Flux.2 的 TAE（32ch latent）",
-		families: ["flux2", "flux2-klein", "flux2-klein-base"],
+		families: [
+			"flux2",
+			"flux2-klein",
+			"flux2-klein-base",
+			// LLaDA-Image 复用 Flux.2 的 VAE（上游 docs/llada_image.md）。
+			"llada-image",
+			"llada-image-turbo",
+		],
 	},
 	{
 		hint: "TAEHV：taew2_1（Wan2.1 / Wan2.2-A14B / Qwen-Image，见上游 docs/taesd.md）",

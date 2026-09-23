@@ -346,7 +346,9 @@ export function GenerationUI() {
         activeParams = { ...activeParams, seed: rs };
         update("seed", rs);
       }
-      const body = buildRequestBody(mode, activeParams, images);
+      const body = buildRequestBody(mode, activeParams, images, {
+        refImagePreset: useStore.getState().settings.refImagePreset,
+      });
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
       if (status === 202) {
         setJobs((j) =>

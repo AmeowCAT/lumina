@@ -11,6 +11,7 @@ import { ImageInputsPanel } from "./panels/ImageInputsPanel";
 import { SizeSeedPanel } from "./panels/SizeSeedPanel";
 import { SamplingPanel } from "./panels/SamplingPanel";
 import { AdvancedSamplingPanel } from "./panels/AdvancedSamplingPanel";
+import { ImagePreprocessPanel } from "./panels/ImagePreprocessPanel";
 import { HighNoisePanel } from "./panels/HighNoisePanel";
 import { LoraPanel } from "./panels/LoraPanel";
 import { HiresPanel } from "./panels/HiresPanel";
@@ -199,6 +200,15 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         extraSampleArgs={sp?.extra_sample_args}
         onUpdate={onUpdate}
       />
+      {(features.init_image !== false ||
+        features.ref_images !== false ||
+        features.control_image !== false) && (
+        <ImagePreprocessPanel
+          rules={params.image_preprocess}
+          hasRefImages={features.ref_images !== false}
+          onUpdate={onUpdate}
+        />
+      )}
       {mode === "vid_gen" && family === "wan-a14b" && (
         <HighNoisePanel
           samplers={caps.samplers || []}

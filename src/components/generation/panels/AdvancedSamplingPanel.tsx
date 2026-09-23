@@ -120,7 +120,10 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           上游 extra_sample_args 的 key=value 列表（逗号分隔），兜底界面未暴露的
           采样器 / 调度器 / 引导参数：flux 的 base_shift·max_shift、lcm 的
           noise_clip_std、euler_ge 的 gamma、APG 的 apg_*、slg_uncond、
-          guidance_schedule 等；同名键会覆盖上面的滑杆值
+          guidance_schedule、llada_image 的 uniform=1，以及注入噪声的采样器的
+          noise_sampler=iid|brownian_tree（brownian_tree 可再配
+          brownian_tree_rng=cpu|cuda|std_default|sampler_rng）等；同名键会覆盖
+          上面的滑杆值
         </div>
       </div>
     </Panel>

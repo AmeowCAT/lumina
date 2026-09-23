@@ -3,7 +3,12 @@ import { motion } from "motion/react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import type { Settings } from "../../types";
-import { FAMILY_CONFIG, PID_VAE_FORMATS } from "../../config/families";
+import {
+	EXTERNAL_TOKENIZER_HINT,
+	FAMILY_CONFIG,
+	PID_VAE_FORMATS,
+	familyNeedsExternalTokenizer,
+} from "../../config/families";
 import {
 	DEFAULT_SD_PORT,
 	MAX_SD_PORT,
@@ -294,6 +299,9 @@ export function Dashboard() {
 		backend: settings.backend,
 		refImagePreset: settings.refImagePreset,
 		vaeFormat: settings.vaeFormat || "",
+		tokenizer: settings.tokenizer || "",
+		sageAttn: !!settings.sageAttn,
+		conditioningCacheSize: settings.conditioningCacheSize || "",
 		extraArgs: settings.extraArgs,
 		offloadCpu: settings.offloadCpu,
 		quantType: settings.quantType,
@@ -314,6 +322,7 @@ export function Dashboard() {
 			setSettings((current) => ({
 				...current,
 				vaeFormat: detected === "pid" ? inferPidVaeFormat(path) : "",
+				tokenizer: "",
 			}));
 			return;
 		}
@@ -327,6 +336,9 @@ export function Dashboard() {
 			vaeFormat:
 				snapshot.vaeFormat ||
 				(snapshotFamily === "pid" ? inferPidVaeFormat(path) : ""),
+			tokenizer: snapshot.tokenizer || "",
+			sageAttn: !!snapshot.sageAttn,
+			conditioningCacheSize: snapshot.conditioningCacheSize || "",
 			extraArgs: snapshot.extraArgs,
 			offloadCpu: snapshot.offloadCpu,
 			quantType: snapshot.quantType,
@@ -370,7 +382,9 @@ export function Dashboard() {
 		// must survive switching away without starting, without a save-effect loop.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [mainModel, components, familyOverride, settings.backend, settings.refImagePreset,
-		settings.vaeFormat, settings.extraArgs, settings.offloadCpu, settings.quantType,
+		settings.vaeFormat, settings.tokenizer, settings.sageAttn,
+		settings.conditioningCacheSize, settings.extraArgs, settings.offloadCpu,
+		settings.quantType,
 		settings.maxVram, settings.maxQueueSize, settings.logLevel, settings.linearScale, settings.attnScale]);
 
 	// 端口输入允许中途处于空/越界状态，落到启动与展示时统一夹回合法区间。
@@ -1074,6 +1088,47 @@ export function Dashboard() {
 										</div>
 									</div>
 								)}
+								{familyNeedsExternalTokenizer(detectedFamily) && (
+									<div className="field-row">
+										<label
+											className="form-label"
+											htmlFor="component-external-tokenizer"
+										>
+											{IC.box} Tokenizer
+										</label>
+										<input
+											id="component-external-tokenizer"
+											className="input"
+											type="text"
+											value={settings.tokenizer || ""}
+											onChange={(e) =>
+												setSettings((s) => ({
+													...s,
+													tokenizer: e.target.value,
+												}))
+											}
+											placeholder="必需：与文本编码器匹配的 tokenizer.json"
+										/>
+										<button
+											className="icon-btn"
+											title="浏览..."
+											onClick={async () => {
+												const p = await api.pickFile();
+												if (p) setSettings((s) => ({ ...s, tokenizer: p }));
+											}}
+										>
+											{IC.folder}
+										</button>
+									</div>
+								)}
+								{familyNeedsExternalTokenizer(detectedFamily) && (
+									<div className="field-hint">
+										{settings.tokenizer
+											? "已设置；也可用 main=…,clip-l=…,clip-g=… 形式一次配置多个槽位"
+											: EXTERNAL_TOKENIZER_HINT[detectedFamily] ||
+												"该家族不再内嵌词表，缺少外部 tokenizer 会在初始化文本编码器时失败"}
+									</div>
+								)}
 							</Panel>
 						)}
 					</>
@@ -1133,7 +1188,42 @@ export function Dashboard() {
 							placeholder="例如 cuda0 或 clip=cpu,vae=cuda0,diffusion=vulkan0"
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							支持组件级分配，如 clip=cpu,diffusion=cuda0。新版显式 backend / params-backend 会关闭 auto-fit；“自动”且无手动放置时默认启用单 GPU 自动放置。
+							支持组件级分配，如 clip=cpu,diffusion=cuda0。新版只有 params-backend 或 CPU 卸载会关闭 auto-fit；显式 --backend 会被 auto-fit 保留并作为计算设备分配（上游 #1967）。“自动”且无手动放置时默认启用单 GPU 自动放置。
+						</div>
+					</div>
+					<div className="form-row mt-2">
+						<Toggle
+							label="原生 SageAttention（--sage-attn）"
+							checked={!!settings.sageAttn}
+							onChange={(v) => setSettings((s) => ({ ...s, sageAttn: v }))}
+						/>
+						<div className="field-hint field-hint-flush mt-0.5">
+							仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与 --fa / --diffusion-fa 同时存在时，Sage 在 diffusion 内优先（上游 #2005）。会改变数值结果，建议固定种子对比。
+						</div>
+					</div>
+					<div className="form-row mt-2">
+						<label
+							className="form-label"
+							htmlFor="dashboard-conditioning-cache-size"
+						>
+							条件缓存上限（--conditioning-cache-size）
+						</label>
+						<input
+							id="dashboard-conditioning-cache-size"
+							className="input"
+							type="text"
+							inputMode="numeric"
+							value={settings.conditioningCacheSize || ""}
+							onChange={(e) =>
+								setSettings((s) => ({
+									...s,
+									conditioningCacheSize: e.target.value,
+								}))
+							}
+							placeholder="留空 = 内核默认（服务器 4）"
+						/>
+						<div className="field-hint field-hint-flush mt-0.5">
+							按模型上下文缓存条件结果，与 --cache-mode 的步间缓存无关；0 表示关闭。上游 #2034。
 						</div>
 					</div>
 					<CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
@@ -1162,6 +1252,7 @@ export function Dashboard() {
 								{ value: "krea2_ostris_edit", label: "Krea2 Ostris Edit" },
 								{ value: "krea2_edit", label: "Krea2 Edit 768" },
 								{ value: "cosmos_reference", label: "Anima / Cosmos Reference" },
+								{ value: "llada_image", label: "LLaDA-Image" },
 							]}
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">

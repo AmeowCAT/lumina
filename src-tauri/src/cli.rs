@@ -165,6 +165,11 @@ fn parse_help(help: &str) -> CliCapabilities {
         "--log-level",
         "--linear-scale",
         "--attn-scale",
+        // 上游 #1973/#2034 新增：--tokenizer 收路径（可能含逗号赋值），
+        // --conditioning-cache-size 收整数；都按取值选项处理，避免把紧随其后的
+        // 以 `--` 开头的值误判成开关。
+        "--tokenizer",
+        "--conditioning-cache-size",
     ] {
         value_options.insert(name.into());
     }
@@ -358,22 +363,26 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
     let mut index = 0;
     let mut attention_override = false;
     let mut flash_attention = false;
-    let mut manual_placement = false;
+    // 上游 #1967 起只有 --params-backend 会关闭 auto-fit；显式 --backend 改为
+    // 被 auto-fit 保留、用于约束计算设备，因此两者必须分开判定。
+    let mut params_placement = false;
+    let mut backend_placement = false;
     let mut auto_fit_on = false;
     while index < args.len() {
         let name = args[index].as_str();
         let value = args.get(index + 1).map(String::as_str);
+        if name == "--backend" || name == "-b" {
+            backend_placement = true;
+        }
         if matches!(
             name,
-            "--backend"
-                | "-b"
-                | "--params-backend"
+            "--params-backend"
                 | "--offload-to-cpu"
                 | "--clip-on-cpu"
                 | "--vae-on-cpu"
                 | "--control-net-cpu"
         ) {
-            manual_placement = true;
+            params_placement = true;
         }
         if matches!(name, "--fa" | "--diffusion-fa") {
             flash_attention = true;
@@ -401,10 +410,13 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
             | "--linear-scale"
             | "--attn-scale"
             | "--disable-prefetch"
-            | "--disable-segmented-compute" => {
+            | "--disable-segmented-compute"
+            | "--tokenizer"
+            | "--sage-attn"
+            | "--conditioning-cache-size" => {
                 if caps.supports(name) == Some(false) {
                     bail!(
-                        "所选 sd-server 不支持 {}；请清空对应诊断设置/附加启动参数，或升级内核。",
+                        "所选 sd-server 不支持 {}；请清空对应设置/附加启动参数，或升级内核。",
                         name
                     );
                 }
@@ -418,6 +430,12 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     if name == "--attn-scale" {
                         attention_override = parsed > 0.0;
                     }
+                }
+                if name == "--conditioning-cache-size"
+                    && !value
+                        .is_some_and(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()))
+                {
+                    bail!("--conditioning-cache-size 必须是非负整数（0 表示关闭条件缓存）。");
                 }
             }
             _ => {}
@@ -441,6 +459,8 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     | "--log-level"
                     | "--linear-scale"
                     | "--attn-scale"
+                    | "--tokenizer"
+                    | "--conditioning-cache-size"
             )
             || name == "--auto-fit"
                 && (caps.auto_fit == AutoFitSyntax::OnOff
@@ -453,8 +473,15 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
             "attn-scale 仅在启用 --fa / --diffusion-fa 且后端支持 Flash Attention 时生效。".into(),
         );
     }
-    if auto_fit_on && manual_placement {
-        warnings.push("显式 backend / params-backend 或 CPU 卸载配置会关闭新版 auto-fit，即使指定 --auto-fit on。".into());
+    if auto_fit_on && params_placement {
+        warnings.push(
+            "显式 params-backend 或 CPU 卸载配置会关闭新版 auto-fit，即使指定 --auto-fit on。"
+                .into(),
+        );
+    } else if auto_fit_on && backend_placement {
+        warnings.push(
+            "新版 auto-fit 会保留显式 --backend 作为计算设备分配，不再因它关闭 auto-fit（上游 #1967）。".into(),
+        );
     }
     Ok(warnings)
 }
@@ -470,7 +497,7 @@ mod tests {
         parse_help(&help("  --stream-layers       stream weights\n  --auto-fit            pick placements\n  -v, --verbose         print extra info\n"))
     }
     fn new() -> CliCapabilities {
-        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n"))
+        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --conditioning-cache-size <int>   conditioning cache capacity\n"))
     }
     fn argv(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| (*s).into()).collect()
@@ -594,5 +621,88 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// 上游 #1967：只有 --params-backend（含 CPU 卸载）会关闭 auto-fit；
+    /// 显式 --backend 现在被 auto-fit 保留为计算设备分配，不能再报"会关闭"。
+    #[test]
+    fn distinguishes_backend_from_params_backend_for_auto_fit() {
+        let warns_about_closing = |args: &[&str]| {
+            validate_args(&argv(args), &new())
+                .unwrap()
+                .iter()
+                .any(|w| w.contains("关闭新版 auto-fit"))
+        };
+        let warns_about_preserving = |args: &[&str]| {
+            validate_args(&argv(args), &new())
+                .unwrap()
+                .iter()
+                .any(|w| w.contains("保留显式 --backend"))
+        };
+
+        let backend_only = ["--auto-fit", "on", "--backend", "cuda0"];
+        assert!(!warns_about_closing(&backend_only));
+        assert!(warns_about_preserving(&backend_only));
+
+        let params_backend = ["--auto-fit", "on", "--params-backend", "cpu"];
+        assert!(warns_about_closing(&params_backend));
+        assert!(!warns_about_preserving(&params_backend));
+
+        let offload = ["--auto-fit", "on", "--offload-to-cpu"];
+        assert!(warns_about_closing(&offload));
+        assert!(!warns_about_preserving(&offload));
+
+        // 两者同时出现时只报"关闭"，避免同一条命令给两条互相矛盾的提示。
+        let both = [
+            "--auto-fit",
+            "on",
+            "--backend",
+            "cuda0",
+            "--params-backend",
+            "cpu",
+        ];
+        assert!(warns_about_closing(&both));
+        assert!(!warns_about_preserving(&both));
+    }
+
+    /// 新增的三个启动参数在老内核上会被拒绝（"unknown argument"），必须在
+    /// 送进 argv 之前报出来，而不是让 sd-server 直接退出。
+    #[test]
+    fn rejects_new_options_on_kernels_that_do_not_declare_them() {
+        let old_help = help("  --stream-layers       stream weights\n");
+        let old_caps = parse_help(&old_help);
+        let old_cases: [&[&str]; 3] = [
+            &["--tokenizer", "/models/tokenizer.json"],
+            &["--sage-attn"],
+            &["--conditioning-cache-size", "4"],
+        ];
+        for args in old_cases {
+            let err = validate_args(&argv(args), &old_caps).unwrap_err();
+            assert!(
+                err.to_string().contains("不支持"),
+                "{} 应报不支持：{err}",
+                args[0]
+            );
+        }
+
+        // 新内核上放行，并校验条件缓存必须是非负整数。
+        let new_caps = new();
+        let new_cases: [&[&str]; 3] = [
+            &["--tokenizer", "/models/tokenizer.json"],
+            &["--sage-attn"],
+            &["--conditioning-cache-size", "0"],
+        ];
+        for args in new_cases {
+            assert!(validate_args(&argv(args), &new_caps).is_ok(), "{args:?}");
+        }
+        assert!(
+            validate_args(&argv(&["--conditioning-cache-size", "-1"]), &new_caps)
+                .unwrap_err()
+                .to_string()
+                .contains("非负整数")
+        );
+        // help 不可判定（Unknown）时按"不静默丢弃"处理：透传不报错。
+        let unknown = CliCapabilities::unknown();
+        assert!(validate_args(&argv(&["--tokenizer", "/x.json"]), &unknown).is_ok());
     }
 }

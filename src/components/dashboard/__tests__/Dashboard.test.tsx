@@ -571,6 +571,13 @@ describe("Dashboard onboarding validation", () => {
     expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
 
     await pickOption("VAE 格式", "Flux / Z-Image（flux）");
+    // 上游 #1974：PiD / Lens 不再内嵌词表，VAE 格式齐全但没有 tokenizer 仍不能启动。
+    expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
+    expect(screen.getByLabelText("Tokenizer")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Tokenizer"), {
+      target: { value: "/models/tokenizer_gemma2.json" },
+    });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
     );
@@ -585,6 +592,7 @@ describe("Dashboard onboarding validation", () => {
           "diffusion-model": "/models/pid_flux1_512_to_2048.safetensors",
           vae: "/models/ae.sft",
           llm: "/models/gemma_2_2b.safetensors",
+          tokenizer: "/models/tokenizer_gemma2.json",
           "vae-format": "flux",
         }),
         1234

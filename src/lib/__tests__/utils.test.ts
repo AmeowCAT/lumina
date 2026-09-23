@@ -203,6 +203,57 @@ describe("buildRequestBody", () => {
     expect(body.output_format).toBeUndefined();
   });
 
+  // 上游 #2028 把请求字段 auto_resize_ref_image 换成了 ref_image_args，
+  // 旧内核只认前者、新内核只认后者，且两边都会忽略未知键，所以双发才能同时
+  // 覆盖新旧 sd-server（不能只删旧键——旧内核上开关会失效）。
+  describe("reference image resize (upstream #2028)", () => {
+    it("always sends the legacy boolean and never needs ref_image_args by default", () => {
+      const body = buildRequestBody("img_gen", baseParams, {} as GenImages);
+      expect(body.auto_resize_ref_image).toBe(true);
+      expect(body.ref_image_args).toBeUndefined();
+    });
+
+    it("dual-sends the resize opt-out and keeps the launch preset", () => {
+      const p: GenParams = { ...baseParams, auto_resize_ref_image: false };
+      const body = buildRequestBody("img_gen", p, {} as GenImages, {
+        refImagePreset: "flux_kontext",
+      });
+      // 旧内核读这个。
+      expect(body.auto_resize_ref_image).toBe(false);
+      // 新内核读这个；请求端是整体赋值，漏掉 preset 会把启动参数顶掉。
+      expect(body.ref_image_args).toBe(
+        "preset=flux_kontext,resize_before_vae=false"
+      );
+    });
+
+    it("honors an explicit ref_image_args without duplicating preset or resize", () => {
+      const p: GenParams = {
+        ...baseParams,
+        auto_resize_ref_image: false,
+        ref_image_args: "preset=longcat,resize_before_vae=off",
+      };
+      const body = buildRequestBody("img_gen", p, {} as GenImages, {
+        refImagePreset: "flux_kontext",
+      });
+      expect(body.ref_image_args).toBe("preset=longcat,resize_before_vae=off");
+    });
+
+    it("sends image_preprocess for both generation modes", () => {
+      const p: GenParams = {
+        ...baseParams,
+        image_preprocess: ["target=init,mode=fit-pad", "target=ref,mode=none"],
+      };
+      expect(buildRequestBody("img_gen", p, {} as GenImages).image_preprocess).toEqual([
+        "target=init,mode=fit-pad",
+        "target=ref,mode=none",
+      ]);
+      expect(buildRequestBody("vid_gen", p, {} as GenImages).image_preprocess).toEqual([
+        "target=init,mode=fit-pad",
+        "target=ref,mode=none",
+      ]);
+    });
+  });
+
   // capabilities 把"未设置"序列化为 "default"（routes_sdcpp.cpp
   // capability_*_name），请求体应省略而不是透传，让服务端用模型默认。
   it("omits default sentinels for sample_method/scheduler", () => {
@@ -762,6 +813,48 @@ describe("sdcppMetadataToGenParams", () => {
       denoising_strength: 0.4,
       upscale_tile_size: 512,
     });
+  });
+
+  // 上游 #2028 起元数据只写 ref_image_args / image_preprocess，
+  // auto_resize_ref_image 不再出现；旧图仍要能回填。
+  it("recovers reference resize and image preprocessing from new metadata", () => {
+    const off = sdcppMetadataToGenParams({
+      width: 1024,
+      height: 1024,
+      ref_image_args: "preset=qwen,resize_before_vae=false",
+      image_preprocess: "target=ref,mode=none;target=init,mode=fit-pad",
+    });
+    expect(off.auto_resize_ref_image).toBe(false);
+    expect(off.ref_image_args).toBe("preset=qwen,resize_before_vae=false");
+    expect(off.image_preprocess).toEqual([
+      "target=ref,mode=none",
+      "target=init,mode=fit-pad",
+    ]);
+
+    // 数组形式的 image_preprocess（native 请求允许 string | array）。
+    const arr = sdcppMetadataToGenParams({
+      width: 512,
+      height: 512,
+      image_preprocess: ["target=mask,filter=nearest-exact"],
+    });
+    expect(arr.image_preprocess).toEqual(["target=mask,filter=nearest-exact"]);
+
+    // 旧图：布尔键优先，且不会因为缺少新键而误判。
+    const legacy = sdcppMetadataToGenParams({
+      width: 512,
+      height: 512,
+      auto_resize_ref_image: false,
+    });
+    expect(legacy.auto_resize_ref_image).toBe(false);
+    expect(legacy.ref_image_args).toBeUndefined();
+
+    // 新版默认（只写 preset、没有 resize_before_vae）不应把开关翻成关闭。
+    const presetOnly = sdcppMetadataToGenParams({
+      width: 512,
+      height: 512,
+      ref_image_args: "preset=qwen",
+    });
+    expect(presetOnly.auto_resize_ref_image).toBeUndefined();
   });
 
   it("maps vid_gen metadata including high-noise beta args", () => {

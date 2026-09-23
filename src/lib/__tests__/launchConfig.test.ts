@@ -65,6 +65,8 @@ describe("sampler / scheduler token coverage", () => {
     "flux2",
     "flux",
     "beta",
+    // 上游 #1968 随 LLaDA-Image 新增（scheduler_to_str 末尾）。
+    "llada_image",
   ];
 
   it("names every upstream sampler and nothing else", () => {
@@ -217,6 +219,9 @@ const runtime: LaunchRuntime = {
   backend: "cuda0",
   refImagePreset: "",
   vaeFormat: "",
+  tokenizer: "",
+  sageAttn: false,
+  conditioningCacheSize: "",
   extraArgs: "",
   offloadCpu: false,
   quantType: "",
@@ -236,7 +241,11 @@ describe("launch configuration", () => {
         vae: "/models/ae.sft",
         llm: "/models/gemma_2_2b.safetensors",
       },
-      runtime: { ...runtime, vaeFormat: "flux" },
+      runtime: {
+        ...runtime,
+        vaeFormat: "flux",
+        tokenizer: "/models/tokenizers/tokenizer_gemma2.json",
+      },
     });
 
     expect(result.missing).toEqual([]);
@@ -245,9 +254,95 @@ describe("launch configuration", () => {
         "diffusion-model": "/models/pid_flux1_512_to_2048.safetensors",
         vae: "/models/ae.sft",
         llm: "/models/gemma_2_2b.safetensors",
+        tokenizer: "/models/tokenizers/tokenizer_gemma2.json",
         "diffusion-fa": true,
         "vae-format": "flux",
       })
+    );
+  });
+
+  // 上游 #1974：PiD / Lens 不再内嵌词表，缺 --tokenizer 会在初始化文本编码器时
+  // 失败，因此必须在启动前就报出来，而不是等内核报错。
+  it("requires an external tokenizer for PiD and Lens families", () => {
+    const pid = buildLaunchConfig({
+      family: "pid",
+      modelPath: "/models/pid_flux1_512_to_2048.safetensors",
+      components: { vae: "/models/ae.sft", llm: "/models/gemma_2_2b.safetensors" },
+      runtime: { ...runtime, vaeFormat: "flux" },
+    });
+    expect(pid.missing).toContain("外部 Tokenizer（--tokenizer，tokenizer.json）");
+    expect(pid.args.tokenizer).toBeUndefined();
+
+    for (const family of ["lens", "lens-turbo"]) {
+      const result = buildLaunchConfig({
+        family,
+        modelPath: "/models/lens_bf16.safetensors",
+        components: {
+          vae: "/models/flux2_ae.safetensors",
+          llm: "/models/gpt-oss-20b.gguf",
+        },
+        runtime,
+      });
+      expect(result.missing).toContain("外部 Tokenizer（--tokenizer，tokenizer.json）");
+    }
+
+    // 其他家族不强制，也不受空值影响。
+    const flux = buildLaunchConfig({
+      family: "flux",
+      modelPath: "/models/flux1-dev.safetensors",
+      components: {
+        vae: "/models/ae.sft",
+        clip_l: "/models/clip_l.safetensors",
+        t5xxl: "/models/t5xxl.safetensors",
+      },
+      runtime,
+    });
+    expect(flux.missing).toEqual([]);
+    expect(flux.args.tokenizer).toBeUndefined();
+  });
+
+  it("passes SageAttention and conditioning cache only when configured", () => {
+    const off = buildLaunchConfig({
+      family: "flux",
+      modelPath: "/models/flux1-dev.safetensors",
+      components: {
+        vae: "/models/ae.sft",
+        clip_l: "/models/clip_l.safetensors",
+        t5xxl: "/models/t5xxl.safetensors",
+      },
+      runtime,
+    });
+    expect(off.args["sage-attn"]).toBeUndefined();
+    expect(off.args["conditioning-cache-size"]).toBeUndefined();
+
+    const on = buildLaunchConfig({
+      family: "flux",
+      modelPath: "/models/flux1-dev.safetensors",
+      components: {
+        vae: "/models/ae.sft",
+        clip_l: "/models/clip_l.safetensors",
+        t5xxl: "/models/t5xxl.safetensors",
+      },
+      runtime: { ...runtime, sageAttn: true, conditioningCacheSize: "8" },
+    });
+    expect(on.args["sage-attn"]).toBe(true);
+    // 上游按整数解析，Number 化后再传避免传成带引号的字符串。
+    expect(on.args["conditioning-cache-size"]).toBe(8);
+    expect(on.missing).toEqual([]);
+
+    const bad = buildLaunchConfig({
+      family: "flux",
+      modelPath: "/models/flux1-dev.safetensors",
+      components: {
+        vae: "/models/ae.sft",
+        clip_l: "/models/clip_l.safetensors",
+        t5xxl: "/models/t5xxl.safetensors",
+      },
+      runtime: { ...runtime, conditioningCacheSize: "-1" },
+    });
+    expect(bad.args["conditioning-cache-size"]).toBeUndefined();
+    expect(bad.missing).toContain(
+      "条件缓存大小（--conditioning-cache-size，非负整数）"
     );
   });
 

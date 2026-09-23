@@ -1,6 +1,7 @@
 import {
   FAMILY_CONFIG,
   PID_VAE_FORMATS,
+  familyNeedsExternalTokenizer,
   type FamilyConfig,
   type RequiredInput,
 } from "../config/families";
@@ -21,6 +22,9 @@ export type LaunchRuntime = Pick<
   | "backend"
   | "refImagePreset"
   | "vaeFormat"
+  | "tokenizer"
+  | "sageAttn"
+  | "conditioningCacheSize"
   | "extraArgs"
   | "offloadCpu"
   | "quantType"
@@ -97,6 +101,10 @@ export function buildLaunchConfig({
   const extraArgs = runtimeValue(runtime, "extraArgs");
   const quantType = runtimeValue(runtime, "quantType");
   const maxVram = runtimeValue(runtime, "maxVram");
+  const tokenizer = (runtimeValue(runtime, "tokenizer") || "").trim();
+  const conditioningCacheSize = (
+    runtimeValue(runtime, "conditioningCacheSize") || ""
+  ).trim();
 
   if (modelDir) {
     args["lora-model-dir"] = modelDir;
@@ -109,10 +117,25 @@ export function buildLaunchConfig({
   if (quantType) args.type = quantType;
   // 空值不传显式预算；9 月内核仍可按实时显存自动分段，不能解释为禁用分段。
   if (maxVram && maxVram.trim()) args["max-vram"] = maxVram.trim();
+  // 外部 tokenizer（上游 #1973/#1974）：value 形式 `main=FILE,clip-l=FILE`，
+  // 这里整体透传，合法性交给内核在初始化文本编码器时判定。
+  if (tokenizer) args.tokenizer = tokenizer;
+  if (runtimeValue(runtime, "sageAttn")) args["sage-attn"] = true;
+  if (conditioningCacheSize) {
+    if (/^\d+$/.test(conditioningCacheSize)) {
+      args["conditioning-cache-size"] = Number(conditioningCacheSize);
+    } else {
+      missing.push("条件缓存大小（--conditioning-cache-size，非负整数）");
+    }
+  }
   if (extraArgs) args.extra_args = extraArgs;
   const diagnostics = buildDiagnosticArgs(runtime);
   Object.assign(args, diagnostics.args);
   missing.push(...diagnostics.errors);
+
+  if (familyNeedsExternalTokenizer(family) && !tokenizer) {
+    missing.push("外部 Tokenizer（--tokenizer，tokenizer.json）");
+  }
 
   if (family === "pid") {
     const validVaeFormat = PID_VAE_FORMATS.some(

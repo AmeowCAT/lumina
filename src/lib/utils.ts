@@ -348,6 +348,56 @@ function metaNumArr(v: unknown): number[] | undefined {
     : undefined;
 }
 
+/** 元数据 `image_preprocess` 可能是规则串（分号分隔）或字符串数组。 */
+function metaRuleList(v: unknown): string[] | undefined {
+  const split = (s: string) => s.split(";").map((x) => x.trim()).filter(Boolean);
+  if (typeof v === "string") {
+    const rules = split(v);
+    return rules.length ? rules : undefined;
+  }
+  if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+    const rules = (v as string[]).flatMap(split);
+    return rules.length ? rules : undefined;
+  }
+  return undefined;
+}
+
+/** 从新版 `ref_image_args` 反推「是否自动缩放参考图」，用于 UI 回填。
+ * 上游 #2028 起元数据只写 ref_image_args，旧键 auto_resize_ref_image 不再出现。 */
+export function refResizeFromRefImageArgs(value?: string): boolean | undefined {
+  if (!value) return undefined;
+  const m = /(?:^|,)\s*resize_before_vae\s*=\s*([^,]*)/.exec(value);
+  if (!m) return undefined;
+  const v = m[1].trim().toLowerCase();
+  if (["false", "off", "0", "no"].includes(v)) return false;
+  if (["true", "on", "1", "yes"].includes(v)) return true;
+  return undefined;
+}
+
+/** 组装请求体里的 `ref_image_args`（上游 #2028）。
+ *
+ * 服务端把请求字段**整体赋值**到 `default_gen_params` 之上
+ * （`routes_sdcpp.cpp` 的 `load_if_exists("ref_image_args", …)`），而不是追加，
+ * 所以只有在确实需要改参考图缩放时才发这个字段，且必须把启动期的
+ * `preset=…` 一并带上，否则会把启动参数里的 preset 顶掉。
+ * 返回空串表示「保持启动期默认」。 */
+export function buildRefImageArgs(
+  params: Pick<GenParams, "ref_image_args" | "auto_resize_ref_image">,
+  launchPreset?: string
+): string {
+  const explicit = (params.ref_image_args || "").trim();
+  const autoResize = params.auto_resize_ref_image !== false;
+  if (autoResize && !explicit) return "";
+  const hasPreset = /(?:^|,)\s*preset\s*=/.test(explicit);
+  const hasResize = /(?:^|,)\s*resize_before_vae\s*=/.test(explicit);
+  const preset = (launchPreset || "").trim();
+  const parts: string[] = [];
+  if (!hasPreset && preset) parts.push(`preset=${preset}`);
+  if (explicit) parts.push(explicit);
+  if (!autoResize && !hasResize) parts.push("resize_before_vae=false");
+  return parts.join(",");
+}
+
 /** 元数据 `sampling` / `high_noise_sampling` 对象 → GUI 的采样参数。 */
 function mapSamplingMetadata(s: unknown): SampleParams | undefined {
   if (!isMetaObj(s)) return undefined;
@@ -409,7 +459,12 @@ export function sdcppMetadataToGenParams(
     strength: metaNum(meta.strength),
     control_strength: metaNum(meta.control_strength),
     ip_adapter_strength: metaNum(meta.ip_adapter_strength),
-    auto_resize_ref_image: metaBool(meta.auto_resize_ref_image),
+    // 新内核（上游 #2028 起）元数据只写 ref_image_args；旧图仍是布尔键。
+    auto_resize_ref_image:
+      metaBool(meta.auto_resize_ref_image) ??
+      refResizeFromRefImageArgs(metaStr(meta.ref_image_args)),
+    ref_image_args: metaStr(meta.ref_image_args),
+    image_preprocess: metaRuleList(meta.image_preprocess),
     increase_ref_index: metaBool(meta.increase_ref_index),
   };
 
@@ -468,10 +523,16 @@ export function sdcppMetadataToGenParams(
 }
 
 /** Build the `/sdcpp/v1/img_gen|vid_gen` request body (mirrors webui). */
+export interface BuildRequestBodyOptions {
+  /** 启动期 `--ref-image-args preset=…`（来自设置的 refImagePreset）。 */
+  refImagePreset?: string;
+}
+
 export function buildRequestBody(
   mode: GenMode,
   params: GenParams,
-  images: GenImages
+  images: GenImages,
+  options: BuildRequestBodyOptions = {}
 ): Record<string, unknown> {
   const sp = params.sample_params;
   // capabilities 把"未设置"序列化为 "default"（routes_sdcpp.cpp
@@ -509,12 +570,19 @@ export function buildRequestBody(
   if (params.clip_skip != null && params.clip_skip !== -1)
     b.clip_skip = params.clip_skip;
   if (params.strength != null) b.strength = params.strength;
+  // 上游 #2028：img_gen 与 vid_gen 都接受 image_preprocess（规则串数组）。
+  if (params.image_preprocess?.length)
+    b.image_preprocess = params.image_preprocess;
 
   if (mode === "img_gen") {
     b.batch_count = params.batch_count || 1;
     if (params.qwen_image_layers != null)
       b.qwen_image_layers = params.qwen_image_layers;
+    // 缩放开关新旧双发：旧内核只认布尔键，新内核（#2028 起）只认
+    // ref_image_args，未知键在两边都只被忽略、不会报错。
     b.auto_resize_ref_image = params.auto_resize_ref_image !== false;
+    const refImageArgs = buildRefImageArgs(params, options.refImagePreset);
+    if (refImageArgs) b.ref_image_args = refImageArgs;
     b.increase_ref_index = !!params.increase_ref_index;
     b.control_strength = params.control_strength ?? 0.9;
     b.ip_adapter_strength = params.ip_adapter_strength ?? 1.0;
