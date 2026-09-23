@@ -236,11 +236,11 @@ export const EXTERNAL_TOKENIZER_FAMILIES = [
 
 /** 家族专属的 --tokenizer 说明（没有条目时用通用文案）。 */
 export const EXTERNAL_TOKENIZER_HINT: Record<string, string> = {
-	pid: "必须用与 Gemma 2 文本编码器 checkpoint 匹配的 tokenizer.json（PiD / PiD 1.5 不再内嵌 Gemma 2 词表）；仅 ID 落在嵌入表内不代表两份词表含义一致。",
-	lens: "必须用与 GPT-OSS 文本编码器 checkpoint 匹配的 tokenizer.json（Lens 不再内嵌 GPT-OSS 词表）。",
-	"lens-turbo": "必须用与 GPT-OSS 文本编码器 checkpoint 匹配的 tokenizer.json（Lens Turbo 不再内嵌 GPT-OSS 词表）。",
-	"llada-image": "必须用 LLaDA2 的 tokenizer.json（两个 LLaDA-Image checkpoint 共用同一份）。",
-	"llada-image-turbo": "必须用 LLaDA2 的 tokenizer.json（两个 LLaDA-Image checkpoint 共用同一份）。",
+	pid: "必须用与 Gemma 2 文本编码器 checkpoint 配套的 tokenizer.json。",
+	lens: "必须用与 GPT-OSS 文本编码器 checkpoint 配套的 tokenizer.json。",
+	"lens-turbo": "必须用与 GPT-OSS 文本编码器 checkpoint 配套的 tokenizer.json。",
+	"llada-image": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
+	"llada-image-turbo": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
 };
 
 /** 该家族是否强制要求外部 tokenizer。 */
@@ -985,7 +985,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 		],
 		fixedArgs: { "diffusion-fa": true },
 		generationHint:
-			"上游 docs/qwen_image_2.1.md：宽高需为 32 的倍数，flow schedule 按分辨率自动选择；必须使用 qwen_image_2.1 专用 VAE（旧 Qwen Image / Wan2.2 的 VAE 不通用）。图片编辑需 --llm_vision。透明输出由提示词决定（如 “This is an RGBA image with transparency. …”），且只在 png / webp 下保留 alpha；前缀 KV 缓存默认开启，可用 --model-args qwen_image_2_1_prefix_cache=false 关闭。",
+			"宽高需为 32 的倍数；必须使用该模型自带的 VAE。做图片编辑要另配视觉塔；要透明背景就在提示词里写明输出 RGBA，且只有 PNG / WebP 会保留 alpha。",
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1017,7 +1017,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 		],
 		fixedArgs: { "diffusion-fa": true },
 		generationHint:
-			"上游 docs/llada_image.md：基础模型用 50 步 / CFG 5，Turbo 用 4 步 / CFG 1.0（CFG 蒸馏掉了，调高会劣化并让文本编码器开销翻倍）。默认调度器为 llada_image，可用 --extra-sample-args uniform=1 换成均匀网格。宽高按 32 对齐；编辑需要带 SigVQ 的 connectors，且参考图与目标在同一序列里跑，约需两倍 token。必须提供 LLaDA2 tokenizer.json。",
+			"基础模型用 50 步 / CFG 5。做参考图编辑需要带图元编码器的连接器文件；编辑时参考图与目标同序列计算，显存占用约为文生图的两倍。启动前必须选好 tokenizer。",
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1047,7 +1047,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 		],
 		fixedArgs: { "diffusion-fa": true },
 		generationHint:
-			"上游 docs/llada_image.md：Turbo 用 4 步 / CFG 1.0；512 与 1024 都能正确编辑，而 50 步基础模型在 512 下几乎不改图。Turbo 与基础模型的 transformer / 文本编码器 / QueryFormer 互不通用，混用只会劣化输出而不报错。默认调度器 llada_image，宽高按 32 对齐，必须提供 LLaDA2 tokenizer.json。",
+			"Turbo 用 4 步 / CFG 1.0，调高 CFG 会明显劣化。它与基础模型的权重不能混用，混搭只会让出图变差而不会报错。512 与 1024 都能正常编辑。",
 		genDefaults: {
 			seed: -1,
 			width: 1024,

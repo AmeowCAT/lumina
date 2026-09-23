@@ -7,6 +7,7 @@ import type {
 } from "../../types";
 import { FAMILY_CONFIG, SIZE_PRESETS, VIDEO_FRAME_PRESETS } from "../../config/families";
 import { ParamsSheet } from "./ParamsSheet";
+import { Panel } from "../ui/Panel";
 import { ImageInputsPanel } from "./panels/ImageInputsPanel";
 import { SizeSeedPanel } from "./panels/SizeSeedPanel";
 import { SamplingPanel } from "./panels/SamplingPanel";
@@ -113,9 +114,6 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
 
   return (
     <ParamsSheet open={open} onClose={onClose}>
-      {FAMILY_CONFIG[family]?.generationHint && (
-        <p className="field-hint" role="note">{FAMILY_CONFIG[family].generationHint}</p>
-      )}
       {(features.init_image ||
         features.mask_image ||
         features.control_image ||
@@ -244,6 +242,15 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         compression={params.output_compression}
         onUpdate={onUpdate}
       />
+      {/* 家族使用提示：默认折叠并置于末尾。它不是当前任务的必读信息，
+          常显会挤占 Sheet 顶部、把输入面板推下去（观感很差）。 */}
+      {FAMILY_CONFIG[family]?.generationHint && (
+        <Panel title="模型使用提示" collapsed>
+          <p className="field-hint field-hint-flush" role="note">
+            {FAMILY_CONFIG[family].generationHint}
+          </p>
+        </Panel>
+      )}
     </ParamsSheet>
   );
 }

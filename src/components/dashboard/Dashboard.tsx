@@ -1188,7 +1188,7 @@ export function Dashboard() {
 							placeholder="例如 cuda0 或 clip=cpu,vae=cuda0,diffusion=vulkan0"
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							支持组件级分配，如 clip=cpu,diffusion=cuda0。新版只有 params-backend 或 CPU 卸载会关闭 auto-fit；显式 --backend 会被 auto-fit 保留并作为计算设备分配（上游 #1967）。“自动”且无手动放置时默认启用单 GPU 自动放置。
+							支持组件级分配，如 clip=cpu,diffusion=cuda0。只有 params-backend 或 CPU 卸载会关闭 auto-fit；显式 --backend 会被 auto-fit 保留并作为计算设备分配。“自动”且无手动放置时默认启用单 GPU 自动放置。
 						</div>
 					</div>
 					<div className="form-row mt-2">
@@ -1198,7 +1198,7 @@ export function Dashboard() {
 							onChange={(v) => setSettings((s) => ({ ...s, sageAttn: v }))}
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与 --fa / --diffusion-fa 同时存在时，Sage 在 diffusion 内优先（上游 #2005）。会改变数值结果，建议固定种子对比。
+							仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与 --fa / --diffusion-fa 同时存在时，Sage 在 diffusion 内优先。会改变数值结果，建议固定种子对比。
 						</div>
 					</div>
 					<div className="form-row mt-2">
@@ -1223,7 +1223,7 @@ export function Dashboard() {
 							placeholder="留空 = 内核默认（服务器 4）"
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							按模型上下文缓存条件结果，与 --cache-mode 的步间缓存无关；0 表示关闭。上游 #2034。
+							按模型上下文缓存条件结果，与 --cache-mode 的步间缓存无关；0 表示关闭。
 						</div>
 					</div>
 					<CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
