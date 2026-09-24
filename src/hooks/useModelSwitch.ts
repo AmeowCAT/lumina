@@ -137,6 +137,9 @@ export function useModelSwitch() {
         backend: settings.backend,
         refImagePreset: settings.refImagePreset,
         vaeFormat: settings.vaeFormat,
+        tokenizer: settings.tokenizer,
+        sageAttn: settings.sageAttn,
+        conditioningCacheSize: settings.conditioningCacheSize,
         extraArgs: settings.extraArgs,
         offloadCpu: settings.offloadCpu,
         quantType: settings.quantType,
@@ -154,13 +157,15 @@ export function useModelSwitch() {
       if (preflight.warnings.length) toast(preflight.warnings.join("；"));
       if (previousPath && previousPath !== modelPath) {
         try {
-          previousConfig = await buildLaunchConfig(
-            previousPath,
-            snapshots[previousPath],
-            true
+          // Current settings belong to the target model. Never fill gaps in an
+          // old snapshot with its tokenizer, components or diagnostic overrides.
+          const snapshot = snapshots[previousPath];
+          if (!snapshot) throw new Error("缺少当前模型的启动快照");
+          previousConfig = await buildLaunchConfig(previousPath, snapshot, true);
+        } catch (error) {
+          throw new Error(
+            `无法准备当前模型的回滚配置，已保留运行中的模型：${formatError(error)}。请检查旧模型配置；如需放弃自动回滚，请先手动停止服务再启动目标模型。`
           );
-        } catch {
-          previousConfig = null;
         }
       }
 

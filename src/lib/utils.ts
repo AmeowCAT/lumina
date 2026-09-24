@@ -348,6 +348,13 @@ function metaNumArr(v: unknown): number[] | undefined {
     : undefined;
 }
 
+/** Read persisted draft lines defensively without stripping editing whitespace. */
+export function imagePreprocessDraftLines(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((line): line is string => typeof line === "string")
+    : [];
+}
+
 /** 元数据 `image_preprocess` 可能是规则串（分号分隔）或字符串数组。 */
 function metaRuleList(v: unknown): string[] | undefined {
   const split = (s: string) => s.split(";").map((x) => x.trim()).filter(Boolean);
@@ -571,8 +578,11 @@ export function buildRequestBody(
     b.clip_skip = params.clip_skip;
   if (params.strength != null) b.strength = params.strength;
   // 上游 #2028：img_gen 与 vid_gen 都接受 image_preprocess（规则串数组）。
-  if (params.image_preprocess?.length)
-    b.image_preprocess = params.image_preprocess;
+  // 编辑态保留空行与空白，避免受控文本框吞掉 Enter；仅在请求边界清理。
+  const imagePreprocess = imagePreprocessDraftLines(params.image_preprocess)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (imagePreprocess.length) b.image_preprocess = imagePreprocess;
 
   if (mode === "img_gen") {
     b.batch_count = params.batch_count || 1;

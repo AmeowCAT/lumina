@@ -1,8 +1,9 @@
 import { memo } from "react";
 import { Panel } from "../../ui/Panel";
+import { imagePreprocessDraftLines } from "../../../lib/utils";
 
 interface Props {
-  /** 规则串数组，一行一条；对应请求体 `image_preprocess`。 */
+  /** 编辑草稿按行存储，保留空行与空白；构建请求时才清理为 image_preprocess。 */
   rules: string[] | undefined;
   /** 家族是否暴露参考图输入（决定提示里是否提 target=ref 等）。 */
   hasRefImages: boolean;
@@ -26,7 +27,7 @@ export const ImagePreprocessPanel = memo(function ImagePreprocessPanel({
   hasRefImages,
   onUpdate,
 }: Props) {
-  const text = (rules || []).join("\n");
+  const text = imagePreprocessDraftLines(rules).join("\n");
 
   return (
     <Panel title="图像输入几何（image_preprocess）" collapsed>
@@ -43,10 +44,8 @@ export const ImagePreprocessPanel = memo(function ImagePreprocessPanel({
           onChange={(e) =>
             onUpdate(
               "image_preprocess",
-              e.target.value
-                .split("\n")
-                .map((line) => line.trim())
-                .filter(Boolean)
+              // Preserve draft whitespace/newlines; normalize only on submission.
+              e.target.value.split("\n")
             )
           }
           placeholder={PLACEHOLDER}

@@ -238,6 +238,28 @@ describe("buildRequestBody", () => {
       expect(body.ref_image_args).toBe("preset=longcat,resize_before_vae=off");
     });
 
+    it.each(["img_gen", "vid_gen"] as const)("normalizes draft rules only when building %s requests", (mode) => {
+      const rules = ["  target=init,mode=fit-pad  ", "", "   ", "target=ref,mode=none", ""];
+      const p = { ...baseParams, image_preprocess: rules };
+      expect(buildRequestBody(mode, p, {} as GenImages).image_preprocess).toEqual([
+        "target=init,mode=fit-pad", "target=ref,mode=none",
+      ]);
+      expect(p.image_preprocess).toEqual(["  target=init,mode=fit-pad  ", "", "   ", "target=ref,mode=none", ""]);
+      expect(buildRequestBody(mode, { ...baseParams, image_preprocess: ["", "  "] }, {} as GenImages))
+        .not.toHaveProperty("image_preprocess");
+    });
+
+    it.each(["img_gen", "vid_gen"] as const)("handles malformed persisted rules for %s", (mode) => {
+      for (const value of [null, 42, {}, "not-an-array", [1, null, {}]]) {
+        const p = { ...baseParams, image_preprocess: value as unknown as string[] };
+        expect(buildRequestBody(mode, p, {} as GenImages)).not.toHaveProperty("image_preprocess");
+      }
+      const mixed = [null, 42, {}, "  target=ref,mode=none ", ""];
+      const p = { ...baseParams, image_preprocess: mixed as unknown as string[] };
+      expect(buildRequestBody(mode, p, {} as GenImages).image_preprocess).toEqual(["target=ref,mode=none"]);
+      expect(mixed).toEqual([null, 42, {}, "  target=ref,mode=none ", ""]);
+    });
+
     it("sends image_preprocess for both generation modes", () => {
       const p: GenParams = {
         ...baseParams,
