@@ -1,10 +1,21 @@
 import { memo } from "react";
-import type { SlgGuidance, VaeTilingParams } from "../../../types";
+import type {
+  SlgGuidance,
+  VaeTilingParams,
+  VaeTilingProtocol,
+} from "../../../types";
 import { CACHE_MODES } from "../../../config/families";
+import {
+  clearLegacyLatentTiling,
+  legacyLatentTilingAxes,
+  legacyTilingDroppedOnPixels,
+  pixelTilingDroppedOnLatent,
+} from "../../../lib/utils";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { Toggle } from "../../ui/Toggle";
 import { Select } from "../../ui/Select";
+import { NumberInput } from "../../ui/NumberInput";
 
 interface Props {
   eta: number | undefined;
@@ -12,6 +23,8 @@ interface Props {
   slg: SlgGuidance | undefined;
   vaeTilingParams: VaeTilingParams | undefined;
   showVaeTiling?: boolean;
+  /** 所选内核使用哪套分块字段（上游 #2059 前后不同）。 */
+  vaeTilingProtocol?: VaeTilingProtocol;
   cacheMode: string | undefined;
   clipSkip: number | undefined;
   extraSampleArgs: string | undefined;
@@ -24,11 +37,25 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   slg,
   vaeTilingParams,
   showVaeTiling = true,
+  vaeTilingProtocol = "pixels",
   cacheMode,
   clipSkip,
   extraSampleArgs,
   onUpdate,
 }: Props) {
+  const tilingEnabled = !!vaeTilingParams?.enabled;
+  // 旧内核的 latent 单位数值在新内核上不会被读取——提示重设，而不是替用户
+  // 乘一个猜出来的 VAE 缩放因子；反向（像素值遇到旧内核）同样要提示。
+  const droppedLegacyTiling = legacyTilingDroppedOnPixels(vaeTilingParams);
+  const legacyAxes = legacyLatentTilingAxes(vaeTilingParams);
+  const droppedPixelTiling = pixelTilingDroppedOnLatent(vaeTilingParams);
+  const isPixels = vaeTilingProtocol === "pixels";
+  // 相对尺寸在上游 get_tile_sizes 里优先于绝对尺寸（factor > 0 直接换算），
+  // 只看绝对输入框会以为"改了没生效"。
+  const relativeOverrides = [
+    (vaeTilingParams?.rel_size_w ?? 0) > 0 ? "宽" : null,
+    (vaeTilingParams?.rel_size_h ?? 0) > 0 ? "高" : null,
+  ].filter(Boolean) as string[];
   return (
     <Panel title="高级采样" collapsed>
       <Slider
@@ -67,13 +94,118 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
         <>
           <Toggle
             label="VAE 分块"
-            checked={!!vaeTilingParams?.enabled}
+            checked={tilingEnabled}
             onChange={(v) =>
               onUpdate("vae_tiling_params", { ...vaeTilingParams, enabled: v })
             }
           />
+          {tilingEnabled && isPixels && (
+            <>
+              <div className="form-row mt-2">
+                <label className="form-label" htmlFor="vae-tile-w">
+                  分块宽
+                  <span className="form-sublabel">
+                    图像像素；0 用内核默认 256。编码与解码共用该尺寸
+                  </span>
+                </label>
+                <NumberInput
+                  id="vae-tile-w"
+                  value={vaeTilingParams?.tile_size_w ?? 0}
+                  onChange={(v) =>
+                    onUpdate("vae_tiling_params", {
+                      ...vaeTilingParams,
+                      tile_size_w: v,
+                      // 相对尺寸会覆盖绝对尺寸；改绝对值时一并清零，
+                      // 否则用户输入的数字根本不会生效。
+                      rel_size_w: 0,
+                    })
+                  }
+                  min={0}
+                  max={8192}
+                  step={32}
+                />
+              </div>
+              <div className="form-row">
+                <label className="form-label" htmlFor="vae-tile-h">
+                  分块高
+                </label>
+                <NumberInput
+                  id="vae-tile-h"
+                  value={vaeTilingParams?.tile_size_h ?? 0}
+                  onChange={(v) =>
+                    onUpdate("vae_tiling_params", {
+                      ...vaeTilingParams,
+                      tile_size_h: v,
+                      rel_size_h: 0,
+                    })
+                  }
+                  min={0}
+                  max={8192}
+                  step={32}
+                />
+              </div>
+              {relativeOverrides.length > 0 && (
+                <div className="field-hint field-hint-flush">
+                  相对尺寸正在覆盖分块{relativeOverrides.join(" / ")}
+                  （rel_size_w={vaeTilingParams?.rel_size_w ?? 0}、
+                  rel_size_h={vaeTilingParams?.rel_size_h ?? 0}）：上游优先用相对值，
+                  绝对尺寸不会生效。
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() =>
+                      onUpdate("vae_tiling_params", {
+                        ...vaeTilingParams,
+                        rel_size_w: 0,
+                        rel_size_h: 0,
+                      })
+                    }
+                  >
+                    清除相对尺寸
+                  </button>
+                </div>
+              )}
+              {droppedLegacyTiling && (
+                <div className="field-hint field-hint-flush" role="alert">
+                  旧内核的 latent 单位尺寸仍在设置里：
+                  {[
+                    legacyAxes.tileX != null ? `tile_size_x=${legacyAxes.tileX}` : null,
+                    legacyAxes.tileY != null ? `tile_size_y=${legacyAxes.tileY}` : null,
+                    legacyAxes.relX != null ? `rel_size_x=${legacyAxes.relX}` : null,
+                    legacyAxes.relY != null ? `rel_size_y=${legacyAxes.relY}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join("、")}
+                  。新版内核按图像像素解释，这些值不会下发；请按上面的像素尺寸重新设置
+                  （8× VAE 的旧 32 大致对应 256 像素），确认后清除它们。
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() =>
+                      onUpdate(
+                        "vae_tiling_params",
+                        clearLegacyLatentTiling(vaeTilingParams)
+                      )
+                    }
+                  >
+                    清除旧值
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+          {tilingEnabled && !isPixels && (
+            <div className="field-hint field-hint-flush" role="alert">
+              所选 sd-server 使用旧版分块协议（tile_size_x/y，latent 单位）：界面只
+              读回旧值并原样下发，不会写入新版像素字段。
+              {droppedPixelTiling &&
+                "当前参数里只有新版像素尺寸，这组值不会下发到该内核；请按 latent 单位重新设置，或升级内核。"}
+            </div>
+          )}
           <div className="field-hint field-hint-flush">
-            设置初始解码策略；新版内核在解码失败时仍可能自动回退到分块，不受 auto-fit 开关限制。
+            设置空间分块（编码与解码共用，默认 256 图像像素）；时间分块独立开关，
+            不受 auto-fit 限制。新版内核只在主 VAE **解码分配失败**时自动缩小分块重试，
+            执行失败不重试，编码也没有自动重试。
           </div>
         </>
       )}
@@ -120,7 +252,8 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           上游 extra_sample_args 的 key=value 列表（逗号分隔），兜底界面未暴露的
           采样器 / 调度器 / 引导参数：flux 的 base_shift·max_shift、lcm 的
           noise_clip_std、euler_ge 的 gamma、APG 的 apg_*、slg_uncond、
-          guidance_schedule、llada_image 的 uniform=1，以及注入噪声的采样器的
+          guidance_schedule（分段写法 1x5+6x15，段间用 + 而不是逗号）、
+          llada_image 的 uniform=1，以及注入噪声的采样器的
           noise_sampler=iid|brownian_tree（brownian_tree 可再配
           brownian_tree_rng=cpu|cuda|std_default|sampler_rng）等；同名键会覆盖
           上面的滑杆值

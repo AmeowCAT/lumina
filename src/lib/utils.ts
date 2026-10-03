@@ -5,6 +5,8 @@ import type {
   LoraEntry,
   ModelFile,
   SampleParams,
+  VaeTilingParams,
+  VaeTilingProtocol,
 } from "../types";
 
 /** sd-server 的历史默认端口；与 Rust 侧 `server::DEFAULT_SD_PORT` 保持一致。 */
@@ -405,6 +407,127 @@ export function buildRefImageArgs(
   return parts.join(",");
 }
 
+/**
+ * 所选内核使用哪一套 VAE 分块字段。
+ *
+ * capabilities 的 `defaults_by_mode[*].vae_tiling_params` 一定带键名，用它
+ * 判别协议；上游 #2059 起为 w/h（图像像素），之前为 x/y（latent 单位）。
+ * 两套都没有（旧内核或裁剪过的响应）时按最新内核处理——Lumina 的对齐目标
+ * 是上游 master。
+ */
+export function vaeTilingProtocolFromCapabilities(
+  caps?: {
+    defaults_by_mode?: Partial<
+      Record<GenMode, { vae_tiling_params?: VaeTilingParams }>
+    >;
+  } | null
+): VaeTilingProtocol {
+  for (const mode of ["img_gen", "vid_gen"] as GenMode[]) {
+    const tiling = caps?.defaults_by_mode?.[mode]?.vae_tiling_params;
+    if (!tiling) continue;
+    if (tiling.tile_size_w != null || tiling.tile_size_h != null) return "pixels";
+    if (tiling.rel_size_w != null || tiling.rel_size_h != null) return "pixels";
+    if (tiling.tile_size_x != null || tiling.tile_size_y != null) return "latent";
+    if (tiling.rel_size_x != null || tiling.rel_size_y != null) return "latent";
+  }
+  return "pixels";
+}
+
+/** 该分块设置是否带旧内核的 latent 单位字段（x/y 命名）。 */
+export function hasLegacyLatentTiling(params?: VaeTilingParams): boolean {
+  if (!params) return false;
+  return [
+    params.tile_size_x,
+    params.tile_size_y,
+    params.rel_size_x,
+    params.rel_size_y,
+  ].some((v) => typeof v === "number" && Number.isFinite(v));
+}
+
+/** 该分块设置是否带新内核的像素单位字段（w/h 命名）。 */
+export function hasPixelTiling(params?: VaeTilingParams): boolean {
+  if (!params) return false;
+  return [
+    params.tile_size_w,
+    params.tile_size_h,
+    params.rel_size_w,
+    params.rel_size_h,
+  ].some((v) => typeof v === "number" && Number.isFinite(v));
+}
+
+/** 该分块设置里遗留的旧内核 latent 尺寸字段（按轴），用于逐轴提示与清除。 */
+export function legacyLatentTilingAxes(params?: VaeTilingParams): {
+  tileX?: number;
+  tileY?: number;
+  relX?: number;
+  relY?: number;
+} {
+  if (!params) return {};
+  const num = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  return {
+    tileX: num(params.tile_size_x),
+    tileY: num(params.tile_size_y),
+    relX: num(params.rel_size_x),
+    relY: num(params.rel_size_y),
+  };
+}
+
+/** 移除旧内核的 latent 字段，保留像素字段（用户确认重设后使用）。 */
+export function clearLegacyLatentTiling(params?: VaeTilingParams): VaeTilingParams {
+  const next: VaeTilingParams = { ...params };
+  delete next.tile_size_x;
+  delete next.tile_size_y;
+  delete next.rel_size_x;
+  delete next.rel_size_y;
+  return next;
+}
+
+/**
+ * 像素协议下是否存在会被丢弃的旧 latent 数值。
+ *
+ * 只要旧值还在就提示——**不能**用"已经有新的像素值"来消除提示：那些像素值
+ * 可能是 capabilities 的启动默认值，用户并没有真正迁移过旧设置；而且旧值是
+ * 逐轴的，只重设了宽度不代表高度也不用管。提示里提供"清除旧值"出口，
+ * 用户确认后才消失。
+ */
+export function legacyTilingDroppedOnPixels(params?: VaeTilingParams): boolean {
+  return !!params?.enabled && hasLegacyLatentTiling(params);
+}
+
+/**
+ * 反方向：旧内核（latent 协议）下像素数值是否会被丢弃。
+ *
+ * 与 `legacyTilingDroppedOnPixels` 对称。用新内核出图后把 PNG 元数据回填、
+ * 又切回旧内核时会走到这里：`resolveVaeTilingForProtocol` 会删掉 w/h，
+ * 所以界面必须给出同样的提示，而不是让设置静默消失。
+ */
+export function pixelTilingDroppedOnLatent(params?: VaeTilingParams): boolean {
+  if (!params?.enabled || !hasPixelTiling(params)) return false;
+  return ![params.tile_size_x, params.tile_size_y, params.rel_size_x, params.rel_size_y]
+    .some((v) => typeof v === "number" && Number.isFinite(v) && v > 0);
+}
+
+/**
+ * 生成该协议下的 `vae_tiling_params` 请求体。
+ *
+ * 只发送内核能识别的键：新版内核不读 x/y，旧版不读 w/h，混发会让"设置了
+ * 但没生效"变得无法解释。关闭时显式发 `enabled:false`，避免沿用服务端默认。
+ */
+export function resolveVaeTilingForProtocol(
+  params: VaeTilingParams | undefined,
+  protocol: VaeTilingProtocol
+): Record<string, unknown> {
+  if (!params?.enabled) return { enabled: false };
+  const next: Record<string, unknown> = { ...params };
+  const legacyKeys = ["tile_size_x", "tile_size_y", "rel_size_x", "rel_size_y"];
+  const pixelKeys = ["tile_size_w", "tile_size_h", "rel_size_w", "rel_size_h"];
+  for (const key of protocol === "pixels" ? legacyKeys : pixelKeys) {
+    delete next[key];
+  }
+  return next;
+}
+
 /** 元数据 `sampling` / `high_noise_sampling` 对象 → GUI 的采样参数。 */
 function mapSamplingMetadata(s: unknown): SampleParams | undefined {
   if (!isMetaObj(s)) return undefined;
@@ -494,18 +617,35 @@ export function sdcppMetadataToGenParams(
     out.scm_mask = metaStr(cache.scm_mask);
     out.scm_policy_dynamic = metaBool(cache.scm_policy_dynamic);
   }
-  // 上游只在启用（或写了 extra_tiling_args）时才写 vae_tiling 段
-  // （common.cpp build_sdcpp_image_metadata_json），键名与请求体一致。
+  // 上游只在 enabled / temporal_tiling 为真、或写了 extra_tiling_args 时
+  // 才写 vae_tiling 段（common.cpp build_sdcpp_image_metadata_json），
+  // 键名与请求体一致。
   if (vaeTiling) {
+    // 上游 #2059 起元数据写 tile_size_w/h、rel_size_w/h（图像像素）；旧图仍是
+    // x/y（latent 单位）。**两套键各自按存在性回填，不做交叉回退**：单位不同，
+    // 把 latent 数值当成像素会得到完全错误的分块。发送时由协议决定用哪一套
+    // （见 resolveVaeTilingForProtocol），旧图在新内核上会提示重设。
+    const pixelKeys = {
+      tile_size_w: metaNum(vaeTiling.tile_size_w),
+      tile_size_h: metaNum(vaeTiling.tile_size_h),
+      rel_size_w: metaNum(vaeTiling.rel_size_w),
+      rel_size_h: metaNum(vaeTiling.rel_size_h),
+    };
+    const latentKeys = {
+      tile_size_x: metaNum(vaeTiling.tile_size_x),
+      tile_size_y: metaNum(vaeTiling.tile_size_y),
+      rel_size_x: metaNum(vaeTiling.rel_size_x),
+      rel_size_y: metaNum(vaeTiling.rel_size_y),
+    };
+    const present = (keys: Record<string, number | undefined>) =>
+      Object.values(keys).some((v) => typeof v === "number" && Number.isFinite(v));
     out.vae_tiling_params = {
       enabled: metaBool(vaeTiling.enabled) ?? true,
       temporal_tiling: metaBool(vaeTiling.temporal_tiling),
-      tile_size_x: metaNum(vaeTiling.tile_size_x),
-      tile_size_y: metaNum(vaeTiling.tile_size_y),
       target_overlap: metaNum(vaeTiling.target_overlap),
-      rel_size_x: metaNum(vaeTiling.rel_size_x),
-      rel_size_y: metaNum(vaeTiling.rel_size_y),
       extra_tiling_args: metaStr(vaeTiling.extra_tiling_args),
+      ...(present(pixelKeys) ? pixelKeys : {}),
+      ...(present(latentKeys) ? latentKeys : {}),
     };
   }
   if (Array.isArray(meta.loras) && availableLoras?.length) {
@@ -533,6 +673,11 @@ export function sdcppMetadataToGenParams(
 export interface BuildRequestBodyOptions {
   /** 启动期 `--ref-image-args preset=…`（来自设置的 refImagePreset）。 */
   refImagePreset?: string;
+  /**
+   * 所选内核的 VAE 分块字段协议（见 `vaeTilingProtocolFromCapabilities`）。
+   * 缺省按最新内核（图像像素 w/h）。
+   */
+  vaeTilingProtocol?: VaeTilingProtocol;
 }
 
 export function buildRequestBody(
@@ -670,9 +815,11 @@ export function buildRequestBody(
     // 显式关闭：省略字段会沿用服务端默认（可能是开启）。
     b.hires = { enabled: false };
   }
-  b.vae_tiling_params = params.vae_tiling_params?.enabled
-    ? { ...params.vae_tiling_params }
-    : { enabled: false };
+  // 上游 #2059 改动字段名与单位（latent → 图像像素），按内核协议只发一套键。
+  b.vae_tiling_params = resolveVaeTilingForProtocol(
+    params.vae_tiling_params,
+    options.vaeTilingProtocol ?? "pixels"
+  );
 
   if (params.cache_mode && params.cache_mode !== "disabled") {
     b.cache_mode = params.cache_mode;

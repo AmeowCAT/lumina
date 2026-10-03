@@ -104,6 +104,13 @@ interface StoreState {
   seedRandom: boolean;
   setSeedRandom: (v: boolean) => void;
   clearImages: () => void;
+  /**
+   * 独立放大（同步接口）是否进行中。放在 store 而不是组件 state：切到控制台
+   * 会卸载 GenerationUI，局部 busy 随之丢失，用户能把同一个同步放大重复提交
+   * 两次（内核侧只会串行等待，但界面会显示成可以重来）。
+   */
+  upscaleBusy: boolean;
+  setUpscaleBusy: (busy: boolean) => void;
 
   // sd-server 日志（stdout/stderr 流式捕获，内置日志面板展示）
   logs: string[];
@@ -283,6 +290,8 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({ controlFrames: updater(s.controlFrames) })),
   seedRandom: true,
   setSeedRandom: (v) => set({ seedRandom: v }),
+  upscaleBusy: false,
+  setUpscaleBusy: (busy) => set({ upscaleBusy: busy }),
   clearImages: () =>
     set({
       initImage: null,

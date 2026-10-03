@@ -67,6 +67,42 @@ function runtimeValue<K extends keyof LaunchRuntime>(
   return runtime[key] as LaunchRuntime[K];
 }
 
+/**
+ * 校验 --tokenizer 的槽位写法（对齐上游 src/tokenizers/tokenizer_config.cpp）：
+ * 无 `=` 时整串就是 main 槽的路径；有 `=` 时按逗号分段，每段必须是
+ * `main=FILE` / `clip-l=FILE` / `clip-g=FILE`。返回错误消息或 null。
+ */
+export function validateTokenizerSpec(raw: string): string | null {
+  const value = raw.trim();
+  if (!value || !value.includes("=")) return null;
+  const seen = new Set<string>();
+  for (const entry of value.split(",")) {
+    const eq = entry.indexOf("=");
+    if (eq < 0) {
+      return `条目 "${entry.trim()}" 缺少 =（应写 main=FILE,clip-l=FILE,clip-g=FILE）`;
+    }
+    const key = entry.slice(0, eq).trim();
+    const file = entry.slice(eq + 1).trim();
+    if (key !== "main" && key !== "clip-l" && key !== "clip-g") {
+      return `未知槽位 "${key}"（只能是 main、clip-l 或 clip-g）`;
+    }
+    if (!file) return `槽位 "${key}" 缺少路径`;
+    if (seen.has(key)) return `槽位 "${key}" 重复指定`;
+    seen.add(key);
+  }
+  return null;
+}
+
+/** 是否配置了 main 槽（不含 `=` 的单路径写法本身就是 main）。 */
+export function hasMainTokenizerSlot(raw: string): boolean {
+  const value = raw.trim();
+  if (!value) return false;
+  if (!value.includes("=")) return true;
+  return value
+    .split(",")
+    .some((entry) => entry.slice(0, entry.indexOf("=")).trim() === "main");
+}
+
 /** Build the exact sd-server CLI argument map used for a model launch. */
 export function buildLaunchConfig({
   family,
@@ -133,8 +169,19 @@ export function buildLaunchConfig({
   Object.assign(args, diagnostics.args);
   missing.push(...diagnostics.errors);
 
-  if (familyNeedsExternalTokenizer(family) && !tokenizer) {
-    missing.push("外部 Tokenizer（--tokenizer，tokenizer.json）");
+  // --tokenizer 支持 main=/clip-l=/clip-g= 多槽写法（上游 TokenizerConfig）。
+  // 语法错误、以及必需家族缺 main 槽，都会在启动建文本编码器时才抛错；
+  // 尤其 Ming-Image 只从 MAIN 槽取词表，只填 clip-l= 会一路显示"就绪"，
+  // 切换模型时还会先卸载正在运行的模型。
+  const tokenizerError = tokenizer ? validateTokenizerSpec(tokenizer) : null;
+  if (tokenizerError) {
+    missing.push(`外部 Tokenizer：${tokenizerError}`);
+  } else if (familyNeedsExternalTokenizer(family)) {
+    if (!tokenizer) {
+      missing.push("外部 Tokenizer（--tokenizer，tokenizer.json）");
+    } else if (!hasMainTokenizerSlot(tokenizer)) {
+      missing.push("外部 Tokenizer 的 main 槽（如 main=tokenizer.json）");
+    }
   }
 
   if (family === "pid") {

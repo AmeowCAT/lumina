@@ -268,6 +268,27 @@ fn category_with_hint(category: &str, category_hint: Option<&str>, is_index: boo
     category.to_string()
 }
 
+/// Map a Diffusers component subdirectory to a component category, using the
+/// package's detected family.
+///
+/// 官方仓库导出的组件是通用名（`vae/diffusion_pytorch_model.safetensors`、
+/// `text_encoder/model.safetensors.index.json`），文件名里没有任何家族线索，
+/// 只能靠目录名 + 包家族判定：`text_encoder` 在 PixArt 里是 T5-XXL，在 SDXL
+/// 里是 CLIP-L。返回 None 表示该目录不需要覆盖（沿用文件名分类）。
+fn diffusers_component_category(subdir: &str, family: &str) -> Option<&'static str> {
+    match subdir {
+        "vae" | "vaes" => Some("vae"),
+        "transformer" | "unet" => Some("model"),
+        "text_encoder" => Some(if family.starts_with("pixart") {
+            "t5xxl"
+        } else {
+            "clip_l"
+        }),
+        "text_encoder_2" => Some("clip_g"),
+        _ => None,
+    }
+}
+
 fn is_skipped(path: &Path, skip: &HashSet<PathBuf>) -> bool {
     skip.contains(path)
         || path
@@ -282,6 +303,7 @@ fn walk(
     depth: usize,
     skip: &HashSet<PathBuf>,
     category_hint: Option<&str>,
+    package_family: Option<&'static str>,
     out: &mut Vec<ModelFile>,
     context: &mut ScanContext,
 ) {
@@ -362,7 +384,16 @@ fn walk(
             }
             // Diffusers directory: contains model_index.json → treat as a model file.
             let model_index = path.join("model_index.json");
-            if model_index.is_file() {
+            // 上游 DiffusersModelLoader 只从 unet/diffusion_pytorch_model.safetensors
+            // 取主权重（src/model_loader.cpp init_from_diffusers_file）。官方
+            // PixArt 仓库用 transformer/，把整个目录当主模型传进去必然加载失败，
+            // 所以只有确实存在 unet 布局的目录才折叠成主候选；其余继续下探，
+            // 让用户能选到 transformer/ 里的真实权重与 vae/、text_encoder/ 组件。
+            let has_unet_layout = path
+                .join("unet")
+                .join("diffusion_pytorch_model.safetensors")
+                .is_file();
+            if model_index.is_file() && has_unet_layout {
                 let name = path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -397,7 +428,24 @@ fn walk(
                 });
                 continue;
             }
-            walk(&path, base, depth + 1, skip, category_hint, out, context);
+            // 没有 model_index.json、或它不是上游认得的 unet 布局：继续下探，
+            // 但记住这个包属于哪个家族，供内部通用名组件（diffusion_pytorch_model、
+            // text_encoder/model.safetensors）归类使用。
+            let child_family = if model_index.is_file() {
+                Some(family::detect_family(&to_slash(&path)))
+            } else {
+                package_family
+            };
+            walk(
+                &path,
+                base,
+                depth + 1,
+                skip,
+                category_hint,
+                child_family,
+                out,
+                context,
+            );
             continue;
         }
 
@@ -444,11 +492,17 @@ fn walk(
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
-        let category = category_with_hint(
-            family::classify_file(&name, &stem, &dir_base, size_mb),
-            category_hint,
-            safetensors_index,
-        );
+        // Diffusers 包内的通用名组件按目录 + 包家族归类，其余沿用文件名规则。
+        let category = match package_family
+            .and_then(|family| diffusers_component_category(&dir_base.to_lowercase(), family))
+        {
+            Some(mapped) => mapped.to_string(),
+            None => category_with_hint(
+                family::classify_file(&name, &stem, &dir_base, size_mb),
+                category_hint,
+                safetensors_index,
+            ),
+        };
         out.push(ModelFile {
             stem,
             rel_path: path.strip_prefix(base).map(to_slash).unwrap_or_default(),
@@ -523,6 +577,7 @@ pub fn scan_models(dir: &str) -> Result<ScanResult> {
             0,
             &HashSet::new(),
             Some(category_hint),
+            None,
             &mut files,
             &mut context,
         );
@@ -531,7 +586,7 @@ pub fn scan_models(dir: &str) -> Result<ScanResult> {
     let needs_fallback =
         diffusion_dir.is_none() || vae_dir.is_none() || llm_dir.is_none() || lora_dir.is_none();
     if needs_fallback {
-        walk(&base, &base, 0, &skip, None, &mut files, &mut context);
+        walk(&base, &base, 0, &skip, None, None, &mut files, &mut context);
     }
 
     files.retain(|file| {
@@ -729,6 +784,86 @@ mod tests {
         assert_eq!(llm_index.category, "llm");
         assert_eq!(vae_index.category, "vae");
         assert_eq!(result.files.len(), 2);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // 官方 PixArt 仓库用 transformer/ 而不是 unet/：上游 DiffusersModelLoader
+    // 只从 unet/diffusion_pytorch_model.safetensors 取主权重，把整个目录折叠成
+    // 主候选会让用户选到必然加载失败的路径，同时隐藏 transformer/、vae/、
+    // text_encoder/ 里的真实组件。
+    #[test]
+    fn keeps_diffusers_packages_without_unet_layout_expanded() {
+        let dir = test_dir("pixart-diffusers");
+        let package = dir.join("PixArt-Sigma-XL-2-1024-MS");
+        let transformer = package.join("transformer");
+        let vae = package.join("vae");
+        let text_encoder = package.join("text_encoder");
+        fs::create_dir_all(&transformer).unwrap();
+        fs::create_dir_all(&vae).unwrap();
+        fs::create_dir_all(&text_encoder).unwrap();
+        fs::write(package.join("model_index.json"), b"{}").unwrap();
+        fs::write(
+            transformer.join("diffusion_pytorch_model.safetensors"),
+            b"dit",
+        )
+        .unwrap();
+        fs::write(vae.join("diffusion_pytorch_model.safetensors"), b"vae").unwrap();
+        fs::write(
+            text_encoder.join("model-00001-of-00002.safetensors"),
+            b"t5a",
+        )
+        .unwrap();
+        fs::write(
+            text_encoder.join("model-00002-of-00002.safetensors"),
+            b"t5b",
+        )
+        .unwrap();
+        fs::write(
+            text_encoder.join("model.safetensors.index.json"),
+            r#"{"weight_map":{"a":"model-00001-of-00002.safetensors","b":"model-00002-of-00002.safetensors"}}"#,
+        )
+        .unwrap();
+
+        let result = scan_models(dir.to_str().unwrap()).unwrap();
+
+        // 目录本身不再是主候选。
+        assert!(!result
+            .files
+            .iter()
+            .any(|file| file.path.ends_with("PixArt-Sigma-XL-2-1024-MS")));
+        // transformer/ 里的 DiT 可作主模型，并识别出家族。
+        let dit = result
+            .files
+            .iter()
+            .find(|file| file.path.contains("/transformer/"))
+            .unwrap();
+        assert_eq!(dit.category, "model");
+        assert_eq!(result.families[&dit.path], "pixart-sigma");
+        assert_eq!(
+            result
+                .files
+                .iter()
+                .find(|file| file.path.contains("/vae/"))
+                .unwrap()
+                .category,
+            "vae"
+        );
+        // text_encoder/ 在 PixArt 里是 T5-XXL，不是 CLIP-L——由包家族决定，
+        // 与索引文件体积无关。
+        assert_eq!(
+            result
+                .files
+                .iter()
+                .find(|file| file.ext == "safetensors.index.json")
+                .unwrap()
+                .category,
+            "t5xxl"
+        );
+        // 被索引引用的分片仍然隐藏。
+        assert!(result
+            .files
+            .iter()
+            .all(|file| !file.name.starts_with("model-0000")));
         fs::remove_dir_all(dir).unwrap();
     }
 }

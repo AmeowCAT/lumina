@@ -28,6 +28,7 @@ export function Select({
   ariaLabel,
   className,
   disabled,
+  contentClassName,
 }: {
   id?: string;
   value: string;
@@ -36,6 +37,8 @@ export function Select({
   ariaLabel?: string;
   className?: string;
   disabled?: boolean;
+  /** 弹出层的附加类名。菜单 portal 到 body，放进模态对话框时需要更高的层级。 */
+  contentClassName?: string;
 }) {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -74,7 +77,7 @@ export function Select({
       </RxSelect.Trigger>
       <RxSelect.Portal>
         <RxSelect.Content
-          className="select-content"
+          className={cn("select-content", contentClassName)}
           position="popper"
           sideOffset={4}
           collisionPadding={8}

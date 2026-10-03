@@ -232,6 +232,9 @@ export const EXTERNAL_TOKENIZER_FAMILIES = [
 	"lens-turbo",
 	"llada-image",
 	"llada-image-turbo",
+	// Ming-Image（上游 #2063）：Ling 词表不再内嵌，缺 tokenizer 时上游在
+	// 建文本编码器阶段直接抛错。
+	"ming-image",
 ] as const;
 
 /** 家族专属的 --tokenizer 说明（没有条目时用通用文案）。 */
@@ -241,6 +244,7 @@ export const EXTERNAL_TOKENIZER_HINT: Record<string, string> = {
 	"lens-turbo": "必须用与 GPT-OSS 文本编码器 checkpoint 配套的 tokenizer.json。",
 	"llada-image": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
 	"llada-image-turbo": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
+	"ming-image": "必须用 Ming-Image 0.1 Design 仓库 mllm/ 下的 Ling tokenizer.json。",
 };
 
 /** 该家族是否强制要求外部 tokenizer。 */
@@ -320,6 +324,11 @@ export const SIZE_SPATIAL_ALIGN: Record<string, number> = {
 	// 对齐同时满足两者。
 	"llada-image": 32,
 	"llada-image-turbo": 32,
+	// PixArt（VAE 8 × DiT 2）与 Ming-Image（VAE 8 × DiT 2）：上游 align_image_size
+	// 向上对齐到 16，常用 1080 实际为 1088。
+	"pixart-sigma": 16,
+	"pixart-alpha": 16,
+	"ming-image": 16,
 };
 
 /** 返回该家族下 `dim` 实际生效的宽/高；无对齐要求的家族原样返回。 */
@@ -985,7 +994,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 		],
 		fixedArgs: { "diffusion-fa": true },
 		generationHint:
-			"宽高需为 32 的倍数；必须使用该模型自带的 VAE。做图片编辑要另配视觉塔；要透明背景就在提示词里写明输出 RGBA，且只有 PNG / WebP 会保留 alpha。",
+			"宽高需为 32 的倍数；必须使用该模型自带的 VAE。做图片编辑要另配视觉塔；要透明背景就在提示词里写明输出 RGBA，且只有 PNG / WebP 会保留 alpha。分辨率相关的 flow schedule（上游 #2048）由内核按尺寸自动选择，手动指定调度器或自定义 sigma 会覆盖它。文本前缀缓存默认 auto：想省显存可在附加启动参数里写 --model-args qwen_image_2_1_prefix_cache_type=q8_0（也支持 f32 / f16 等，含权重量化以外的大小写敏感类型名）；启用 SageAttention 或自定义 attention scale 时 auto 会保留 FP32，缓存占用偏高不等于配置失效。",
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1661,6 +1670,84 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			sample_params: { sample_steps: 1, guidance: { txt_cfg: 1 } },
 		},
 	},
+	// PixArt-α / PixArt-Σ（上游 #2047）：DiT + T5-XXL + 4 通道 VAE。两者
+	// checkpoint 的 DiT 张量布局相同，但默认 VAE 缩放因子不同（Σ 0.13025，
+	// α 常用 0.18215），所以拆成两族。T5 词表内嵌，不要配外部 tokenizer。
+	"pixart-sigma": {
+		name: "PixArt-Σ",
+		hint: "Diffusion (Σ) + T5-XXL + 4 通道 VAE（SDXL latent 空间）",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("t5xxl", "T5-XXL", "t5xxl", "t5xxl"),
+			F("vae", "VAE (SDXL latent)", "vae", "vae"),
+		],
+		fixedArgs: {},
+		generationHint:
+			"T5 词表内嵌，无需外部 tokenizer。Σ 默认 VAE 缩放因子 0.13025，VAE 用 SDXL latent 空间那一份（不要混用 SD1.x 的 VAE）。宽高按 16 对齐，推荐 1024×1024 / 20 步 / CFG 4.5。上游尚未应用部分 checkpoint 的 resolution / aspect-ratio 微条件，输出与参考实现可能有差异。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 20,
+				sample_method: "euler",
+				guidance: { txt_cfg: 4.5 },
+			},
+		},
+	},
+	"pixart-alpha": {
+		name: "PixArt-α",
+		hint: "Diffusion (α) + T5-XXL + 4 通道 VAE（SD1.x latent 空间）",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("t5xxl", "T5-XXL", "t5xxl", "t5xxl"),
+			F("vae", "VAE (SD1.x latent)", "vae", "vae"),
+		],
+		fixedArgs: {},
+		generationHint:
+			"T5 词表内嵌，无需外部 tokenizer。α 的 VAE 用 SD1.x latent 空间那一份；带分辨率微条件权重的 checkpoint 会自动使用 0.18215。α 512 与 Σ 的权重布局相同、上游无法自动区分，需要在「附加启动参数」里显式覆盖（整段用引号包住）：--model-args \"pixart_vae_scale_factor=0.18215\"，512 训练分辨率再补 pixart_pos_embed_base_size=32,pixart_interpolation_scale=1（放在同一个 --model-args 的值里，用逗号分隔）。宽高按 16 对齐，1024 checkpoint 推荐 1024×1024 / 20 步 / CFG 4.5。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 20,
+				sample_method: "euler",
+				guidance: { txt_cfg: 4.5 },
+			},
+		},
+	},
+	// Ming-Image 0.1 Design（上游 #2063）：DiT + Ling-mini-2.0 BF16 文本编码器
+	// + Ming 专用 VAE + 外部 Ling tokenizer。当前只有文生图：参考图会被
+	// conditioner 直接拒绝，负向提示词不参与编码（上游用全零 uncond）。
+	"ming-image": {
+		name: "Ming-Image 0.1 Design",
+		hint: "Diffusion + Ling-mini-2.0 BF16 + Ming VAE；需外部 Ling tokenizer",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("llm", "文本编码器 (Ling-mini-2.0 BF16)", "llm", "llm"),
+			F("vae", "VAE (Ming)", "vae", "vae"),
+		],
+		fixedArgs: { "diffusion-fa": true },
+		generationHint:
+			"当前仅支持文生图：参考图会被内核拒绝，负向提示词也不参与编码（上游用全零 uncond）。文本编码器必须用配套的 Ling-mini-2.0 BF16 完整权重（含 connector 与条件投影），INT8 / W4A8 版本会被上游拒绝；VAE 必须用 Ming 专用权重，不能换用 Wan 的。支持 RGBA 输出，另存为 PNG / WebP 才保留 alpha。宽高按 16 对齐，推荐 1024×1024 / 12 步 / Euler / CFG 1；flow shift 由分辨率自动决定，不要手工叠加其他家族的固定值。",
+		// 协议层的图片 features 是通用的（对所有模型都报 true），而 Ming 的
+		// 实现明确拒绝参考图，必须按家族关闭并在提交前过滤旧图。
+		disabledFeatures: ["ref_images"],
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 12,
+				sample_method: "euler",
+				guidance: { txt_cfg: 1 },
+			},
+		},
+	},
 	custom: {
 		name: "自定义",
 		hint: "手动配置所有组件",
@@ -1700,6 +1787,20 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
 	{
 		hint: "taesdxl（SDXL latent；SDXS 的 TAE 内置于主模型，无需另选）",
 		families: ["sdxl", "distilled-sd"],
+	},
+	{
+		hint: "taesdxl（PixArt-Σ 的文生图 latent 与 SDXL 同空间）",
+		families: ["pixart-sigma"],
+	},
+	{
+		hint: "taesd（PixArt-α 的文生图 latent 与 SD 1.x 同空间）",
+		families: ["pixart-alpha"],
+	},
+	{
+		// Ming 复用 Wan 系 VAE 架构但缩放因子与通道数自定义；上游没有为它
+		// 记录 TAE 组合，别让默认文案暗示存在现成权重。
+		hint: "Ming-Image 使用自己的 VAE；TAE 兼容性未经上游确认，显存不足时优先降低分辨率或步数",
+		families: ["ming-image"],
 	},
 	{ hint: "taesd3（16ch latent）", families: ["sd3"] },
 	{

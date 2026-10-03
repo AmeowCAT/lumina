@@ -9,6 +9,8 @@ import type {
   ServerArgs,
   ServerStatus,
   Settings,
+  UpscaleRequest,
+  UpscaleResponse,
 } from "./types";
 
 /**
@@ -82,6 +84,16 @@ export const api = {
     }),
   sdcppCancel: (id: string) =>
     invoke<{ status: number; body: unknown }>("sdcpp_cancel", { id }),
+
+  /**
+   * 独立放大（上游 #2026）：**同步**接口，服务端不创建任务，成功时结果图
+   * 直接在响应体里返回，因此没有可轮询的 job id。失败仍是 `{error: string}`。
+   */
+  sdcppUpscale: (body: UpscaleRequest) =>
+    invoke<{ status: number; body: UpscaleResponse | ApiErrorBody }>(
+      "sdcpp_upscale",
+      { body }
+    ),
 
   parsePngMetadata: (path: string) =>
     invoke<Record<string, unknown> | null>("parse_png_metadata", { path }),

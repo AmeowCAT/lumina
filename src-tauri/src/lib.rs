@@ -642,6 +642,20 @@ async fn sdcpp_cancel(state: State<'_, AppState>, id: String) -> Result<serde_js
     Ok(serde_json::json!({ "status": status, "body": body }))
 }
 
+/// 独立放大（上游 #2026）：同步接口，服务端不创建任务，结果图直接随响应返回。
+#[tauri::command]
+async fn sdcpp_upscale(
+    state: State<'_, AppState>,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let port = effective_port(&state).await;
+    let (status, body) = sdcpp::SdClient::new(port)
+        .upscale(&body)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "status": status, "body": body }))
+}
+
 // ── entry ─────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -699,6 +713,7 @@ pub fn run() {
             sdcpp_submit,
             sdcpp_job,
             sdcpp_cancel,
+            sdcpp_upscale,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

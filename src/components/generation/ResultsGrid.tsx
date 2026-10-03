@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { Sparkles } from "lucide-react";
 import type { ImageSaveState, ResultEntry } from "../../store";
 import type { JobConfig } from "../../types";
 import type { LightboxItem } from "../ui/Lightbox";
@@ -38,6 +39,8 @@ interface Props {
   /** 传入原始 b64_json + 输出格式，由调用方转成 dataURL（blob: URL 无法被
    * sd-server 解码，且切回控制台即被 revoke——对抗性审查 B2）。 */
   onUseAsInit?: (b64: string, fmt: string) => void;
+  /** 独立放大入口（上游 #2026）；仅在 capabilities 提供可用放大器时传入。 */
+  onUpscale?: (b64: string, fmt: string) => void;
   getVideoUrl: (jobId: string, b64: string, mime: string) => string;
   getImageUrl: (b64: string, fmt: string) => string;
 }
@@ -192,6 +195,7 @@ interface FeaturedProps {
   onRemove: Props["onRemove"];
   onSaveImage: Props["onSaveImage"];
   onUseAsInit: Props["onUseAsInit"];
+  onUpscale: Props["onUpscale"];
   getVideoUrl: Props["getVideoUrl"];
   getImageUrl: Props["getImageUrl"];
 }
@@ -207,6 +211,7 @@ function FeaturedResult({
   onRemove,
   onSaveImage,
   onUseAsInit,
+  onUpscale,
   getVideoUrl,
   getImageUrl,
 }: FeaturedProps) {
@@ -268,6 +273,16 @@ function FeaturedResult({
                       onClick={() => onUseAsInit(img.b64_json, fmt)}
                     >
                       {IC.image}
+                    </button>
+                  )}
+                  {onUpscale && (
+                    <button
+                      className="btn btn-sm"
+                      title="用 ESRGAN 放大器独立放大（不重新采样）"
+                      aria-label="放大此图片"
+                      onClick={() => onUpscale(img.b64_json, fmt)}
+                    >
+                      <Sparkles size={13} strokeWidth={2} aria-hidden="true" />
                     </button>
                   )}
                   <button
@@ -455,6 +470,7 @@ export const ResultsGrid = memo(function ResultsGrid({
   onRemove,
   onSaveImage,
   onUseAsInit,
+  onUpscale,
   getVideoUrl,
   getImageUrl,
 }: Props) {
@@ -547,6 +563,7 @@ export const ResultsGrid = memo(function ResultsGrid({
         onRemove={onRemove}
         onSaveImage={onSaveImage}
         onUseAsInit={onUseAsInit}
+        onUpscale={onUpscale}
         getVideoUrl={getVideoUrl}
         getImageUrl={getImageUrl}
       />
@@ -623,6 +640,20 @@ export const ResultsGrid = memo(function ResultsGrid({
                               onClick={() => onUseAsInit(img.b64_json, fmt)}
                             >
                               {IC.image}
+                            </button>
+                          )}
+                          {onUpscale && (
+                            <button
+                              className="btn btn-sm"
+                              title="用 ESRGAN 放大器独立放大（不重新采样）"
+                              aria-label="放大此图片"
+                              onClick={() => onUpscale(img.b64_json, fmt)}
+                            >
+                              <Sparkles
+                                size={13}
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
                             </button>
                           )}
                           <button

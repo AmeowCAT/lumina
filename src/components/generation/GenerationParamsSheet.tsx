@@ -6,6 +6,7 @@ import type {
   GenParams,
 } from "../../types";
 import { FAMILY_CONFIG, SIZE_PRESETS, VIDEO_FRAME_PRESETS } from "../../config/families";
+import { vaeTilingProtocolFromCapabilities } from "../../lib/utils";
 import { ParamsSheet } from "./ParamsSheet";
 import { Panel } from "../ui/Panel";
 import { ImageInputsPanel } from "./panels/ImageInputsPanel";
@@ -111,6 +112,10 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
     () => VIDEO_FRAME_PRESETS[family],
     [family]
   );
+  const vaeTilingProtocol = useMemo(
+    () => vaeTilingProtocolFromCapabilities(caps),
+    [caps]
+  );
 
   return (
     <ParamsSheet open={open} onClose={onClose}>
@@ -193,6 +198,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         slg={sp?.guidance?.slg}
         vaeTilingParams={params.vae_tiling_params}
         showVaeTiling={features.vae_tiling !== false}
+        vaeTilingProtocol={vaeTilingProtocol}
         cacheMode={params.cache_mode}
         clipSkip={params.clip_skip}
         extraSampleArgs={sp?.extra_sample_args}

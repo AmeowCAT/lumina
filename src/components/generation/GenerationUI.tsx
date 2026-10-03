@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { SlidersHorizontal } from "lucide-react";
 import { api } from "../../api";
@@ -13,15 +13,25 @@ import {
   formatError,
   LINGBOT_PROMPT_TEMPLATE,
   MAX_JOBS,
+  MAX_RESULTS,
   sdcppMetadataToGenParams,
   validateLingbotPrompt,
+  vaeTilingProtocolFromCapabilities,
 } from "../../lib/utils";
 import { applyFamilyFeatureLimits, familyDefaults, filterFamilyInputs, missingRequiredInputs } from "../../lib/launchConfig";
-import type { GenImages, GenMode, GenParams, Job, JobConfig } from "../../types";
+import type {
+  GenImages,
+  GenMode,
+  GenParams,
+  Job,
+  JobConfig,
+  UpscaleResponse,
+} from "../../types";
 import { Lightbox, type LightboxItem } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
 import { cn } from "../ui/cn";
 import { ResultsGrid } from "./ResultsGrid";
+import { UpscaleDialog, type UpscaleOptions } from "./UpscaleDialog";
 import { JobQueue } from "./JobQueue";
 import { HeaderBar } from "./HeaderBar";
 import { PromptDock } from "./PromptDock";
@@ -30,9 +40,11 @@ import { useBlobUrlCache } from "../../hooks/useBlobUrlCache";
 import { useTheme } from "../../lib/theme";
 import {
   ingestCompletedJob,
+  MAX_RESULTS_BYTES,
   processedJobs,
   saveEntryPart,
   trackDetachedJob,
+  trimResultsToBudget,
 } from "../../hooks/useJobPolling";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 
@@ -111,6 +123,20 @@ export function GenerationUI() {
   } | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<"results" | "history">("results");
   const [queueOpen, setQueueOpen] = useState(false);
+  // 独立放大（上游 #2026）：同步接口，无任务可轮询，运行态放在模态框里。
+  const [upscaleTarget, setUpscaleTarget] = useState<{
+    b64: string;
+    fmt: string;
+  } | null>(null);
+  const [upscaleError, setUpscaleError] = useState<string | undefined>(undefined);
+  // busy 放进 store：切到控制台会卸载本组件，局部 state 会随之丢失，
+  // 用户返回后能把同一个同步放大再提交一次。
+  const upscaleBusy = useStore((s) => s.upscaleBusy);
+  const setUpscaleBusy = useStore((s) => s.setUpscaleBusy);
+  // 模态期间后台快捷键必须先让位（useKeyboardShortcuts 的 handler 走 ref，
+  // 这里用 ref 读取避免频繁重订阅）。
+  const upscaleOpenRef = useRef(false);
+  upscaleOpenRef.current = upscaleTarget !== null;
   const [showNegative, setShowNegative] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<"size" | "sampling" | null>(null);
@@ -304,6 +330,8 @@ export function GenerationUI() {
   const handleGenerate = useCallback(async () => {
     if (!caps || !params) return;
     if (submittingRef.current) return;
+    // 放大模态是模态：后台生成快捷键必须先让位（见 useKeyboardShortcuts 接线）。
+    if (upscaleOpenRef.current) return;
     if (family === "lingbot-video") {
       const promptError = validateLingbotPrompt(params.prompt || "");
       if (promptError) {
@@ -348,6 +376,9 @@ export function GenerationUI() {
       }
       const body = buildRequestBody(mode, activeParams, images, {
         refImagePreset: useStore.getState().settings.refImagePreset,
+        // VAE 分块字段名与单位随内核版本变化（上游 #2059），按 capabilities
+        // 实际声明的键名发送，避免"设置了但内核读不到"。
+        vaeTilingProtocol: vaeTilingProtocolFromCapabilities(caps),
       });
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
       if (status === 202) {
@@ -406,8 +437,108 @@ export function GenerationUI() {
     toast,
   ]);
 
+  // 只有 capabilities 明确声明可用、且确实存在 image_upscale 模型时才开放
+  // 入口：旧内核没有 upscale 键；内置滤镜与 latent 放大器不能用于该接口。
+  const upscaleModels = useMemo(
+    () => (caps?.upscalers || []).filter((u) => u.image_upscale),
+    [caps]
+  );
+  const upscaleAvailable = caps?.upscale === true && upscaleModels.length > 0;
+
+  const openUpscale = useCallback((b64: string, fmt: string) => {
+    setUpscaleError(undefined);
+    setUpscaleTarget({ b64, fmt });
+  }, []);
+
+  const closeUpscale = useCallback(() => {
+    setUpscaleTarget(null);
+    setUpscaleError(undefined);
+  }, []);
+
+  /**
+   * 运行一次独立放大。结果作为**新的结果条目**进入结果走廊（与生成结果
+   * 并列，可保存/下载/删除），因为它没有 job id，不参与任务轮询。
+   */
+  const runUpscale = useCallback(
+    async (options: UpscaleOptions) => {
+      const target = upscaleTarget;
+      if (!target) return;
+      // 同步锁：该接口同步执行且不可取消，重复提交只会让内核排队等待同一个
+      // 设备锁，界面上却像"点了没反应"。store 状态跨组件重挂存活。
+      if (upscaleBusy) {
+        setUpscaleError("上一次放大仍在进行，请等待内核返回");
+        return;
+      }
+      setUpscaleBusy(true);
+      setUpscaleError(undefined);
+      try {
+        const { status, body } = await api.sdcppUpscale({
+          image: target.b64,
+          upscaler: options.upscaler || undefined,
+          repeats: options.repeats,
+          tile_size: options.tileSize > 0 ? options.tileSize : undefined,
+          output_format: options.outputFormat,
+        });
+        if (status !== 200) {
+          setUpscaleError(extractApiError(body, status));
+          return;
+        }
+        const result = body as UpscaleResponse;
+        const images = result.images || [];
+        if (!images.length) {
+          setUpscaleError("内核没有返回放大结果");
+          return;
+        }
+        const completedAt = Date.now();
+        setResults((entries) =>
+          // 与生成结果共用条数 + 字节双预算，避免放大出的大图绕过内存上限。
+          trimResultsToBudget(
+            [
+              {
+                jobId: `upscale-${completedAt.toString(36)}`,
+                mode: "img_gen" as GenMode,
+                // created 与任务结果同为秒级时间戳（elapsedLabel 依赖该语义）。
+                created: Math.floor(completedAt / 1000),
+                completedAt,
+                result: {
+                  output_format: result.output_format || options.outputFormat,
+                  images,
+                },
+              },
+              ...entries,
+            ],
+            MAX_RESULTS,
+            MAX_RESULTS_BYTES
+          )
+        );
+        setUpscaleTarget(null);
+        toast(
+          `已放大：${result.width ?? "?"}×${result.height ?? "?"}` +
+            (result.upscaler ? `（${result.upscaler} ×${result.scale ?? 1}）` : "")
+        );
+      } catch (e) {
+        setUpscaleError(formatError(e));
+      } finally {
+        setUpscaleBusy(false);
+      }
+    },
+    [upscaleTarget, upscaleBusy, setUpscaleBusy, setResults, toast]
+  );
+
+  // 模态期间把整个界面设为 inert：Tab 与鼠标都不会落到被遮住的控件上
+  // （WebView2/Chromium 支持 inert）。对话框 portal 到 body，不受影响。
+  useEffect(() => {
+    const node = document.querySelector<HTMLElement>(".app-view");
+    if (!node) return;
+    if (upscaleTarget !== null) node.setAttribute("inert", "");
+    else node.removeAttribute("inert");
+    return () => node.removeAttribute("inert");
+  }, [upscaleTarget]);
+
   const randomSeed = useCallback(() => {
     if (!params) return;
+    // 模态打开时不改动后台参数（否则用户回来会发现种子被悄悄换了）。
+    if (upscaleOpenRef.current) return;
     const next = !seedRandom;
     setSeedRandom(next);
     if (!next && params.seed < 0) update("seed", randSeed());
@@ -799,6 +930,8 @@ export function GenerationUI() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === ",") {
+        // 放大对话框是模态：不允许召唤后台参数面板（会把焦点抢出模态）。
+        if (upscaleOpenRef.current) return;
         e.preventDefault();
         toggleSheet();
       }
@@ -808,16 +941,32 @@ export function GenerationUI() {
   }, [toggleSheet]);
 
   const handleEscape = useCallback(() => {
-    if (lightbox) closeLightbox();
+    // 放大对话框排在最前：它是模态浮层，Esc 应先只关它，而不是连带关掉
+    // 背后的参数面板（同一按键同时命中两个浮层会让人以为操作丢了）。
+    // 运行中不关：该接口同步执行且不可取消，关掉窗口会让请求变成"看不见
+    // 还在跑"，用户再点 ✨ 只会看到一个灰着的提交按钮。
+    if (upscaleTarget !== null) {
+      if (!upscaleBusy) closeUpscale();
+    } else if (lightbox) closeLightbox();
     else if (sheetOpen) closeSheet();
     else if (queueOpen) closeQueue();
-  }, [lightbox, sheetOpen, queueOpen, closeLightbox, closeSheet, closeQueue]);
+  }, [
+    upscaleTarget,
+    upscaleBusy,
+    closeUpscale,
+    lightbox,
+    sheetOpen,
+    queueOpen,
+    closeLightbox,
+    closeSheet,
+    closeQueue,
+  ]);
 
   useKeyboardShortcuts({
     onGenerate: handleGenerate,
     onRandomSeed: randomSeed,
     onEscape: handleEscape,
-    escapeActive: !!(lightbox || sheetOpen || queueOpen),
+    escapeActive: !!(lightbox || sheetOpen || queueOpen || upscaleTarget !== null),
   });
 
   if (!caps || !params) return null;
@@ -948,6 +1097,7 @@ export function GenerationUI() {
                     onRemove={removeResult}
                     onSaveImage={saveImageStable}
                     onUseAsInit={features.init_image === false ? undefined : useAsInit}
+                    onUpscale={upscaleAvailable ? openUpscale : undefined}
                     getVideoUrl={getVideoUrl}
                     getImageUrl={getImageUrl}
                   />
@@ -1061,6 +1211,18 @@ export function GenerationUI() {
           />
         )}
       </AnimatePresence>
+      <UpscaleDialog
+        open={upscaleTarget !== null}
+        onClose={closeUpscale}
+        upscalers={upscaleModels}
+        outputFormats={caps?.output_formats_by_mode?.img_gen || []}
+        source={upscaleTarget}
+        busy={upscaleBusy}
+        error={upscaleError}
+        maxWidth={caps?.limits?.max_upscale_width}
+        maxHeight={caps?.limits?.max_upscale_height}
+        onSubmit={runUpscale}
+      />
     </>
   );
 }

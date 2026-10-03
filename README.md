@@ -52,7 +52,7 @@ src-tauri/target/release/lumina.exe
 3. **组件配置**：按家族列出需要的组件，可选项标了"（可选）"，下方给出该家族该用哪种权重的说明。
 4. 检查单全绿后点**启动服务器**，加载完成会自动进入生成界面。
 
-运行后端、参考图处理、性能与显存三块折叠面板放着 `--backend`、`--type` 量化、CPU 卸载、`--max-vram`、队列上限、启动端口和附加启动参数。
+运行后端、参考图处理、性能与显存三块折叠面板放着 `--backend`、`--type` 量化、CPU 卸载、`--max-vram`、队列上限、启动端口和附加启动参数。可平铺输出的 `--circular` / `--circularx` / `--circulary` 也是启动参数，写在附加启动参数里，改完要重启服务器；它们只在部分图像模型与空间轴上生效，不能保证任意尺寸都无缝。
 
 启动失败或者想看加载进度时，展开底部的服务器日志面板，`sd-server` 的 stdout / stderr 都在那里。
 
@@ -61,6 +61,8 @@ src-tauri/target/release/lumina.exe
 底部提示栏写正向 / 反向提示词，旁边的尺寸、步数、CFG 三个 chip 点一下就在原地弹出滑杆。完整参数按 `Ctrl` + `,` 调出，采样、图片输入、LoRA、二次放大、输出格式各占一块，视频家族会多出高噪段与帧数相关的项。
 
 参数面板里的"额外采样参数"是给上游 `extra_sample_args` 留的出口，界面没做专门控件的键（`gamma`、`apg_eta`、`base_shift`、`guidance_schedule` 等）都能从这里下达，写法是 `key=value` 逗号分隔。
+
+结果图上的 ✨ 按钮走内核的**独立放大**接口：不经过扩散采样、不新建任务，因此会同步等待，完成后作为一张新结果进入结果走廊。放大模型取自 `--hires-upscalers-dir` 顶层，所以模型根目录下的 ComfyUI 子目录不会被扫到。
 
 ### 键位
 
@@ -81,22 +83,24 @@ src-tauri/target/release/lumina.exe
 
 ## 遇到问题先看这里
 
-- **扫描不出模型**：只认 `.safetensors` / `.sft` / `.gguf` / `.ckpt` / `.pt` / `.pth`，目录最多向下三层，单次最多 5000 个文件。被跳过的东西会写在检测面板的扫描警告里。
+- **扫描不出模型**：只认 `.safetensors` / `.sft` / `.gguf` / `.ckpt` / `.pt` / `.pth`，目录最多向下三层，单次最多 5000 个文件。被跳过的东西会写在检测面板的扫描警告里。官方 Diffusers 包（含 `model_index.json`）只在确实有 `unet/` 布局时才折叠成一个主模型候选——上游只从那里取主权重；按 `transformer/` 组织的包（如官方 PixArt）会展开，内部的主权重、VAE 与文本编码器都能直接在下拉框里选到。
 - **端口被占用**：Lumina 不会去杀不认识的进程。要么释放端口，要么在控制台改一个。如果那个端口上本来就是一个能应答的 `sd-server`，它会被直接接管，不会再起一个。`--listen-port` / `--listen-ip` 写在附加启动参数里会被拒绝，界面所有请求都靠这个端口代理。
+- **升级内核后 VAE 分块设置失灵**：新版内核（上游 #2059）把 `tile_size_x/y` 改名为 `tile_size_w/h`，单位也从 latent 改成图像像素。旧图或旧设置里的数值不会自动换算（猜错 VAE 缩放因子会得到错误分块），参数面板会逐轴列出仍在设置里的旧字段，并按像素尺寸重新填写，确认后点"清除旧值"即可。另外相对尺寸（`rel_size_w/h`）在上游优先于绝对尺寸，所以改动分块宽/高时会自动清掉对应轴的相对值，面板也会在相对值生效时给出提示。Lumina 按所选内核实际声明的字段名发送，因此同一份设置在不同版本的内核上不会串味。
 - **启动就退出**：先看日志面板最后几行。组件路径、`--max-vram` 写法、`--backend` 设备名这三类问题界面会提前拦，剩下的基本是权重本身不被上游识别，属于上游范畴。
 - **显存不足**：打开 CPU 卸载、启用 VAE 分块、换 TAE 解码、降低尺寸与帧数、用量化权重。上游的[性能指南](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/performance.md)和[后端选择](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/backend.md)讲得更细。
+- **INT8 权重没有变快**：int8_convrot 的加速只在满足条件的后端上生效（CUDA 计算能力 7.5+、AMD 的 CDNA / RDNA3（含 3.5）/ RDNA4、支持打包 INT8 点积的 Vulkan 构建与设备），其余组合会把矩阵乘回退到 CPU，明显更慢；专用卷积旋转路径还要求分组大小 256。INT8 safetensors 直接当模型选中即可，不需要在"量化"里另选 `q8_0`——那是给 FP16 权重做运行时量化的。
 
 ## 与上游的关系
 
-推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`6b3edaa`](https://github.com/leejet/stable-diffusion.cpp/commit/6b3edaaf32cc19e5bb2d819c788bd557eddc8eba)（2026-08-31）：含 LTX-2.5 支持（#1893，GUI 拆为独立家族）、scaled FP8 权重直载（#1913，量化项含 F8_E4M3 / F8_E5M2）、backend 原生 FP8 matmul（#1916）、时间分块泛化到各视频 VAE（#1926）。所以：
+推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`3f8527a`](https://github.com/leejet/stable-diffusion.cpp/commit/3f8527a46c54ecf4cb4ed6003da8e8982283c73c)（2026-09-27）：含 PixArt-α / PixArt-Σ（#2047）与 Ming-Image Design（#2063）两个新家族、独立 ESRGAN 放大接口（#2026，结果区一键放大）、VAE 分块尺寸改为图像像素并更名为 `tile_size_w/h`（#2059）、Qwen Image 2.1 的官方分辨率 flow schedule（#2048）与可配置前缀缓存类型（#2045），以及 HIP / Vulkan 的 INT8 convrot 加速（#2070、#2071）。所以：
 
 - 界面、启动流程、参数映射有问题 → 提到[本仓库 Issues](https://github.com/AmeowCAT/lumina/issues)
 - 出图质量、加载失败、显存不足、模型不被识别 → 提到[上游仓库](https://github.com/leejet/stable-diffusion.cpp/issues)
 
 <details>
-<summary>已适配的模型家族（48 个，外加"自定义"）</summary>
+<summary>已适配的模型家族（55 个，外加"自定义"）</summary>
 
-Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Qwen-Image（含 Layered/Edit）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS），以及"自定义"（手动配置全部组件）。
+Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Qwen-Image（含 Layered/Edit/2.1）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS）、PixArt-Σ、PixArt-α、Ming-Image 0.1 Design，以及"自定义"（手动配置全部组件）。
 
 </details>
 
@@ -107,7 +111,8 @@ Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x�
 - 提示词里的 LoRA 标签（`<lora:...>`）不生效，这是服务端 API 的限制，LoRA 请在参数面板里选。
 - MiniMax-H3 Ref2VA 只能通过 HTTP 传参考图，参考视频 / 音频目前仅 `sd-cli` 通道有，界面因此要求必须给参考图。
 - AnimateDiff 的运动模块原生训练在 16 帧，位置编码最多 32 帧，超出后画面趋于静止。
-- 上游 `/sdcpp/v1` 不开放 ADetailer 与独立放大模式，这两块界面里没有。
+- 上游 `/sdcpp/v1` 不开放 ADetailer，界面里没有。
+- 独立放大（`POST /sdcpp/v1/upscale`）已接在结果图的 ✨ 按钮上，但它只认 RGB ESRGAN 模型（内置滤镜与 latent 放大器不能用于该接口）、不保留 alpha，运行时还持有生成上下文锁，会与正在进行的生成互斥。
 - 没有 CI，发布包是本地构建的。
 
 ## 开发

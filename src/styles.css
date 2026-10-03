@@ -458,6 +458,9 @@
     min-width: var(--radix-select-trigger-width);
     max-height: var(--radix-select-content-available-height, 320px);
   }
+  /* 模态对话框（放大）里的下拉：菜单 portal 到 body，默认 300 会被
+     更高层级的模态与遮罩盖住，需要抬到模态之上。 */
+  .select-content-elevated { z-index: 620 }
   .select-viewport { padding: 4px; overflow-y: auto; max-height: inherit; overscroll-behavior: contain }
   .select-item {
     display: flex; align-items: center; gap: 8px;

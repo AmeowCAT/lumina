@@ -224,15 +224,38 @@ export interface HiresParams {
   upscale_tile_size?: number;
 }
 
+/**
+ * 请求体 / capabilities / 图片元数据里 VAE 分块参数使用哪一套字段。
+ *
+ * 上游 #2059 起 `tile_size_x/y`、`rel_size_x/y` 更名为 `tile_size_w/h`、
+ * `rel_size_w/h`，且绝对尺寸单位从 **latent 单位**改为**图像像素**
+ * （0 = 内核默认 256 像素）。新版解析器不读旧键，旧版不读新键，因此必须
+ * 按所选内核实际声明的键名决定发哪一套，不能按 Lumina 自身版本猜测。
+ */
+export type VaeTilingProtocol = "pixels" | "latent";
+
 export interface VaeTilingParams {
   enabled?: boolean;
   temporal_tiling?: boolean;
+  /** 空间分块宽（图像像素；0/缺省 = 内核默认 256）。仅 pixels 协议使用。 */
+  tile_size_w?: number;
+  /** 空间分块高（图像像素；0/缺省 = 内核默认 256）。仅 pixels 协议使用。 */
+  tile_size_h?: number;
+  target_overlap?: number;
+  /** 相对宽度：≤1 为尺寸比例，>1 为目标分块数（覆盖绝对尺寸）。 */
+  rel_size_w?: number;
+  /** 相对高度：≤1 为尺寸比例，>1 为目标分块数（覆盖绝对尺寸）。 */
+  rel_size_h?: number;
+  extra_tiling_args?: string;
+  /**
+   * 旧内核（上游 #2059 之前）的 latent 单位字段。仅在 `latent` 协议下发，
+   * 新版协议下这些值被**保留但不发送**（单位不同，换算需已知 VAE 缩放
+   * 因子，猜测会产生错误分块）。
+   */
   tile_size_x?: number;
   tile_size_y?: number;
-  target_overlap?: number;
   rel_size_x?: number;
   rel_size_y?: number;
-  extra_tiling_args?: string;
 }
 
 /** Generation parameters — mirrors sd-server defaults + everything the UI edits. */
@@ -280,6 +303,21 @@ export interface Limits {
   max_height?: number;
   max_batch_count?: number;
   max_queue_size?: number;
+  /** 独立放大（`/sdcpp/v1/upscale`）单轴像素上限（上游 #2026 的编译期常量，固定 8192）。 */
+  max_upscale_width?: number;
+  max_upscale_height?: number;
+}
+
+/**
+ * capabilities 里的放大器条目。上游 #2026 起新增 `model` / `image_upscale`：
+ * 只有 `image_upscale: true` 的模型能被独立的 `/sdcpp/v1/upscale` 使用
+ * （内置滤镜与 latent 放大器仅用于 hires 生成）。
+ */
+export interface UpscalerInfo {
+  name: string;
+  path?: string;
+  model?: boolean;
+  image_upscale?: boolean;
 }
 
 export interface Capabilities {
@@ -295,7 +333,37 @@ export interface Capabilities {
   output_formats_by_mode: Partial<Record<GenMode, string[]>>;
   features_by_mode: Partial<Record<GenMode, Features>>;
   loras: { name: string; path: string }[];
-  upscalers: { name: string; path?: string }[];
+  upscalers: UpscalerInfo[];
+  /**
+   * 是否存在可用于 `POST /sdcpp/v1/upscale` 的 RGB ESRGAN 模型
+   * （上游 #2026）。旧内核缺该键，视为不支持。
+   */
+  upscale?: boolean;
+}
+
+/** `POST /sdcpp/v1/upscale` 的请求体（同步接口，不创建任务）。 */
+export interface UpscaleRequest {
+  /** base64 或 dataURL 图片。 */
+  image: string;
+  /** capabilities 中 `image_upscale: true` 的名字；缺省用第一个兼容模型。 */
+  upscaler?: string;
+  /** 重复次数 1–4（默认 1）。 */
+  repeats?: number;
+  /** 分块尺寸，缺省用内核 `--upscale-tile-size`。 */
+  tile_size?: number;
+  output_format?: string;
+  output_compression?: number;
+}
+
+/** `POST /sdcpp/v1/upscale` 的响应体。 */
+export interface UpscaleResponse {
+  images: JobImage[];
+  upscaler?: string;
+  scale?: number;
+  repeats?: number;
+  width?: number;
+  height?: number;
+  output_format?: string;
 }
 
 export interface JobImage {

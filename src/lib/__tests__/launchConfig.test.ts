@@ -3,20 +3,26 @@ import {
   alignSizeUp,
   alignVideoFrames,
   FAMILY_CONFIG,
+  familyNeedsExternalTokenizer,
   SAMPLER_NAMES,
   SCHEDULER_NAMES,
   scaleSize,
   VIDEO_FRAME_MAX,
   VIDEO_FRAME_PRESETS,
 } from "../../config/families";
+import type { Features, GenImages } from "../../types";
 import type { LaunchRuntime } from "../launchConfig";
 import {
+  applyFamilyFeatureLimits,
   buildLaunchConfig,
   familyDefaults,
+  filterFamilyInputs,
+  hasMainTokenizerSlot,
   inferPidVaeFormat,
   missingRequiredInputs,
   persistFamilyDefaults,
   validateMaxVramSpec,
+  validateTokenizerSpec,
 } from "../launchConfig";
 
 // 上游 #1887 给 sample_method_to_str / scheduler_to_str 加了 static_assert，
@@ -711,6 +717,147 @@ describe("launch configuration", () => {
         ...empty,
         refImages: ["data:image/png;base64,abc"],
       })
+    ).toEqual([]);
+  });
+});
+
+// PixArt-α/Σ（上游 #2047）与 Ming-Image（上游 #2063）：家族 id 必须与 Rust 侧
+// detect_family 的返回值一致，否则模型会静默掉进"自定义"、丢组件检查。
+describe("newly supported families", () => {
+  it("registers PixArt and Ming-Image under the ids family.rs returns", () => {
+    for (const family of ["pixart-sigma", "pixart-alpha", "ming-image"]) {
+      expect(FAMILY_CONFIG[family], `${family} 缺少家族配置`).toBeTruthy();
+    }
+  });
+
+  it("aligns PixArt and Ming-Image dimensions up to a multiple of 16", () => {
+    for (const family of ["pixart-sigma", "pixart-alpha", "ming-image"]) {
+      expect(alignSizeUp(family, 1024)).toBe(1024);
+      // 通用预设里的 1080 会被上游真实改成 1088，界面必须显示同一结果。
+      expect(alignSizeUp(family, 1080)).toBe(1088);
+    }
+  });
+
+  it("keeps the TAE hint on each model's own latent space", () => {
+    const hint = (family: string) =>
+      FAMILY_CONFIG[family].fields.find((field) => field.arg === "taesd")
+        ?.description || "";
+    expect(hint("pixart-sigma")).toMatch(/taesdxl/);
+    expect(hint("pixart-alpha")).toMatch(/taesd（/);
+    expect(hint("ming-image")).toMatch(/自己的 VAE/);
+  });
+
+  // T5 词表内嵌在 PixArt 里；错误地要求外部 tokenizer 会挡住本该能启动的模型。
+  it("does not ask PixArt for an external tokenizer", () => {
+    expect(familyNeedsExternalTokenizer("pixart-sigma")).toBe(false);
+    expect(familyNeedsExternalTokenizer("pixart-alpha")).toBe(false);
+    const config = buildLaunchConfig({
+      family: "pixart-sigma",
+      modelPath: "/models/pixart_sigma_xl2_1024_ms.safetensors",
+      components: {
+        t5xxl: "/models/t5xxl.safetensors",
+        vae: "/models/pixart_vae.safetensors",
+      },
+      runtime,
+    });
+    expect(config.missing).toEqual([]);
+    expect(config.args.t5xxl).toBe("/models/t5xxl.safetensors");
+  });
+
+  // Ming-Image 缺少 Ling tokenizer 时上游在建文本编码器阶段直接抛错，
+  // 检查单必须提前拦下。
+  it("requires the external Ling tokenizer for Ming-Image", () => {
+    expect(familyNeedsExternalTokenizer("ming-image")).toBe(true);
+    const components = {
+      llm: "/models/ming_image_0.1_ling_mini_2.0_bf16.safetensors",
+      vae: "/models/ming_image_vae_bf16.safetensors",
+    };
+    const without = buildLaunchConfig({
+      family: "ming-image",
+      modelPath: "/models/ming_image_0.1_design_bf16.safetensors",
+      components,
+      runtime,
+    });
+    expect(without.missing).toContain(
+      "外部 Tokenizer（--tokenizer，tokenizer.json）"
+    );
+    const withTokenizer = buildLaunchConfig({
+      family: "ming-image",
+      modelPath: "/models/ming_image_0.1_design_bf16.safetensors",
+      components,
+      runtime: { ...runtime, tokenizer: "/models/tokenizer.json" },
+    });
+    expect(withTokenizer.missing).toEqual([]);
+    expect(withTokenizer.args.tokenizer).toBe("/models/tokenizer.json");
+    expect(withTokenizer.args["diffusion-fa"]).toBe(true);
+  });
+
+  // --tokenizer 的槽位写法由上游 TokenizerConfig 解析：Ming 的文本编码器只从
+  // MAIN 槽取词表，只填 clip-l= 会一路显示"就绪"，直到启动建编码器才抛错。
+  it("rejects a tokenizer spec without the main slot", () => {
+    const components = {
+      llm: "/models/ming_image_0.1_ling_mini_2.0_bf16.safetensors",
+      vae: "/models/ming_image_vae_bf16.safetensors",
+    };
+    const clipOnly = buildLaunchConfig({
+      family: "ming-image",
+      modelPath: "/models/ming_image_0.1_design_bf16.safetensors",
+      components,
+      runtime: { ...runtime, tokenizer: "clip-l=/models/tokenizer.json" },
+    });
+    expect(clipOnly.missing).toContain(
+      "外部 Tokenizer 的 main 槽（如 main=tokenizer.json）"
+    );
+
+    // 显式 main= 与多槽写法都算配置了主槽。
+    for (const spec of [
+      "main=/models/tokenizer.json",
+      "main=/models/tokenizer.json,clip-l=/models/t5.json",
+    ]) {
+      const ok = buildLaunchConfig({
+        family: "ming-image",
+        modelPath: "/models/ming_image_0.1_design_bf16.safetensors",
+        components,
+        runtime: { ...runtime, tokenizer: spec },
+      });
+      expect(ok.missing).toEqual([]);
+    }
+  });
+
+  it("rejects malformed tokenizer slot specs for every family", () => {
+    expect(validateTokenizerSpec("/models/tokenizer.json")).toBeNull();
+    expect(validateTokenizerSpec("main=/a.json,clip-l=/b.json")).toBeNull();
+    expect(validateTokenizerSpec("bogus=/a.json")).toMatch(/未知槽位/);
+    expect(validateTokenizerSpec("main=")).toMatch(/缺少路径/);
+    expect(validateTokenizerSpec("main=/a.json,main=/b.json")).toMatch(/重复指定/);
+    // 有 = 却缺 = 的段会被上游直接抛错。
+    expect(validateTokenizerSpec("main=/a.json,/b.json")).toMatch(/缺少 =/);
+    expect(hasMainTokenizerSlot("/a.json")).toBe(true);
+    expect(hasMainTokenizerSlot("clip-l=/a.json")).toBe(false);
+    expect(hasMainTokenizerSlot("")).toBe(false);
+  });
+
+  // 上游 capabilities 对图片模式通用地报 ref_images=true，而 Ming 的实现
+  // 明确拒绝参考图——必须按家族关掉并过滤旧图。
+  it("disables and filters reference images for Ming-Image", () => {
+    const features = applyFamilyFeatureLimits(
+      { ref_images: true, init_image: true } as Features,
+      FAMILY_CONFIG["ming-image"]
+    );
+    expect(features.ref_images).toBe(false);
+    expect(features.init_image).toBe(true);
+
+    const images: GenImages = {
+      initImage: null,
+      maskImage: null,
+      controlImage: null,
+      ipAdapterImage: null,
+      endImage: null,
+      refImages: ["data:image/png;base64,abc"],
+      controlFrames: [],
+    };
+    expect(
+      filterFamilyInputs(images, FAMILY_CONFIG["ming-image"]).refImages
     ).toEqual([]);
   });
 });

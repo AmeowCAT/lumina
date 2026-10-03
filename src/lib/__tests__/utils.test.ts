@@ -1,15 +1,23 @@
 import { describe, it, expect } from "vitest";
 import {
+  b64ToBlobUrl,
+  buildRequestBody,
+  clearLegacyLatentTiling,
   deepClone,
   deepMerge,
   extractApiError,
   fmtSize,
-  b64ToBlobUrl,
-  buildRequestBody,
   formatError,
+  hasLegacyLatentTiling,
+  hasPixelTiling,
+  legacyLatentTilingAxes,
+  legacyTilingDroppedOnPixels,
   LINGBOT_PROMPT_TEMPLATE,
   modelFileOptionLabel,
+  pixelTilingDroppedOnLatent,
+  resolveVaeTilingForProtocol,
   sdcppMetadataToGenParams,
+  vaeTilingProtocolFromCapabilities,
   validateLingbotPrompt,
 } from "../utils";
 import type { GenImages, GenParams } from "../../types";
@@ -415,7 +423,27 @@ describe("buildRequestBody", () => {
     expect(body.hires).toEqual({ enabled: true, upscaler: "Latent", steps: 20 });
   });
 
-  it("preserves complete Hunyuan VAE tiling parameters when enabled", () => {
+  // 上游 #2059：新版内核只认 tile_size_w/h（图像像素），旧内核只认 x/y
+  // （latent 单位）。同一份设置不能同时发给两边，否则"设置了却没生效"。
+  it("preserves complete pixel-unit VAE tiling parameters when enabled", () => {
+    const p: GenParams = {
+      ...baseParams,
+      vae_tiling_params: {
+        enabled: true,
+        temporal_tiling: true,
+        tile_size_w: 512,
+        tile_size_h: 512,
+        target_overlap: 0.5,
+        rel_size_w: 0,
+        rel_size_h: 0,
+        extra_tiling_args: "",
+      },
+    };
+    const body = buildRequestBody("vid_gen", p, {} as GenImages);
+    expect(body.vae_tiling_params).toEqual(p.vae_tiling_params);
+  });
+
+  it("drops legacy latent tiling keys on a pixel-unit kernel", () => {
     const p: GenParams = {
       ...baseParams,
       vae_tiling_params: {
@@ -430,7 +458,125 @@ describe("buildRequestBody", () => {
       },
     };
     const body = buildRequestBody("vid_gen", p, {} as GenImages);
-    expect(body.vae_tiling_params).toEqual(p.vae_tiling_params);
+    // 旧值保留在设置里（界面会提示重设），但不发送给新内核。
+    expect(body.vae_tiling_params).toEqual({
+      enabled: true,
+      temporal_tiling: true,
+      target_overlap: 0.5,
+      extra_tiling_args: "",
+    });
+    expect(legacyTilingDroppedOnPixels(p.vae_tiling_params)).toBe(true);
+  });
+
+  it("keeps legacy keys for a kernel that still speaks latent units", () => {
+    const p: GenParams = {
+      ...baseParams,
+      vae_tiling_params: {
+        enabled: true,
+        tile_size_x: 64,
+        tile_size_y: 64,
+        tile_size_w: 512,
+        tile_size_h: 512,
+      },
+    };
+    const body = buildRequestBody("vid_gen", p, {} as GenImages, {
+      vaeTilingProtocol: "latent",
+    });
+    expect(body.vae_tiling_params).toEqual({
+      enabled: true,
+      tile_size_x: 64,
+      tile_size_y: 64,
+    });
+  });
+
+  it("detects the tiling protocol from capabilities, not from Lumina's version", () => {
+    expect(
+      vaeTilingProtocolFromCapabilities({
+        defaults_by_mode: {
+          img_gen: { vae_tiling_params: { tile_size_w: 0, tile_size_h: 0 } },
+        },
+      })
+    ).toBe("pixels");
+    expect(
+      vaeTilingProtocolFromCapabilities({
+        defaults_by_mode: {
+          vid_gen: { vae_tiling_params: { tile_size_x: 0, tile_size_y: 0 } },
+        },
+      })
+    ).toBe("latent");
+    // 旧内核/裁剪响应里两套键都没有时按最新内核处理。
+    expect(vaeTilingProtocolFromCapabilities({ defaults_by_mode: {} })).toBe(
+      "pixels"
+    );
+    expect(vaeTilingProtocolFromCapabilities(null)).toBe("pixels");
+  });
+
+  it("resolves tiling payloads per protocol and keeps the disabled override", () => {
+    const legacy = { enabled: true, tile_size_x: 32, tile_size_y: 32 };
+    expect(resolveVaeTilingForProtocol(legacy, "pixels")).toEqual({
+      enabled: true,
+    });
+    expect(resolveVaeTilingForProtocol(legacy, "latent")).toEqual(legacy);
+    expect(resolveVaeTilingForProtocol({ enabled: false }, "pixels")).toEqual({
+      enabled: false,
+    });
+    expect(hasLegacyLatentTiling(legacy)).toBe(true);
+    expect(hasLegacyLatentTiling({ enabled: true, tile_size_w: 256 })).toBe(
+      false
+    );
+  });
+
+  // 两个方向都要提示：用新内核出图、回填元数据后又切回旧内核时，像素值
+  // 同样会被丢弃，不能静默。
+  it("flags dropped tiling values in both protocol directions", () => {
+    const pixelOnly = { enabled: true, tile_size_w: 512, tile_size_h: 512 };
+    expect(hasPixelTiling(pixelOnly)).toBe(true);
+    expect(legacyTilingDroppedOnPixels(pixelOnly)).toBe(false);
+    expect(pixelTilingDroppedOnLatent(pixelOnly)).toBe(true);
+
+    const latentOnly = { enabled: true, tile_size_x: 32, tile_size_y: 32 };
+    expect(pixelTilingDroppedOnLatent(latentOnly)).toBe(false);
+    expect(legacyTilingDroppedOnPixels(latentOnly)).toBe(true);
+
+    // 关闭状态与两套键齐全时都不提示。
+    expect(pixelTilingDroppedOnLatent({ enabled: false, tile_size_w: 512 })).toBe(
+      false
+    );
+    expect(
+      pixelTilingDroppedOnLatent({
+        enabled: true,
+        tile_size_w: 512,
+        tile_size_x: 32,
+      })
+    ).toBe(false);
+  });
+
+  // 已经存在像素值（很可能来自 capabilities 的启动默认值）时仍然要提示：
+  // 否则旧设置会静默失效，用户以为迁移已经完成。
+  it("keeps warning about legacy axes even when pixel values exist", () => {
+    const mixed = {
+      enabled: true,
+      tile_size_w: 512,
+      tile_size_h: 512,
+      tile_size_x: 16,
+      tile_size_y: 16,
+    };
+    expect(legacyTilingDroppedOnPixels(mixed)).toBe(true);
+    // 逐轴信息用于界面提示，未设置的轴不出现。
+    const mixedAxes = legacyLatentTilingAxes(mixed);
+    expect(mixedAxes.tileX).toBe(16);
+    expect(mixedAxes.tileY).toBe(16);
+    expect(mixedAxes.relX).toBeUndefined();
+    expect(mixedAxes.relY).toBeUndefined();
+    expect(legacyLatentTilingAxes({ enabled: true })).toEqual({});
+
+    // 清除旧值后提示消失，像素值原样保留。
+    const cleared = clearLegacyLatentTiling(mixed);
+    expect(legacyTilingDroppedOnPixels(cleared)).toBe(false);
+    expect(cleared.tile_size_w).toBe(512);
+    expect(cleared.tile_size_x).toBeUndefined();
+    // 清除只影响旧协议字段，不能改写用户设置的对象本身。
+    expect(mixed.tile_size_x).toBe(16);
   });
 
   it("includes high_noise_sample_params for vid_gen", () => {
@@ -973,8 +1119,9 @@ describe("sdcppMetadataToGenParams", () => {
     expect(p.sample_params?.extra_sample_args).toBeUndefined();
   });
 
-  // 上游 common.cpp 只在启用时写 vae_tiling 段，键名与请求体一致。
-  it("restores the vae_tiling section", () => {
+  // 上游 common.cpp 只在启用时写 vae_tiling 段；#2059 起键名改为 w/h，
+  // 因此新旧图片要分别回填，且不能把 latent 数值当成像素。
+  it("restores a legacy latent-unit vae_tiling section unchanged", () => {
     const p = sdcppMetadataToGenParams({
       seed: 1,
       vae_tiling: {
@@ -997,6 +1144,32 @@ describe("sdcppMetadataToGenParams", () => {
       rel_size_x: 0.5,
       rel_size_y: 0.5,
       extra_tiling_args: "foo=1",
+    });
+  });
+
+  it("restores a pixel-unit vae_tiling section from new metadata", () => {
+    const p = sdcppMetadataToGenParams({
+      seed: 1,
+      vae_tiling: {
+        enabled: true,
+        temporal_tiling: false,
+        tile_size_w: 512,
+        tile_size_h: 384,
+        target_overlap: 0.3,
+        rel_size_w: 0.5,
+        rel_size_h: 0.25,
+        extra_tiling_args: "temporal_tile_frames=4",
+      },
+    });
+    expect(p.vae_tiling_params).toEqual({
+      enabled: true,
+      temporal_tiling: false,
+      tile_size_w: 512,
+      tile_size_h: 384,
+      target_overlap: 0.3,
+      rel_size_w: 0.5,
+      rel_size_h: 0.25,
+      extra_tiling_args: "temporal_tile_frames=4",
     });
   });
 

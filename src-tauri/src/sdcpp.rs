@@ -22,6 +22,10 @@ fn shared_http() -> Client {
     .clone()
 }
 
+/// 独立放大的请求超时（秒）。该接口同步执行，4x 放大到 8K 可能要跑很久，
+/// 与生成任务轮询共享的 30 秒默认超时完全不同量级。
+const UPSCALE_TIMEOUT_SECS: u64 = 600;
+
 /// Job ids go straight into the request path. sd-server only ever mints ids
 /// matching `[A-Za-z0-9_-]+` (see its route regex), so anything else is either a
 /// bug or a caller trying to reach a different endpoint — reject it here rather
@@ -161,6 +165,28 @@ impl SdClient {
         let resp = self
             .http
             .post(format!("{}/sdcpp/v1/jobs/{}/cancel", self.base, id))
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        let value: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+        Ok((status, value))
+    }
+
+    /// Stand-alone ESRGAN upscale (upstream #2026). Unlike img_gen/vid_gen this
+    /// endpoint is **synchronous**: it runs the upscaler inline and returns the
+    /// image, so it creates no job and cannot be polled or cancelled.
+    ///
+    /// The shared client's 30 s timeout is far too short here — a 4x pass over
+    /// an 8K image with tiling can run for minutes — so the request carries its
+    /// own, much longer deadline. The server also holds the generation context
+    /// lock while upscaling, so this call can additionally wait behind a running
+    /// generation without sending any bytes back.
+    pub async fn upscale(&self, body: &serde_json::Value) -> Result<(u16, serde_json::Value)> {
+        let resp = self
+            .http
+            .post(format!("{}/sdcpp/v1/upscale", self.base))
+            .timeout(Duration::from_secs(UPSCALE_TIMEOUT_SECS))
+            .json(body)
             .send()
             .await?;
         let status = resp.status().as_u16();

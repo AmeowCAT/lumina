@@ -146,6 +146,24 @@ pub fn detect_family(path: &str) -> &'static str {
     if has_any(&t, &["ideogram"]) {
         return "ideogram";
     }
+    // PixArt-α / PixArt-Σ（上游 #2047）：DiT + T5-XXL + 4 通道 VAE。上游只有
+    // 一个 VERSION_PIXART，VAE 缩放多数由权重里的 csize_embedder 自动识别，
+    // 但两族的 VAE latent 空间（Σ = SDXL、α = SD1.x）与 TAE 权重不同、
+    // α 512 还需要显式 --model-args 覆盖，所以按名字拆成两族，让检查单、
+    // 提示与 TAE 说明落到正确的一支。
+    // 官方 Σ 权重名必带 "sigma"；其余 PixArt 权重按 α 处理（官方 α 命名为
+    // PixArt-XL-2-1024-MS）。判定确实为难时用户可在控制台手动覆盖家族。
+    if has_any(&t, &["pixart"]) {
+        if has_any(&t, &["sigma"]) {
+            return "pixart-sigma";
+        }
+        return "pixart-alpha";
+    }
+    // Ming-Image 0.1 Design（上游 #2063）：DiT + Ling-mini-2.0 BF16 文本编码器
+    // + Ming VAE + 外部 Ling tokenizer；当前仅文生图（参考图被实现拒绝）。
+    if has_any(&t, &["ming_image", "ming-image", "mingimage"]) {
+        return "ming-image";
+    }
     // LLaDA-Image / LLaDA-Image-Turbo（上游 #1968）：NextDiT + LLaDA2-MoE 文本
     // 编码器 + Flux.2 VAE + --embeddings-connectors。两个 checkpoint 的
     // transformer / 文本编码器 / QueryFormer 互不通用，只有 VAE、SigVQ 与
@@ -267,18 +285,37 @@ pub fn detect_family(path: &str) -> &'static str {
     "custom"
 }
 
-fn is_llm_encoder(test: &str) -> bool {
+fn is_llm_encoder(test: &str, name_test: &str) -> bool {
     // LLaDA-Image 的扩散模型本体与文本编码器共用 "llada-image" 前缀
     // （llada-image-text_encoder-q8_0.gguf），必须靠 text_encoder 标记区分。
-    if has_any(test, &["llada"]) && has_any(test, &["text_encoder", "text-encoder", "text encoder"])
+    if has_any(name_test, &["llada"]) && has_any(name_test, &["text_encoder", "text-encoder", "text encoder"])
     {
         return true;
     }
     // qwen-image is a diffusion model, not an LLM encoder.
-    if has_any(test, &["qwen-image", "qwen_image", "qwen-image-edit"]) {
+    if has_any(name_test, &["qwen-image", "qwen_image", "qwen-image-edit"]) {
         return false;
     }
-    if has_any(test, &["llada-image", "llada_image", "lladaimage"]) {
+    // Ming-Image 的 DiT 与文本编码器同目录、名字都带 ming_image，必须先把
+    // 编码器认出来——它不带 gemma/qwen3 等通用标记，否则会被判成 diffusion
+    // 模型（名字命中扩散名单，或体积回退）。
+    //
+    // 官方名是 …_ling_mini_2.0_bf16.safetensors，但不能只认 "ling_mini"：
+    // 去掉 mini 的命名同样存在。因此按 "带 ming_image 且带编码器线索" 兜底。
+    //
+    // 这里只能看 name_test：把父目录名拼进来会让 "Ming-Image-sampling"
+    // （sampling 含 "ling"）之类的目录把 DiT 误判成文本编码器，而
+    // Dashboard 的主模型列表只收 model 类别，模型会直接消失。
+    if has_any(name_test, &["ling_mini", "ling-mini", "lingmini"]) {
+        return true;
+    }
+    if has_any(name_test, &["ming_image", "ming-image", "mingimage"]) {
+        return has_any(
+            name_test,
+            &["ling", "text_enc", "text-enc", "text encoder", "mllm", "connector"],
+        ) && !has_any(name_test, &["lingbot", "ling-bot", "ling_bot"]);
+    }
+    if has_any(name_test, &["llada-image", "llada_image", "lladaimage"]) {
         return false;
     }
     has_any(
@@ -347,6 +384,13 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "ovis_image",
             "ovis-image",
             "hidream",
+            // PixArt-α / Σ 的 DiT（上游 #2047）：pixart_sigma_xl2_1024_ms.safetensors。
+            "pixart",
+            // Ming-Image 0.1 Design 的 DiT（上游 #2063）；文本编码器带
+            // ling_mini 标记，在 is_llm_encoder 里先被拦下。
+            "ming_image",
+            "ming-image",
+            "mingimage",
             "lens_",
             "lens-",
             "ssd-1b",
@@ -394,12 +438,12 @@ fn is_diffusion_model_name(test: &str) -> bool {
 
 /// Classify a model file into a component category (model / vae / clip_l / ...).
 pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'static str {
-    let test = format!(
-        "{}|{}|{}",
-        name.to_lowercase(),
-        stem.to_lowercase(),
-        dir_base.to_lowercase()
-    );
+    // 文件名线索与目录线索分开保存：`dir_base` 只是直接父目录名，用它做
+    // 子串匹配会把 "Ming-Image-sampling" 这类目录误判成编码器（sampling
+    // 含 "ling"），所以子串规则一律只看 name_test。
+    let name_test = format!("{}|{}", name.to_lowercase(), stem.to_lowercase());
+    let dir = dir_base.to_lowercase();
+    let test = format!("{}|{}", name_test, dir);
 
     // Audio VAE (must check before generic VAE)
     if has_any(&test, &["audio_vae", "audio-vae"]) {
@@ -436,6 +480,23 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     ) && size_mb < 500.0
     {
         return "taesd";
+    }
+    // Diffusers 官方仓库的组件权重是通用名（diffusion_pytorch_model.safetensors、
+    // model.safetensors.index.json、model-00001-of-00002.safetensors），家族线索
+    // 只在目录名里。上游 DiffusersModelLoader 正是按 unet/ vae/ text_encoder/
+    // text_encoder_2/ 这些目录取权重（src/model_loader.cpp），所以这里按目录
+    // 归类；否则官方 PixArt / SDXL Diffusers 目录里的组件在界面上无法选择。
+    match dir.as_str() {
+        "vae" | "vaes" => return "vae",
+        "transformer" | "unet" => return "model",
+        "text_encoder" => {
+            // 同名目录在 SDXL 里是 CLIP-L、在 PixArt 里是 T5-XXL。只能按体积
+            // 区分：T5-XXL 分片合计约 19GB，CLIP-L 约 250MB（索引文件按分片
+            // 总和计，见 scanner::safetensors_index_info）。
+            return if size_mb >= 2000.0 { "t5xxl" } else { "clip_l" };
+        }
+        "text_encoder_2" => return "clip_g",
+        _ => {}
     }
     // VAE
     if has_any(&test, &["ae.safetensors", "ae.sft", "autoencoder"]) && size_mb < 2000.0 {
@@ -553,7 +614,7 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
         return "motion_module";
     }
     // LLM text encoders
-    if is_llm_encoder(&test) {
+    if is_llm_encoder(&test, &name_test) {
         return "llm";
     }
     // Diffusion model by name — high-noise variant first
@@ -593,6 +654,146 @@ mod tests {
             "model"
         );
         assert_eq!(detect_family("unrelated-model.gguf"), "custom");
+    }
+
+    #[test]
+    fn detects_pixart_and_ming_image() {
+        // 官方 Σ 权重名带 sigma；α 的 PixArt-XL-2-1024-MS 不含，按 α 处理。
+        assert_eq!(
+            detect_family("pixart_sigma_xl2_1024_ms.safetensors"),
+            "pixart-sigma"
+        );
+        assert_eq!(
+            detect_family("PixArt-Sigma-XL-2-1024-MS.safetensors"),
+            "pixart-sigma"
+        );
+        assert_eq!(
+            detect_family("PixArt-XL-2-1024-MS.safetensors"),
+            "pixart-alpha"
+        );
+        assert_eq!(detect_family("pixart_xl2_512.safetensors"), "pixart-alpha");
+        assert_eq!(
+            detect_family("ming_image_0.1_design_bf16.safetensors"),
+            "ming-image"
+        );
+    }
+
+    #[test]
+    fn classifies_pixart_and_ming_components() {
+        // Ming 的文本编码器（Ling-mini-2.0）不带通用编码器标记，必须按名字
+        // 进 llm，而不是被大小回退判成 diffusion 模型。
+        assert_eq!(
+            classify_file(
+                "ming_image_0.1_ling_mini_2.0_bf16.safetensors",
+                "ming_image_0.1_ling_mini_2.0_bf16",
+                "text_encoders",
+                4000.0,
+            ),
+            "llm"
+        );
+        // 去掉 mini 的命名同样要认成编码器（名字里没有 gemma/qwen3 线索）。
+        assert_eq!(
+            classify_file(
+                "ming_image_0.1_ling_bf16.safetensors",
+                "ming_image_0.1_ling_bf16",
+                "text_encoders",
+                4000.0,
+            ),
+            "llm"
+        );
+        // LingBot Video 的扩散权重也含 "ling"，不能被误认成文本编码器。
+        assert_eq!(
+            classify_file(
+                "lingbot-video-14b-bf16.safetensors",
+                "lingbot-video-14b-bf16",
+                "diffusion_models",
+                20000.0,
+            ),
+            "model"
+        );
+        assert_eq!(
+            classify_file(
+                "ming_image_0.1_design_bf16.safetensors",
+                "ming_image_0.1_design_bf16",
+                "diffusion_models",
+                12000.0,
+            ),
+            "model"
+        );
+        assert_eq!(
+            classify_file(
+                "ming_image_vae_bf16.safetensors",
+                "ming_image_vae_bf16",
+                "vae",
+                300.0,
+            ),
+            "vae"
+        );
+        assert_eq!(
+            classify_file(
+                "pixart_sigma_xl2_1024_ms.safetensors",
+                "pixart_sigma_xl2_1024_ms",
+                "diffusion_models",
+                2500.0,
+            ),
+            "model"
+        );
+        assert_eq!(
+            classify_file("pixart_vae.safetensors", "pixart_vae", "vae", 300.0),
+            "vae"
+        );
+        assert_eq!(
+            classify_file("t5xxl.safetensors", "t5xxl", "text_encoders", 9000.0),
+            "t5xxl"
+        );
+        // 官方 Diffusers 布局：组件是通用名，线索只在目录名里。
+        assert_eq!(
+            classify_file(
+                "model.safetensors.index.json",
+                "model",
+                "text_encoder",
+                19000.0,
+            ),
+            "t5xxl"
+        );
+        assert_eq!(
+            classify_file("model.safetensors", "model", "text_encoder", 250.0),
+            "clip_l"
+        );
+        assert_eq!(
+            classify_file("model.safetensors", "model", "text_encoder_2", 700.0),
+            "clip_g"
+        );
+        assert_eq!(
+            classify_file(
+                "diffusion_pytorch_model.safetensors",
+                "diffusion_pytorch_model",
+                "vae",
+                320.0,
+            ),
+            "vae"
+        );
+        assert_eq!(
+            classify_file(
+                "diffusion_pytorch_model.safetensors",
+                "diffusion_pytorch_model",
+                "transformer",
+                2800.0,
+            ),
+            "model"
+        );
+        // 父目录名不得参与编码器判定：Ming-Image-sampling 含 "ling"。
+        for dir in ["Ming-Image-sampling", "Ming-Image-scaling", "Ming-Image-tiling"] {
+            assert_eq!(
+                classify_file(
+                    "ming_image_0.1_design_bf16.safetensors",
+                    "ming_image_0.1_design_bf16",
+                    dir,
+                    12000.0,
+                ),
+                "model"
+            );
+        }
     }
 
     #[test]
