@@ -19,6 +19,9 @@ const baseProps = {
   lmsDivisions: undefined,
   onUpdate: vi.fn(),
   onReset: vi.fn(),
+  previewModes: [] as string[],
+  previewMode: undefined,
+  previewInterval: undefined,
 };
 
 describe("SamplingPanel option fallbacks", () => {
@@ -116,5 +119,70 @@ describe("SamplingPanel 默认（自动）选项", () => {
 
     expect(screen.getByLabelText("调度器")).toHaveTextContent("默认（自动）");
     expect(screen.getByLabelText("采样器")).toHaveTextContent("默认（自动）");
+  });
+});
+
+describe("SamplingPanel 生成预览（上游 #2093）", () => {
+  it("旧内核没有 preview_modes 时不显示预览控件", () => {
+    render(<SamplingPanel {...baseProps} />);
+    expect(screen.queryByLabelText(/生成预览/)).toBeNull();
+  });
+
+  it("有预览能力时列出模式，并只在开启后显示间隔", () => {
+    const { rerender } = render(
+      <SamplingPanel
+        {...baseProps}
+        previewModes={["none", "proj", "tae", "vae"]}
+        previewMode="none"
+      />
+    );
+
+    expect(screen.getByLabelText(/生成预览/)).toHaveTextContent("关闭");
+    // 关闭状态不显示间隔输入。
+    expect(screen.queryByLabelText(/预览间隔/)).toBeNull();
+
+    rerender(
+      <SamplingPanel
+        {...baseProps}
+        previewModes={["none", "proj", "tae", "vae"]}
+        previewMode="tae"
+        previewInterval={5}
+      />
+    );
+    expect(screen.getByLabelText(/生成预览/)).toHaveTextContent("TAE 解码");
+    expect(screen.getByLabelText(/预览间隔/)).toHaveValue(5);
+  });
+
+  it("把预览模式写到请求体顶层键 preview", async () => {
+    const onUpdate = vi.fn();
+    render(
+      <SamplingPanel
+        {...baseProps}
+        previewModes={["none", "proj"]}
+        previewMode="none"
+        onUpdate={onUpdate}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText(/生成预览/));
+    fireEvent.click(await screen.findByRole("option", { name: "潜空间投影" }));
+
+    expect(onUpdate).toHaveBeenCalledWith("preview", "proj");
+  });
+
+  it("当前模式不受支持时显示关闭，不把旧值补为可选项", async () => {
+    render(
+      <SamplingPanel
+        {...baseProps}
+        previewModes={["none", "proj"]}
+        previewMode="vae"
+      />
+    );
+
+    expect(screen.getByLabelText(/生成预览/)).toHaveTextContent("关闭");
+    expect(screen.queryByLabelText(/预览间隔/)).toBeNull();
+    fireEvent.click(screen.getByLabelText(/生成预览/));
+    expect(await screen.findByRole("option", { name: "潜空间投影" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "VAE 解码" })).toBeNull();
   });
 });

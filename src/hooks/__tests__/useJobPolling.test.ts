@@ -1,9 +1,59 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { useStore } from "../../store";
-import { saveEntryPart, trimResultsToBudget } from "../useJobPolling";
+import { processedJobs, saveEntryPart, trimResultsToBudget, useJobPolling } from "../useJobPolling";
 
-const mocks = vi.hoisted(() => ({ saveOutput: vi.fn() }));
+const mocks = vi.hoisted(() => ({ saveOutput: vi.fn(), sdcppJob: vi.fn() }));
 vi.mock("../../api", () => ({ api: mocks }));
+vi.mock("../../lib/systemIntegration", () => ({ flashWindow: vi.fn(), notifyIfUnfocused: vi.fn() }));
+
+describe("generation preview polling lifecycle", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mocks.sdcppJob.mockReset();
+    processedJobs.clear();
+    useStore.setState({ jobs: [], results: [], toasts: [] });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+  const poll = () => act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+
+  it("replaces each frame and releases it once the result arrives", async () => {
+    useStore.setState({ jobs: [{ id: "preview-job", kind: "img_gen", status: "queued" }] });
+    const preview = { pass: 1, step: 1, total_steps: 20, b64_json: "first-frame" };
+    mocks.sdcppJob
+      .mockResolvedValueOnce({ status: 200, body: { id: "preview-job", kind: "img_gen", status: "generating", preview } })
+      .mockResolvedValueOnce({ status: 200, body: { id: "preview-job", kind: "img_gen", status: "generating", preview: { ...preview, step: 2, b64_json: "second-frame" } } })
+      .mockResolvedValueOnce({ status: 200, body: { id: "preview-job", kind: "img_gen", status: "completed", result: { output_format: "png", images: [{ index: 0, b64_json: "final-image" }] } } });
+    renderHook(() => useJobPolling());
+    await poll();
+    expect(useStore.getState().jobs[0].preview?.b64_json).toBe("first-frame");
+    expect(useStore.getState().results).toEqual([]);
+    await poll();
+    expect(useStore.getState().jobs[0].preview?.b64_json).toBe("second-frame");
+    await poll();
+    expect(useStore.getState().jobs[0].preview).toBeUndefined();
+    expect(useStore.getState().jobs[0].result).toBeNull();
+    expect(useStore.getState().results[0].result.images?.[0].b64_json).toBe("final-image");
+    await poll();
+    expect(mocks.sdcppJob).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([404, 410])("releases the preview after an expired %s response", async (status) => {
+    useStore.setState({ jobs: [{ id: "expired-preview", kind: "img_gen", status: "generating", preview: { b64_json: "large-frame" } }] });
+    mocks.sdcppJob.mockResolvedValue({ status, body: { error: "expired" } });
+    renderHook(() => useJobPolling());
+    await poll();
+    expect(useStore.getState().jobs[0].status).toBe("failed");
+    expect(useStore.getState().jobs[0].preview).toBeUndefined();
+    await poll();
+    expect(mocks.sdcppJob).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().results).toEqual([]);
+  });
+});
 
 function seedEntry() {
   useStore.setState((state) => ({

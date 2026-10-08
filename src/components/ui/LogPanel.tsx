@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../../api";
 import { useStore } from "../../store";
+import { logSeverity } from "../../lib/logFormat";
 import { DEFAULT_SD_PORT, formatError } from "../../lib/utils";
 import { IC } from "./Icons";
 import { TwoTapButton } from "./TwoTapButton";
@@ -121,21 +122,24 @@ export function LogPanel() {
           {logs.length === 0 ? (
             <div className="log-empty">等待日志…</div>
           ) : (
-            logs.map((l, i) => (
-              <div
-                key={i}
-                className={
-                  "log-line" +
-                  (/error|failed|panic|fatal|exception/i.test(l)
-                    ? " log-err"
-                    : /warn/i.test(l)
-                      ? " log-warn"
-                      : "")
-                }
-              >
-                {l}
-              </div>
-            ))
+            logs.map((l, i) => {
+              const severity = logSeverity(l);
+              return (
+                <div
+                  key={i}
+                  className={
+                    "log-line" +
+                    (severity === "error"
+                      ? " log-err"
+                      : severity === "warn"
+                        ? " log-warn"
+                        : "")
+                  }
+                >
+                  {l}
+                </div>
+              );
+            })
           )}
         </div>
       )}

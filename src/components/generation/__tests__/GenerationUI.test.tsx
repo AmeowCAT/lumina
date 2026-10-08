@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../../store";
 
@@ -121,6 +121,67 @@ describe("GenerationUI 结构（暗房重构版）", () => {
       toasts: [],
       seedRandom: true,
     });
+  });
+
+  it.each([
+    ["missing capability", undefined, undefined],
+    ["disabled mode", ["none", "vae"], false],
+    ["unsupported saved value", ["none", "proj"], true],
+  ] as const)("does not submit an old preview setting with %s", async (_, preview_modes, preview) => {
+    localStorage.setItem("sdcpp:params:img_gen", JSON.stringify({ preview: "vae", preview_interval: 2 }));
+    useStore.setState({ caps: { ...CAPS, preview_modes, features_by_mode: { img_gen: { preview } } } as never });
+    render(<GenerationUI />);
+    fireEvent.click(await screen.findByRole("button", { name: "生成" }));
+    await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
+    const body = apiMocks.sdcppSubmit.mock.calls[0][1];
+    expect(body.preview).toBe("none");
+    expect(body).not.toHaveProperty("preview_interval");
+    expect(useStore.getState().jobs[0].config?.params.preview).toBe("none");
+  });
+
+  it("blocks MiniMax references with keyframes and allows resubmission after fixing them", async () => {
+    const model = { name: "minimax_h3_ref2va.safetensors", path: "D:/models/minimax_h3_ref2va.safetensors" };
+    useStore.setState({
+      caps: { ...VIDEO_CAPS, model } as never,
+      mode: "vid_gen", mainModel: model.path, familyOverride: "minimax-h3-ref2va",
+      refImages: ["data:image/png;base64,cmVm"],
+      initImage: "data:image/png;base64,aW5pdA==", endImage: "data:image/png;base64,ZW5k",
+    });
+    render(<GenerationUI />);
+    const generate = await screen.findByRole("button", { name: "生成" });
+    fireEvent.click(generate);
+    expect(apiMocks.sdcppSubmit).not.toHaveBeenCalled();
+    const toasts = useStore.getState().toasts;
+    expect(toasts[toasts.length - 1]?.msg).toContain("不能与初始图片 / 结束帧同时使用");
+    act(() => useStore.setState({ initImage: null, endImage: null }));
+    fireEvent.click(generate);
+    await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
+    expect(apiMocks.sdcppSubmit.mock.calls[0][1].ref_images).toEqual(["data:image/png;base64,cmVm"]);
+  });
+
+  it("uses PNG preview frames, restarts step labels per pass, and never carries a frame to another job", async () => {
+    const job = { id: "a", kind: "img_gen" as const, status: "generating" as const,
+      config: { mode: "img_gen" as const, params: { ...CAPS.defaults_by_mode.img_gen, output_format: "jpeg" } },
+      preview: { pass: 1, step: 5, total_steps: 20, b64_json: "first" },
+    };
+    useStore.setState({ jobs: [job] });
+    render(<GenerationUI />);
+    expect(await screen.findByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,first");
+    act(() => useStore.setState({ jobs: [{ ...job, preview: { pass: 2, step: 1, total_steps: 10, b64_json: "second" } }] }));
+    expect(screen.getByText("生成预览 · 第 2 段 · 1/10 步")).toBeTruthy();
+    act(() => useStore.setState({ jobs: [{ ...job, status: "completed" }, { id: "b", kind: "vid_gen", status: "queued" }] }));
+    expect(screen.queryByAltText("生成预览")).toBeNull();
+    act(() => useStore.setState({ jobs: [{ id: "b", kind: "vid_gen", status: "generating", preview: { pass: 1, step: 1, total_steps: 5, b64_json: "video-preview" } }] }));
+    expect(screen.getByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,video-preview");
+  });
+
+  it("keeps the L2P hint free of development metadata", async () => {
+    useStore.setState({ mainModel: CAPS.model.path, familyOverride: "zimage-l2p" });
+    render(<GenerationUI />);
+    fireEvent.click(await screen.findByLabelText("打开参数面板"));
+    const hint = await screen.findByRole("note");
+    expect(hint.textContent).toContain("BF16");
+    expect(hint.textContent).not.toMatch(/上游|docs\/|#2075|18\.6/);
   });
 
   it("渲染浮动指令条、画布工作区与空状态", async () => {

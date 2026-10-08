@@ -52,6 +52,14 @@ export const SCHEDULER_NAMES: Record<string, string> = {
 	llada_image: "LLaDA-Image",
 };
 
+// TAE/VAE 在当前内核中共用启动时配置的解码器，不承诺选项间的画质差异。
+export const PREVIEW_MODE_NAMES: Record<string, string> = {
+	none: "关闭",
+	proj: "潜空间投影",
+	tae: "TAE 解码",
+	vae: "VAE 解码",
+};
+
 export const BUILTIN_UPSCALERS = [
 	"None",
 	"Lanczos",
@@ -199,6 +207,11 @@ export interface FamilyConfig {
 	genDefaultsByMode?: Partial<Record<GenMode, Record<string, unknown>>>;
 	/** Inputs that must be present before a request can be submitted. */
 	requiredInputsByMode?: Partial<Record<GenMode, RequiredInput[]>>;
+	/**
+	 * 互斥输入组：同组里出现多于一个非空输入时当前模型无法生成（上游在
+	 * 生成阶段直接报错返回），提交前拦下能省一次往返并给出可读原因。
+	 */
+	exclusiveInputGroups?: { inputs: RequiredInput[]; message: string }[];
 	/** Protocol capabilities are generic; these model-specific restrictions win. */
 	disabledFeatures?: (keyof Features)[];
 	generationHint?: string;
@@ -329,6 +342,9 @@ export const SIZE_SPATIAL_ALIGN: Record<string, number> = {
 	"pixart-sigma": 16,
 	"pixart-alpha": 16,
 	"ming-image": 16,
+	// Z-Image L2P：FakeVAE 缩放因子 1、DiT 下采样 16（上游 vae.hpp /
+	// diffusion_engine.cpp），宽高必须是 16 的倍数——1080 实际为 1088。
+	"zimage-l2p": 16,
 };
 
 /** 返回该家族下 `dim` 实际生效的宽/高；无对齐要求的家族原样返回。 */
@@ -844,6 +860,20 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				video_frames: 56,
 				fps: 24,
 			},
+			// 上游 video.cpp：MiniMax-H3 只要给了参考图/参考视频/参考音频，就
+			// 不允许再给首帧或尾帧（"keyframes and Ref2VA references cannot be
+			// used together"），并在生成阶段直接判失败。首尾帧彼此可以共存，
+			// 所以拆成两条二元互斥声明（相同文案会被去重）。
+			exclusiveInputGroups: [
+				{
+					inputs: ["ref_images", "init_image"],
+					message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+				},
+				{
+					inputs: ["ref_images", "end_image"],
+					message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+				},
+			],
 		},
 		"minimax-h3-ref2va": {
 			name: "MiniMax-H3 (Ref2VA)",
@@ -854,6 +884,18 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			// 本地加载 WAV/帧目录），故参考图设为必需输入，避免 ref2va 权重被
 			// 无参考条件裸跑。待上游 server 开放视频/音频参考后再升级。
 			requiredInputsByMode: { vid_gen: ["ref_images"] },
+			// 同 FL2VA：上游对 MiniMax-H3 统一要求参考条件与首尾帧互斥
+			// （首尾帧彼此可以共存，故拆成两条二元声明）。
+			exclusiveInputGroups: [
+				{
+					inputs: ["ref_images", "init_image"],
+					message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+				},
+				{
+					inputs: ["ref_images", "end_image"],
+					message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+				},
+			],
 			fields: [
 				F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
 				F("vae", "视频 VAE", "vae", "vae"),
@@ -904,6 +946,39 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				sample_steps: 8,
 				sample_method: "euler",
 				guidance: { txt_cfg: 1.0 },
+			},
+		},
+	},
+	// Z-Image L2P（上游 #2075）：把 Z-Image-Turbo 迁到 RGB 像素空间——16×16
+	// patch 化 + 小型卷积解码器取代 VAE，文本编码器仍是 Qwen3-4B。上游按权重
+	// 张量 local_decoder.out_conv.weight 自动识别架构，因此这里**只列真正需要
+	// 的组件**：没有任何 VAE / TAE 槽位，传了也只会白读文件（FakeVAE 分支优先）。
+	// 参考参数取上游 docs/z_image_l2p.md：1024×1024、Euler、30 步、CFG 2.0；
+	// 该文档还建议以 `--type bf16` 载入（控制台"加载时量化"里可选）。
+	"zimage-l2p": {
+		name: "Z-Image L2P",
+		hint: "DiT + Qwen3-4B，无需 VAE",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("llm", "LLM (Qwen3)", "llm", "llm"),
+			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+		],
+		fixedArgs: { "diffusion-fa": true },
+		// 上游 runner 对非空参考潜变量直接报错返回（z_image_l2p.hpp），而
+		// capabilities 的 ref_images 是协议级通用值、不会为它自动收窄，
+		// 因此必须在这里关掉，避免旧任务/别的模型残留的参考图被提交。
+		disabledFeatures: ["ref_images"],
+		generationHint:
+			"不支持参考图；建议使用 BF16 加载，减少内存占用。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 30,
+				sample_method: "euler",
+				guidance: { txt_cfg: 2.0 },
 			},
 		},
 	},
@@ -1776,11 +1851,19 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
  *   · Wan VAE 系（Wan / Qwen-Image / LingBot-Video / Krea2 / Anima）→ TAEHV
  *   · HunyuanVideo（32ch）/ LTX-AV（128ch）→ 各自的视频 TAE
  *   · MiniMax-H3（24ch）→ taeh3（上游 #1874 新增，此前引擎会拒绝 --taesd）
- * Chroma-Radiance / HiDream-O1 / MiniT2I 走 FakeVAE（不解码 latent），
+ * Chroma-Radiance / HiDream-O1 / MiniT2I / SenseNova U1.5 走 FakeVAE（不解码 latent），
  * FakeVAE 分支优先于 use_tae，传 --taesd 无意义，故不暴露该组件。
+ * Z-Image L2P 同理：它的"VAE"是 RGB 像素空间的恒等映射（上游 #2075 的
+ * FakeVAE 分支同样优先于 TAE），给 TAE 只会白读权重。
  * 权重不匹配时上游只告警并回落到完整 VAE，不会启动失败。
  */
-const FAKE_VAE_FAMILIES = ["chroma-radiance", "hidream", "minit2i", "sensenova-u1"];
+const FAKE_VAE_FAMILIES = [
+	"chroma-radiance",
+	"hidream",
+	"minit2i",
+	"sensenova-u1",
+	"zimage-l2p",
+];
 
 const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
 	{ hint: "taesd（SD 1.x / 2.x latent）", families: ["sd"] },

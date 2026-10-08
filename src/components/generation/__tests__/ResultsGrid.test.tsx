@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setTheme } from "../../../lib/theme";
 import type { ResultEntry } from "../../../store";
 import type { GenParams, JobConfig } from "../../../types";
 import { ResultsGrid } from "../ResultsGrid";
@@ -157,6 +158,28 @@ const baseProps = {
   getVideoUrl: (jobId: string, b64: string) => `blob:${jobId}/${b64}`,
   getImageUrl: (b64: string, fmt: string) => `data:image/${fmt};base64,${b64}`,
 };
+
+describe("ResultsGrid live previews", () => {
+  afterEach(() => { cleanup(); setTheme("lumina"); });
+
+  it.each([
+    ["lumina", false], ["lumina", true], ["vostok", false], ["vostok", true],
+  ] as const)("replaces and clears frames in %s (existing results: %s)", (theme, withResults) => {
+    setTheme(theme);
+    const results = withResults ? [imageEntry("existing")] : [];
+    const { rerender } = render(<ResultsGrid {...baseProps} results={results} generating />);
+    expect(screen.queryByAltText("生成预览")).toBeNull();
+    rerender(<ResultsGrid {...baseProps} results={results} generating previewSrc="data:image/png;base64,first" previewLabel="生成预览 · 1/20 步" />);
+    expect(screen.getByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,first");
+    expect(screen.getByText("生成预览 · 1/20 步")).toBeTruthy();
+    rerender(<ResultsGrid {...baseProps} results={results} generating previewSrc="data:image/png;base64,second" previewLabel="生成预览 · 第 2 段 · 1/10 步" />);
+    expect(screen.getAllByAltText("生成预览")).toHaveLength(1);
+    expect(screen.getByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,second");
+    // 即使调用方保留旧 URL，终态也不能继续展示旧帧。
+    rerender(<ResultsGrid {...baseProps} results={results} generating={false} previewSrc="data:image/png;base64,second" />);
+    expect(screen.queryByAltText("生成预览")).toBeNull();
+  });
+});
 
 describe("ResultsGrid 聚焦区 + 瀑布流", () => {
   it("无结果时显示空态", () => {

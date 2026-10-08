@@ -15,12 +15,35 @@ import {
   LINGBOT_PROMPT_TEMPLATE,
   modelFileOptionLabel,
   pixelTilingDroppedOnLatent,
+  previewModesFromCapabilities,
+  resolvePreviewMode,
   resolveVaeTilingForProtocol,
   sdcppMetadataToGenParams,
   vaeTilingProtocolFromCapabilities,
   validateLingbotPrompt,
 } from "../utils";
-import type { GenImages, GenParams } from "../../types";
+import type { Capabilities, GenImages, GenParams } from "../../types";
+
+describe("preview capability gating", () => {
+  it("requires support from the current generation mode", () => {
+    const caps = {
+      preview_modes: ["none", "proj", "proj", "vae"],
+      features_by_mode: { img_gen: { preview: true }, vid_gen: { preview: false } },
+    } as unknown as Capabilities;
+    expect(previewModesFromCapabilities(caps, "img_gen")).toEqual(["none", "proj", "vae"]);
+    expect(previewModesFromCapabilities(caps, "vid_gen")).toEqual([]);
+    expect(previewModesFromCapabilities({ ...caps, features_by_mode: {} }, "img_gen")).toEqual([]);
+    expect(previewModesFromCapabilities({ ...caps, preview_modes: undefined }, "img_gen")).toEqual([]);
+  });
+
+  it("falls back to none for unsupported or malformed saved values", () => {
+    expect(resolvePreviewMode("vae", ["none", "proj"])).toBe("none");
+    expect(resolvePreviewMode("proj", [])).toBe("none");
+    expect(resolvePreviewMode(undefined, ["proj"])).toBe("none");
+    expect(resolvePreviewMode(1 as unknown as string)).toBe("none");
+    expect(resolvePreviewMode("future-mode", ["none", "future-mode"])).toBe("future-mode");
+  });
+});
 
 describe("extractApiError", () => {
   // sd-server 的 HTTP 错误响应里 `error` 是字符串（routes_sdcpp.cpp），
@@ -900,6 +923,55 @@ describe("buildRequestBody", () => {
     const body = buildRequestBody("img_gen", p, {} as GenImages);
 
     expect("upscale_tile_size" in (body.hires as object)).toBe(false);
+  });
+
+  // 上游 #2093：preview / preview_interval 是 img_gen 与 vid_gen 通用的顶层字段。
+  describe("generation previews (upstream #2093)", () => {
+    it.each(["img_gen", "vid_gen"] as const)("disables unsupported saved previews in %s requests", (mode) => {
+      const params: GenParams = { ...baseParams, preview: "vae", preview_interval: 4 };
+      for (const previewModes of [[], ["none", "proj"]]) {
+        const body = buildRequestBody(mode, params, {} as GenImages, { previewModes });
+        expect(body.preview).toBe("none");
+        expect(body).not.toHaveProperty("preview_interval");
+      }
+      expect(buildRequestBody(mode, params, {} as GenImages, { previewModes: ["none", "vae"] }))
+        .toMatchObject({ preview: "vae", preview_interval: 4 });
+    });
+
+    it("explicitly disables previews by default in both modes", () => {
+      for (const mode of ["img_gen", "vid_gen"] as const) {
+        const body = buildRequestBody(mode, baseParams, {} as GenImages);
+        // 预览默认关闭，不发送间隔。
+        expect(body.preview).toBe("none");
+        expect("preview_interval" in body).toBe(false);
+      }
+    });
+
+    it("sends the mode and interval once previews are on", () => {
+      const p: GenParams = { ...baseParams, preview: "tae", preview_interval: 4 };
+      const body = buildRequestBody("img_gen", p, {} as GenImages);
+
+      expect(body.preview).toBe("tae");
+      expect(body.preview_interval).toBe(4);
+    });
+
+    it("clamps non-positive intervals the way upstream does", () => {
+      const zero: GenParams = {
+        ...baseParams,
+        preview: "proj",
+        preview_interval: 0,
+      };
+      expect(buildRequestBody("img_gen", zero, {} as GenImages).preview_interval).toBe(1);
+
+      const negative: GenParams = {
+        ...baseParams,
+        preview: "proj",
+        preview_interval: -3,
+      };
+      expect(
+        buildRequestBody("vid_gen", negative, {} as GenImages).preview_interval
+      ).toBe(1);
+    });
   });
 });
 

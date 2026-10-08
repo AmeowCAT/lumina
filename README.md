@@ -64,6 +64,8 @@ src-tauri/target/release/lumina.exe
 
 结果图上的 ✨ 按钮走内核的**独立放大**接口：不经过扩散采样、不新建任务，因此会同步等待，完成后作为一张新结果进入结果走廊。放大模型取自 `--hires-upscalers-dir` 顶层，所以模型根目录下的 ComfyUI 子目录不会被扫到。
 
+在参数面板的"采样设置"里开启**生成预览**，可在画布上查看中间结果，角标显示当前采样段的步数。预览可能增加耗时，间隔越大，更新越少。此项只在内核支持时出现；`proj` 使用 RGB 投影，`tae` / `vae` 按内核启动时配置的解码器执行，未加载 TAE 时可以回退到模型解码器，选项名称不保证画质或速度差异。
+
 ### 键位
 
 | 键位 | 作用 |
@@ -92,15 +94,15 @@ src-tauri/target/release/lumina.exe
 
 ## 与上游的关系
 
-推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`3f8527a`](https://github.com/leejet/stable-diffusion.cpp/commit/3f8527a46c54ecf4cb4ed6003da8e8982283c73c)（2026-09-27）：含 PixArt-α / PixArt-Σ（#2047）与 Ming-Image Design（#2063）两个新家族、独立 ESRGAN 放大接口（#2026，结果区一键放大）、VAE 分块尺寸改为图像像素并更名为 `tile_size_w/h`（#2059）、Qwen Image 2.1 的官方分辨率 flow schedule（#2048）与可配置前缀缓存类型（#2045），以及 HIP / Vulkan 的 INT8 convrot 加速（#2070、#2071）。所以：
+推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`a1ded76`](https://github.com/leejet/stable-diffusion.cpp/commit/a1ded76da5818803fca97a3b433669ef727d32cf)（2026-10-06）：新增 Z-Image L2P（#2075，像素空间、不需要 VAE）与 `/sdcpp/v1` 的生成过程预览（#2093，见"生成界面"）；其余是内核侧修复——非圆形分块的位置与混合（#2088、#2105）、自定义 sigma 的步数换算（#2084）、MiniMax-H3 视频 VAE 在时间分块之间保持驻留（#2103）、日志等级标签改为单字母并把来源位置移到行尾（#2104）、转换模型时合并 LoRA（#2079），以及 Windows ROCm 发布包补齐 HIP 运行时（#2090）。所以：
 
 - 界面、启动流程、参数映射有问题 → 提到[本仓库 Issues](https://github.com/AmeowCAT/lumina/issues)
 - 出图质量、加载失败、显存不足、模型不被识别 → 提到[上游仓库](https://github.com/leejet/stable-diffusion.cpp/issues)
 
 <details>
-<summary>已适配的模型家族（55 个，外加"自定义"）</summary>
+<summary>已适配的模型家族（56 个，外加"自定义"）</summary>
 
-Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Qwen-Image（含 Layered/Edit/2.1）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS）、PixArt-Σ、PixArt-α、Ming-Image 0.1 Design，以及"自定义"（手动配置全部组件）。
+Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Z-Image L2P、Qwen-Image（含 Layered/Edit/2.1）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS）、PixArt-Σ、PixArt-α、Ming-Image 0.1 Design，以及"自定义"（手动配置全部组件）。
 
 </details>
 
@@ -113,6 +115,8 @@ Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、SDXL、SD 1.x/2.x�
 - AnimateDiff 的运动模块原生训练在 16 帧，位置编码最多 32 帧，超出后画面趋于静止。
 - 上游 `/sdcpp/v1` 不开放 ADetailer，界面里没有。
 - 独立放大（`POST /sdcpp/v1/upscale`）已接在结果图的 ✨ 按钮上，但它只认 RGB ESRGAN 模型（内置滤镜与 latent 放大器不能用于该接口）、不保留 alpha，运行时还持有生成上下文锁，会与正在进行的生成互斥。
+- 生成预览（上游 #2093）的步数按**当前采样段**计：批次换图、高噪段、二次放大都会另起一段并把步数清零，角标不是整项任务的完成度。
+- Z-Image L2P 在像素空间工作，没有 VAE 组件可选，也不能用参考图（上游 runner 直接拒绝）；它的权重文件名通常看不出线索，扫描不出家族时在控制台手动指定即可。
 - 没有 CI，发布包是本地构建的。
 
 ## 开发

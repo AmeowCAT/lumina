@@ -1,4 +1,5 @@
 import type {
+  Capabilities,
   GenImages,
   GenMode,
   GenParams,
@@ -669,6 +670,33 @@ export function sdcppMetadataToGenParams(
   return out;
 }
 
+/** 预览枚举是协议级能力；模式本身也必须声明支持预览。 */
+export function previewModesFromCapabilities(
+  caps: Capabilities,
+  mode: GenMode
+): string[] {
+  if (caps.features_by_mode?.[mode]?.preview !== true) return [];
+  if (!Array.isArray(caps.preview_modes)) return [];
+  return [...new Set(caps.preview_modes.filter((value) => typeof value === "string"))];
+}
+
+/** 旧设置中不受当前内核支持的预览模式只关闭，不补成可选项。 */
+export function resolvePreviewMode(
+  value: string | undefined,
+  modes: string[] = ["none", "proj", "tae", "vae"]
+): string {
+  return typeof value === "string" && modes.includes(value) ? value : "none";
+}
+
+/** 预览间隔（采样步）：上游把非正值夹到 1，界面缺省也按 1 发送。 */
+function previewInterval(value: number | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 1;
+  const n = Math.trunc(value);
+  if (n <= 0) return 1;
+  // 间隔大于总步数等于没有预览；给一个远高于常见步数的上限，挡住异常输入。
+  return Math.min(n, 1000);
+}
+
 /** Build the `/sdcpp/v1/img_gen|vid_gen` request body (mirrors webui). */
 export interface BuildRequestBodyOptions {
   /** 启动期 `--ref-image-args preset=…`（来自设置的 refImagePreset）。 */
@@ -678,6 +706,8 @@ export interface BuildRequestBodyOptions {
    * 缺省按最新内核（图像像素 w/h）。
    */
   vaeTilingProtocol?: VaeTilingProtocol;
+  /** 当前模式实际支持的预览枚举；空数组禁用预览。 */
+  previewModes?: string[];
 }
 
 export function buildRequestBody(
@@ -832,6 +862,12 @@ export function buildRequestBody(
   } else {
     // 上游接受 "disabled"（common.cpp validate），显式覆盖服务端默认。
     b.cache_mode = "disabled";
+  }
+
+  // 切换内核/模式后，持久化的旧预览选项不能绕过能力检查。
+  b.preview = resolvePreviewMode(params.preview, options.previewModes);
+  if (b.preview !== "none") {
+    b.preview_interval = previewInterval(params.preview_interval);
   }
 
   if (mode === "vid_gen" && params.high_noise_sample_params) {

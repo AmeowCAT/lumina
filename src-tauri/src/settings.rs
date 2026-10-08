@@ -22,6 +22,15 @@ pub struct Settings {
     pub ref_image_preset: String,
     #[serde(default)]
     pub vae_format: String,
+    /// 外部 HuggingFace tokenizer.json（--tokenizer）；PiD / Lens / LLaDA-Image 必需。
+    #[serde(default)]
+    pub tokenizer: String,
+    /// 原生 CUDA SageAttention（--sage-attn）。
+    #[serde(default)]
+    pub sage_attn: bool,
+    /// 条件结果缓存上限（--conditioning-cache-size）；空 = 走内核默认。
+    #[serde(default)]
+    pub conditioning_cache_size: String,
     #[serde(default)]
     pub extra_args: String,
     #[serde(default)]
@@ -60,6 +69,9 @@ impl Default for Settings {
             backend: String::new(),
             ref_image_preset: String::new(),
             vae_format: String::new(),
+            tokenizer: String::new(),
+            sage_attn: false,
+            conditioning_cache_size: String::new(),
             extra_args: String::new(),
             offload_cpu: false,
             quant_type: String::new(),
@@ -87,6 +99,15 @@ pub struct ModelConfigSnapshot {
     pub ref_image_preset: String,
     #[serde(default)]
     pub vae_format: String,
+    /// 外部 tokenizer.json（--tokenizer），与顶层同名设置一致。
+    #[serde(default)]
+    pub tokenizer: String,
+    /// 原生 CUDA SageAttention（--sage-attn）。
+    #[serde(default)]
+    pub sage_attn: bool,
+    /// 条件结果缓存上限（--conditioning-cache-size）。
+    #[serde(default)]
+    pub conditioning_cache_size: String,
     #[serde(default)]
     pub extra_args: String,
     #[serde(default)]
@@ -517,5 +538,74 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.family_override, "pid");
         assert!(snapshot.vae_format.is_empty());
+    }
+
+    /// tokenizer / sageAttn / conditioningCacheSize 曾经只存在于前端类型里，
+    /// 保存时被 serde 静默丢弃：重启后外部 tokenizer 家族会因为缺 main 槽而
+    /// 无法启动。此处锁定顶层与快照两处的往返，并确认旧文件缺键仍是默认值。
+    #[test]
+    fn tokenizer_sage_attn_and_cache_size_round_trip() {
+        let settings: Settings = serde_json::from_str(
+            r#"{
+            "tokenizer":"main=/models/tok.json,clip-l=/models/clip.json",
+            "sageAttn":true,
+            "conditioningCacheSize":"8",
+            "modelSnapshots": {
+                "models/pid.safetensors": {
+                    "tokenizer":"/models/pid-tok.json",
+                    "sageAttn":true,
+                    "conditioningCacheSize":"12"
+                },
+                "models/legacy.safetensors": {"components":{}}
+            }
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.tokenizer,
+            "main=/models/tok.json,clip-l=/models/clip.json"
+        );
+        assert!(settings.sage_attn);
+        assert_eq!(settings.conditioning_cache_size, "8");
+
+        let encoded = serde_json::to_value(&settings).unwrap();
+        assert_eq!(encoded["sageAttn"], true);
+        assert_eq!(encoded["conditioningCacheSize"], "8");
+        assert_eq!(
+            encoded["modelSnapshots"]["models/pid.safetensors"]["sageAttn"],
+            true
+        );
+        assert_eq!(
+            encoded["modelSnapshots"]["models/pid.safetensors"]["conditioningCacheSize"],
+            "12"
+        );
+        let dir = test_dir("runtime-fields");
+        let path = dir.join("settings.json");
+        save_to(&settings, &path).unwrap();
+        let reparsed = load_file(&path).unwrap();
+        assert_eq!(reparsed.tokenizer, settings.tokenizer);
+        assert!(reparsed.sage_attn);
+        assert_eq!(reparsed.conditioning_cache_size, "8");
+        let snapshot = reparsed
+            .model_snapshots
+            .get("models/pid.safetensors")
+            .unwrap();
+        assert_eq!(snapshot.tokenizer, "/models/pid-tok.json");
+        assert!(snapshot.sage_attn);
+        assert_eq!(snapshot.conditioning_cache_size, "12");
+
+        let legacy = &reparsed.model_snapshots["models/legacy.safetensors"];
+        assert!(
+            legacy.tokenizer.is_empty()
+                && !legacy.sage_attn
+                && legacy.conditioning_cache_size.is_empty()
+        );
+        let defaults: Settings = serde_json::from_str("{}").unwrap();
+        assert!(
+            defaults.tokenizer.is_empty()
+                && !defaults.sage_attn
+                && defaults.conditioning_cache_size.is_empty()
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 }

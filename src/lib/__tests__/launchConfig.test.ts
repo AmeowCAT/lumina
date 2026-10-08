@@ -15,6 +15,7 @@ import type { LaunchRuntime } from "../launchConfig";
 import {
   applyFamilyFeatureLimits,
   buildLaunchConfig,
+  exclusiveInputConflicts,
   familyDefaults,
   filterFamilyInputs,
   hasMainTokenizerSlot,
@@ -365,8 +366,16 @@ describe("launch configuration", () => {
 
   // 上游对除 FakeVAE 家族外的所有版本都会构建 TAE（stable-diffusion.cpp
   // create_tae），MiniMax-H3 自 #1874（taeh3）起也支持。
+  // Z-Image L2P（上游 #2075）同样走 FakeVAE：它的 latent 就是 RGB 像素，
+  // TAE 分支被 FakeVAE 抢先，给 TAE 只会白读权重。
   it("offers an optional TAE component for every non-FakeVAE family", () => {
-    const fakeVae = ["chroma-radiance", "hidream", "minit2i", "sensenova-u1"];
+    const fakeVae = [
+      "chroma-radiance",
+      "hidream",
+      "minit2i",
+      "sensenova-u1",
+      "zimage-l2p",
+    ];
     for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
       const tae = config.fields.filter((field) => field.arg === "taesd");
       if (fakeVae.includes(family)) {
@@ -859,5 +868,134 @@ describe("newly supported families", () => {
     expect(
       filterFamilyInputs(images, FAMILY_CONFIG["ming-image"]).refImages
     ).toEqual([]);
+  });
+
+  // 上游 #2075：Z-Image L2P 用 16×16 patch + 小型卷积解码器取代 VAE，
+  // 家族 id 必须与 family.rs 的返回值一致，且不能出现 VAE / TAE 槽位
+  // （给了也只会白读文件，FakeVAE 分支优先）。
+  it("registers Z-Image L2P without VAE or TAE components", () => {
+    const config = FAMILY_CONFIG["zimage-l2p"];
+    expect(config).toBeTruthy();
+    const args = config.fields.map((field) => field.arg);
+    expect(args).toContain("diffusion-model");
+    expect(args).toContain("llm");
+    expect(args).not.toContain("vae");
+    expect(args).not.toContain("taesd");
+
+    const built = buildLaunchConfig({
+      family: "zimage-l2p",
+      modelPath: "/models/z_image_l2p_f16.safetensors",
+      components: {
+        llm: "/models/qwen_3_4b.safetensors",
+        vae: "/models/stale-vae.safetensors",
+        taesd: "/models/stale-tae.safetensors",
+      },
+      runtime,
+    });
+    expect(built.missing).toEqual([]);
+    expect(built.args.vae).toBeUndefined();
+    expect(built.args.taesd).toBeUndefined();
+    expect(built.args["diffusion-fa"]).toBe(true);
+  });
+
+  it("aligns Z-Image L2P to 16 and keeps the upstream reference defaults", () => {
+    // FakeVAE 缩放 1 × DiT 下采样 16：1080 会被引擎改成 1088，720 无需变化。
+    expect(alignSizeUp("zimage-l2p", 1080)).toBe(1088);
+    expect(alignSizeUp("zimage-l2p", 720)).toBe(720);
+
+    const defaults = familyDefaults(FAMILY_CONFIG["zimage-l2p"], "img_gen");
+    expect(defaults?.sample_params).toMatchObject({
+      sample_steps: 30,
+      sample_method: "euler",
+      guidance: { txt_cfg: 2.0 },
+    });
+  });
+
+  // 上游 runner 对非空参考潜变量直接报错，capabilities 却是协议级通用值，
+  // 必须按家族关掉，避免别的模型残留的参考图被提交。
+  it("disables and filters reference images for Z-Image L2P", () => {
+    const features = applyFamilyFeatureLimits(
+      { ref_images: true, init_image: true } as Features,
+      FAMILY_CONFIG["zimage-l2p"]
+    );
+    expect(features.ref_images).toBe(false);
+    // img2img 静态可达（FakeVAE 的 encode 是恒等映射），不要一起禁掉。
+    expect(features.init_image).toBe(true);
+
+    const images: GenImages = {
+      initImage: null,
+      maskImage: null,
+      controlImage: null,
+      ipAdapterImage: null,
+      endImage: null,
+      refImages: ["data:image/png;base64,abc"],
+      controlFrames: [],
+    };
+    expect(
+      filterFamilyInputs(images, FAMILY_CONFIG["zimage-l2p"]).refImages
+    ).toEqual([]);
+  });
+});
+
+// 上游 video.cpp：MiniMax-H3 一旦给了参考条件（参考图/视频/音频），就不能
+// 再给首帧或尾帧，生成阶段直接判失败。能力广告看不出这条，靠家族声明拦截。
+describe("exclusive family inputs", () => {
+  const empty: GenImages = {
+    initImage: null,
+    maskImage: null,
+    controlImage: null,
+    ipAdapterImage: null,
+    endImage: null,
+    refImages: [],
+    controlFrames: [],
+  };
+
+  it("flags MiniMax-H3 references combined with keyframes", () => {
+    const conflict: GenImages = {
+      ...empty,
+      refImages: ["data:image/png;base64,ref"],
+      initImage: "data:image/png;base64,init",
+    };
+    expect(
+      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-ref2va"], conflict)
+    ).toEqual(["MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用"]);
+    expect(
+      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-fl2va"], conflict)
+    ).toEqual(["MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用"]);
+
+    // 参考图 + 结束帧同样是上游拒绝的组合；两条二元规则同时命中只报一次。
+    expect(
+      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-ref2va"], {
+        ...empty,
+        refImages: ["data:image/png;base64,ref"],
+        endImage: "data:image/png;base64,end",
+      })
+    ).toEqual(["MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用"]);
+
+    // 只给参考图（Ref2VA 的正常用法）与只给首尾帧（FL2VA 的正常用法）都不算冲突。
+    expect(
+      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-ref2va"], {
+        ...empty,
+        refImages: ["data:image/png;base64,ref"],
+      })
+    ).toEqual([]);
+    expect(
+      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-fl2va"], {
+        ...empty,
+        initImage: "data:image/png;base64,init",
+        endImage: "data:image/png;base64,end",
+      })
+    ).toEqual([]);
+  });
+
+  it("stays silent for families without an exclusive declaration", () => {
+    const both: GenImages = {
+      ...empty,
+      refImages: ["data:image/png;base64,ref"],
+      initImage: "data:image/png;base64,init",
+    };
+    expect(exclusiveInputConflicts(FAMILY_CONFIG.flux, both)).toEqual([]);
+    expect(exclusiveInputConflicts(FAMILY_CONFIG.sd, both)).toEqual([]);
+    expect(exclusiveInputConflicts(undefined, both)).toEqual([]);
   });
 });

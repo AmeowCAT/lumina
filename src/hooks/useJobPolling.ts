@@ -83,7 +83,7 @@ export function useJobPolling() {
               store.setJobs((j) =>
                 j.map((x) =>
                   x.id === job.id
-                    ? { ...x, status: "failed", error: { message: "任务已失效（服务器重启或任务过期）" } }
+                    ? { ...x, status: "failed", preview: undefined, error: { message: "任务已失效（服务器重启或任务过期）" } }
                     : x
                 )
               );
@@ -103,6 +103,7 @@ export function useJobPolling() {
                 x.id === d.id
                   ? {
                       ...d,
+                      preview: d.status === "generating" ? d.preview : undefined,
                       result: jobResult,
                       config: x.config,
                       pollFailures: 0,

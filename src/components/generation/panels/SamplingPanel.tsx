@@ -1,6 +1,6 @@
 import { memo } from "react";
-import { SAMPLER_NAMES, SCHEDULER_NAMES } from "../../../config/families";
-import { LMS_DEFAULTS } from "../../../lib/utils";
+import { PREVIEW_MODE_NAMES, SAMPLER_NAMES, SCHEDULER_NAMES } from "../../../config/families";
+import { LMS_DEFAULTS, resolvePreviewMode } from "../../../lib/utils";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
@@ -25,6 +25,10 @@ interface Props {
   onReset: () => void;
   /** 参数 chip 深链:召唤 Sheet 时强制展开本面板 */
   forceOpen?: boolean;
+  /** capabilities.preview_modes；空数组 = 旧内核，不显示预览控件。 */
+  previewModes: string[];
+  previewMode: string | undefined;
+  previewInterval: number | undefined;
 }
 
 export const SamplingPanel = memo(function SamplingPanel({
@@ -44,6 +48,9 @@ export const SamplingPanel = memo(function SamplingPanel({
   onUpdate,
   onReset,
   forceOpen,
+  previewModes,
+  previewMode,
+  previewInterval,
 }: Props) {
   // capabilities 对"未设置"返回 "default"（routes_sdcpp.cpp
   // capability_*_name），固定放一个"默认（自动）"选项；
@@ -72,6 +79,15 @@ export const SamplingPanel = memo(function SamplingPanel({
       label: SCHEDULER_NAMES[scheduler] || scheduler,
     });
   }
+  const previewChoices = [...new Set(previewModes.filter((m) => m !== "none"))];
+  const activePreviewMode = resolvePreviewMode(previewMode, previewModes);
+  const previewOptions = [
+    { value: "none", label: PREVIEW_MODE_NAMES.none },
+    ...previewChoices.map((m) => ({
+      value: m,
+      label: PREVIEW_MODE_NAMES[m] || m,
+    })),
+  ];
   return (
     <Panel title="采样设置" forceOpen={forceOpen}>
       <div className="form-row">
@@ -181,6 +197,42 @@ export const SamplingPanel = memo(function SamplingPanel({
           step={0.5}
           hint="蒸馏模型"
         />
+      )}
+      {previewChoices.length > 0 && (
+        <>
+          <div className="form-row">
+            <label className="form-label" htmlFor="preview-mode">
+              生成预览
+              <span className="form-sublabel">
+                显示生成中的中间结果，可能增加耗时
+              </span>
+            </label>
+            <Select
+              id="preview-mode"
+              value={activePreviewMode}
+              onChange={(v) => onUpdate("preview", v)}
+              options={previewOptions}
+            />
+          </div>
+          {activePreviewMode !== "none" && (
+            <div className="form-row">
+              <label className="form-label" htmlFor="preview-interval">
+                预览间隔
+                <span className="form-sublabel">
+                  每 N 步更新一次
+                </span>
+              </label>
+              <NumberInput
+                id="preview-interval"
+                value={previewInterval ?? 1}
+                onChange={(v) => onUpdate("preview_interval", v)}
+                min={1}
+                max={200}
+                step={1}
+              />
+            </div>
+          )}
+        </>
       )}
       <button className="btn btn-sm w-full" onClick={onReset}>
         {IC.refresh}

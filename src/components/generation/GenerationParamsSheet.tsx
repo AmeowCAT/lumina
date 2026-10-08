@@ -6,7 +6,7 @@ import type {
   GenParams,
 } from "../../types";
 import { FAMILY_CONFIG, SIZE_PRESETS, VIDEO_FRAME_PRESETS } from "../../config/families";
-import { vaeTilingProtocolFromCapabilities } from "../../lib/utils";
+import { previewModesFromCapabilities, vaeTilingProtocolFromCapabilities } from "../../lib/utils";
 import { ParamsSheet } from "./ParamsSheet";
 import { Panel } from "../ui/Panel";
 import { ImageInputsPanel } from "./panels/ImageInputsPanel";
@@ -191,6 +191,9 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         onUpdate={onUpdate}
         onReset={onReset}
         forceOpen={sheetTarget === "sampling"}
+        previewModes={previewModesFromCapabilities(caps, mode)}
+        previewMode={params.preview}
+        previewInterval={params.preview_interval}
       />
       <AdvancedSamplingPanel
         eta={sp?.eta}

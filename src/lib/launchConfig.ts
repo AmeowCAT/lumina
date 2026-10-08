@@ -372,10 +372,37 @@ export function missingRequiredInputs(
 ): string[] {
   const required = config?.requiredInputsByMode?.[mode] || [];
   return required
-    .filter((input) => {
-      if (input === "ref_images") return images.refImages.length === 0;
-      if (input === "init_image") return !images.initImage;
-      return !images.endImage;
-    })
+    .filter((input) => !hasInput(images, input))
     .map(requiredInputLabel);
+}
+
+/** 某个必需输入位是否已经有图片。 */
+function hasInput(images: GenImages, input: RequiredInput): boolean {
+  if (input === "ref_images") return images.refImages.length > 0;
+  if (input === "init_image") return !!images.initImage;
+  return !!images.endImage;
+}
+
+/**
+ * 互斥输入冲突。上游对部分模型要求输入之间互斥（MiniMax-H3：参考图与首尾帧
+ * 不能同时给，video.cpp 直接判失败），这类组合在能力广告里看不出来，必须由
+ * 家族声明 + 提交前检查兜住。返回可读原因（同一原因只报一次），空数组表示
+ * 没有冲突。
+ */
+export function exclusiveInputConflicts(
+  config: FamilyConfig | undefined,
+  images: GenImages
+): string[] {
+  const conflicts: string[] = [];
+  const seen = new Set<string>();
+  for (const group of config?.exclusiveInputGroups || []) {
+    const present = group.inputs.filter((input) => hasInput(images, input));
+    // 一条规则可能拆成多个二元组（例如"参考图 vs 首帧""参考图 vs 尾帧"），
+    // 同时命中时文案相同，这里去重避免弹出重复提示。
+    if (present.length > 1 && !seen.has(group.message)) {
+      seen.add(group.message);
+      conflicts.push(group.message);
+    }
+  }
+  return conflicts;
 }

@@ -989,6 +989,24 @@
   }
   .featured-result > * { position: relative; z-index: 1 }
 
+  /* ── 生成过程预览帧（上游 #2093）:显影途中替换空态/压在聚焦区上方 ── */
+  .live-preview {
+    display: inline-flex; flex-direction: column; align-items: center;
+    gap: 6px; margin: 0 auto 14px; max-width: 100%;
+  }
+  .live-preview img {
+    display: block; max-width: 100%; max-height: 46vh;
+    object-fit: contain; border-radius: var(--radius-sm);
+    border: 1px solid var(--color-line2);
+    box-shadow:
+      0 10px 30px rgb(0 0 0 / 0.5),
+      -6px -4px 30px rgb(var(--color-accent-rgb) / 0.08);
+  }
+  .live-preview figcaption {
+    font: 10px var(--font-mono); letter-spacing: 0.06em;
+    color: var(--color-accent-hi); font-variant-numeric: tabular-nums;
+  }
+
   /* 瀑布流接续聚焦区：无文字分栏，仅一条两端渐隐的金色细线 + 留白 */
   .results-workspace .result-grid {
     position: relative;

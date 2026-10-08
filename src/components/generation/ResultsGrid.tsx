@@ -43,6 +43,24 @@ interface Props {
   onUpscale?: (b64: string, fmt: string) => void;
   getVideoUrl: (jobId: string, b64: string, mime: string) => string;
   getImageUrl: (b64: string, fmt: string) => string;
+  /** 生成过程预览帧（上游 #2093）的 dataURL；没有预览时为 null。 */
+  previewSrc?: string | null;
+  /** 预览角标文案（如「生成预览 · 5/20 步」）。 */
+  previewLabel?: string;
+}
+
+/**
+ * 生成过程预览帧。上游只在 `status === "generating"` 的任务里带 `preview`，
+ * 且 `step/total_steps` 是**当前采样段**的进度（批内换图、高噪段、二次放大
+ * 都会另起一段），所以这里只标注段内进度，不能当成整项任务的完成度。
+ */
+function LivePreviewFrame({ src, label }: { src: string; label?: string }) {
+  return (
+    <figure className="live-preview">
+      <img src={src} alt="生成预览" />
+      {label ? <figcaption>{label}</figcaption> : null}
+    </figure>
+  );
 }
 
 /** 单张图片/视频的保存状态展示文案 */
@@ -473,10 +491,13 @@ export const ResultsGrid = memo(function ResultsGrid({
   onUpscale,
   getVideoUrl,
   getImageUrl,
+  previewSrc,
+  previewLabel,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const prevLen = useRef(results.length);
   const theme = useTheme();
+  const livePreviewSrc = generating ? previewSrc : null;
 
   const { items, indexOf } = buildLightboxItems(
     results,
@@ -506,7 +527,11 @@ export const ResultsGrid = memo(function ResultsGrid({
           )}
         >
           <div className="vostok-hero-art">
-            <VostokPoster />
+            {livePreviewSrc ? (
+              <LivePreviewFrame src={livePreviewSrc} label={previewLabel} />
+            ) : (
+              <VostokPoster />
+            )}
             {generating && <span className="vostok-scan" aria-hidden="true" />}
           </div>
           {generating ? (
@@ -528,7 +553,9 @@ export const ResultsGrid = memo(function ResultsGrid({
     }
     return (
       <div className={cn("empty-state", "empty-state-hero", generating && "generating")}>
-        {generating ? (
+        {livePreviewSrc ? (
+          <LivePreviewFrame src={livePreviewSrc} label={previewLabel} />
+        ) : generating ? (
           <>
             <p className="text-[13px] text-fg2">正在显影…</p>
             <p>暗房里图像正在成形，完成后会自动出现在这里</p>
@@ -553,6 +580,9 @@ export const ResultsGrid = memo(function ResultsGrid({
 
   return (
     <div className="results-workspace" ref={wrapRef}>
+      {livePreviewSrc && (
+        <LivePreviewFrame src={livePreviewSrc} label={previewLabel} />
+      )}
       <FeaturedResult
         entry={featured}
         items={items}

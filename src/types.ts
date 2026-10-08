@@ -137,6 +137,8 @@ export interface Features {
   cache?: boolean;
   cancel_queued?: boolean;
   cancel_generating?: boolean;
+  /** 上游 #2093 起支持生成过程预览（请求体 `preview` / `preview_interval`）。 */
+  preview?: boolean;
 }
 
 export interface SlgGuidance {
@@ -293,6 +295,14 @@ export interface GenParams {
   cache_option?: string;
   scm_mask?: string;
   scm_policy_dynamic?: boolean;
+  /**
+   * 生成过程预览模式（上游 #2093 的请求体键 `preview`）：`none` 关闭，
+   * 其余取值取自 capabilities 的 `preview_modes`（proj / tae / vae）。
+   * 默认关闭；仅发送当前内核和模式支持的枚举值。
+   */
+  preview?: string;
+  /** 预览间隔（采样步），上游默认 1 且非正值会被夹到 1。 */
+  preview_interval?: number;
   high_noise_sample_params?: HighNoiseSampleParams;
 }
 
@@ -339,6 +349,11 @@ export interface Capabilities {
    * （上游 #2026）。旧内核缺该键，视为不支持。
    */
   upscale?: boolean;
+  /**
+   * 可用的预览模式，如 `["none", "proj", "tae", "vae"]`（上游 #2093）。
+   * 旧内核缺该键，界面不显示预览控件。
+   */
+  preview_modes?: string[];
 }
 
 /** `POST /sdcpp/v1/upscale` 的请求体（同步接口，不创建任务）。 */
@@ -418,6 +433,23 @@ export interface JobConfig {
   images?: GenImages;
 }
 
+/**
+ * 生成中的预览帧（上游 #2093，仅 `status === "generating"` 的任务返回）。
+ *
+ * `step / total_steps` 描述的是**当前采样段**，不是整项任务的完成度：
+ * 批次换图、高噪/低噪切换、二次放大都会让 `pass` 自增并把 `step` 清零。
+ */
+export interface JobPreview {
+  /** 第几个采样段，从 1 开始。 */
+  pass?: number;
+  /** 本段内的逻辑采样步。 */
+  step?: number;
+  /** 本段的实际总步数（已含调度/强度调整）。 */
+  total_steps?: number;
+  /** 当前预览帧的 PNG base64。 */
+  b64_json: string;
+}
+
 export interface Job {
   id: string;
   kind: GenMode;
@@ -428,6 +460,8 @@ export interface Job {
   created?: number;
   result?: JobResult | null;
   error?: { code?: string; message?: string } | null;
+  /** 生成中的最新预览帧；完成任务不再携带该键。 */
+  preview?: JobPreview | null;
   prompt?: string;
   /** Frontend-only: snapshot of params used to submit, for task switching. */
   config?: JobConfig;

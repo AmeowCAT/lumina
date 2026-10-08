@@ -1396,7 +1396,8 @@ export function Dashboard() {
 								{ value: "iq2_xxs", label: "IQ2_XXS（需 imatrix）" },
 								{ value: "iq1_s", label: "IQ1_S（需 imatrix）" },
 								{ value: "iq1_m", label: "IQ1_M（需 imatrix）" },
-								// 无损转换
+								// 无损转换（BF16 数值范围大于 F16；上游 docs/z_image_l2p.md 的 Z-Image L2P 权重含 F32 张量，以 bf16 载入约 18.6GB→11.8GB）
+								{ value: "bf16", label: "BF16" },
 								{ value: "f16", label: "F16" },
 								{ value: "f32", label: "F32" },
 							]}

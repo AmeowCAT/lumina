@@ -8,6 +8,30 @@ fn has_any(s: &str, patterns: &[&str]) -> bool {
     patterns.iter().any(|p| s.contains(p))
 }
 
+fn is_z_image_l2p(path: &str) -> bool {
+    let mut parts = path.rsplit(['/', '\\']).filter(|part| !part.is_empty());
+    let name = parts.next().unwrap_or("");
+    if name
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| token == "l2p")
+    {
+        return true;
+    }
+    // 只有无线索的权重名才借助明确目录段；不能用父目录覆盖普通模型名。
+    let opaque_name = name.starts_with("model-1k-merge.")
+        || name.starts_with("model-1k-merge-")
+        || matches!(
+            name,
+            "model.safetensors"
+                | "model.safetensors.index.json"
+                | "diffusion_pytorch_model.safetensors"
+        );
+    opaque_name
+        && parts.any(|part| {
+            matches!(part, "l2p" | "z_image_l2p" | "z-image-l2p" | "zimage-l2p")
+        })
+}
+
 /// Map a model file path to one of the supported family ids.
 pub fn detect_family(path: &str) -> &'static str {
     let t = path.to_lowercase();
@@ -184,6 +208,10 @@ pub fn detect_family(path: &str) -> &'static str {
     }
     if has_any(&t, &["hidream"]) {
         return "hidream";
+    }
+    // L2P 必须先于通用 Z-Image；只用明确文件名或无线索权重的确切目录段。
+    if is_z_image_l2p(&t) {
+        return "zimage-l2p";
     }
     if has_any(&t, &["z_image_turbo", "z-image-turbo", "zimage_turbo"]) {
         return "zimage-turbo";
@@ -618,7 +646,9 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
         return "llm";
     }
     // Diffusion model by name — high-noise variant first
-    if is_diffusion_model_name(&test) {
+    if is_diffusion_model_name(&test)
+        || is_z_image_l2p(&format!("{}/{}", dir, name.to_lowercase()))
+    {
         if has_any(&test, &["highnoise", "high-noise", "high_noise"]) {
             return "high_noise_model";
         }
@@ -1177,6 +1207,76 @@ mod tests {
                 12.0
             ),
             "model"
+        );
+    }
+
+    /// 上游 #2075：L2P 既不是普通 Z-Image 也不是 Turbo——它不需要 VAE，
+    /// 尺寸按 16 对齐，默认参数也不同。检测规则必须排在通用 zimage 之前，
+    /// 否则 z_image_l2p 会被子串命中误判成 zimage。
+    #[test]
+    fn detects_z_image_l2p_before_generic_z_image() {
+        assert_eq!(detect_family("/models/L2P/model-1k-merge.safetensors"), "zimage-l2p");
+        assert_eq!(
+            detect_family("/models/z_image_l2p_f16.safetensors"),
+            "zimage-l2p"
+        );
+        assert_eq!(detect_family("Z-Image-L2P-Q8_0.gguf"), "zimage-l2p");
+        // 普通 Z-Image / Turbo 不受影响。
+        assert_eq!(detect_family("/models/z_image_turbo.safetensors"), "zimage-turbo");
+        assert_eq!(detect_family("/models/z-image-base.safetensors"), "zimage");
+    }
+
+    #[test]
+    fn l2p_directories_do_not_override_unrelated_models() {
+        for dir in ["l2p-backups", "scal2per", "L2P"] {
+            assert_eq!(
+                detect_family(&format!("D:\\models\\{}\\z_image_turbo.safetensors", dir)),
+                "zimage-turbo"
+            );
+            assert_eq!(
+                detect_family(&format!("/models/{}/sdxl_base.safetensors", dir)),
+                "sdxl"
+            );
+            assert_eq!(
+                detect_family(&format!("/models/{}/wan2.1-t2v.safetensors", dir)),
+                "wan-t2v"
+            );
+        }
+        assert_eq!(detect_family("/models/scal2per.safetensors"), "custom");
+        assert_eq!(
+            detect_family("/models/l2p-backups/model-1k-merge.safetensors"),
+            "custom"
+        );
+        assert_eq!(
+            detect_family("/models/L2P/transformer/model.safetensors"),
+            "zimage-l2p"
+        );
+        assert_eq!(classify_file("helper.gguf", "helper", "l2p-backups", 12.0), "other");
+        assert_eq!(classify_file("scal2per.gguf", "scal2per", "", 12.0), "other");
+        assert_eq!(classify_file("l2p-q8.gguf", "l2p-q8", "", 220.0), "model");
+    }
+
+    #[test]
+    fn classifies_z_image_l2p_components() {
+        // L2P 主模型（量化后可能只有几百 MB）仍要落 model，不能靠体积回退。
+        assert_eq!(
+            classify_file(
+                "z_image_l2p_f16.gguf",
+                "z_image_l2p_f16",
+                "diffusion_models",
+                220.0
+            ),
+            "model"
+        );
+        // 文本编码器仍是 Qwen3-4B，走 llm 类别。
+        assert_eq!(
+            classify_file(
+                "qwen_3_4b.safetensors",
+                "qwen_3_4b",
+                "text_encoders",
+                8000.0
+            ),
+            "llm"
         );
     }
 }

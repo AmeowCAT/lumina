@@ -14,11 +14,13 @@ import {
   LINGBOT_PROMPT_TEMPLATE,
   MAX_JOBS,
   MAX_RESULTS,
+  previewModesFromCapabilities,
+  resolvePreviewMode,
   sdcppMetadataToGenParams,
   validateLingbotPrompt,
   vaeTilingProtocolFromCapabilities,
 } from "../../lib/utils";
-import { applyFamilyFeatureLimits, familyDefaults, filterFamilyInputs, missingRequiredInputs } from "../../lib/launchConfig";
+import { applyFamilyFeatureLimits, exclusiveInputConflicts, familyDefaults, filterFamilyInputs, missingRequiredInputs } from "../../lib/launchConfig";
 import type {
   GenImages,
   GenMode,
@@ -243,6 +245,24 @@ export function GenerationUI() {
       j.status === "queued" || j.status === "generating" || j.status === "unknown"
   ).length;
   const currentGen = jobs.find((j) => j.status === "generating");
+  // 生成过程预览（上游 #2093）：只有生成中的任务带 `preview` 帧，且
+  // step/total_steps 是**当前采样段**（高噪段、批内换图、二次放大各自一段）
+  // 的进度，不是整项任务的百分比，标注时不能当成总进度。
+  const previewB64 = currentGen?.preview?.b64_json || null;
+  const previewSrc = useMemo(
+    () => (previewB64 ? b64ToDataUrl(previewB64, "image/png") : null),
+    [previewB64]
+  );
+  const previewLabel = useMemo(() => {
+    const p = currentGen?.preview;
+    if (!p) return "";
+    const parts = ["生成预览"];
+    if (p.pass && p.pass > 1) parts.push(`第 ${p.pass} 段`);
+    if (p.step != null && p.total_steps) {
+      parts.push(`${p.step}/${p.total_steps} 步`);
+    }
+    return parts.join(" · ");
+  }, [currentGen?.preview]);
   // 无生成中任务时清空进度条。
   useEffect(() => {
     clearProgress();
@@ -357,6 +377,12 @@ export function GenerationUI() {
       toast("请先提供: " + missingInputs.join("、"), true);
       return;
     }
+    // 互斥组合（MiniMax-H3：参考图与首尾帧）上游会直接判失败，提前拦下。
+    const inputConflicts = exclusiveInputConflicts(FAMILY_CONFIG[family], images);
+    if (inputConflicts.length > 0) {
+      toast(inputConflicts[0], true);
+      return;
+    }
     // 锁必须在所有早退检查之后上：否则"缺少输入"这类 return 会让锁
     // 永久保持 true，后续生成全部静默失效（重审抓出的 bug）。
     submittingRef.current = true;
@@ -366,6 +392,7 @@ export function GenerationUI() {
         ...params,
         width: alignSizeUp(family, params.width),
         height: alignSizeUp(family, params.height),
+        preview: resolvePreviewMode(params.preview, previewModesFromCapabilities(caps, mode)),
         ...(features.hires === false ? { hires: { enabled: false } } : {}),
         ...(features.vae_tiling === false ? { vae_tiling_params: { enabled: false } } : {}),
       };
@@ -379,6 +406,7 @@ export function GenerationUI() {
         // VAE 分块字段名与单位随内核版本变化（上游 #2059），按 capabilities
         // 实际声明的键名发送，避免"设置了但内核读不到"。
         vaeTilingProtocol: vaeTilingProtocolFromCapabilities(caps),
+        previewModes: previewModesFromCapabilities(caps, mode),
       });
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
       if (status === 202) {
@@ -579,7 +607,7 @@ export function GenerationUI() {
           setJobs((j) =>
             j.map((x) =>
               x.id === id && typeof s === "string"
-                ? { ...x, status: s as Job["status"] }
+                ? { ...x, status: s as Job["status"], preview: s === "generating" ? x.preview : undefined }
                 : x
             )
           );
@@ -598,6 +626,7 @@ export function GenerationUI() {
                 ? {
                     ...x,
                     status: "failed",
+                    preview: undefined,
                     error: { message: "任务已失效（服务器重启或任务过期）" },
                   }
                 : x
@@ -1091,6 +1120,8 @@ export function GenerationUI() {
                   <ResultsGrid
                     results={results}
                     generating={!!currentGen}
+                    previewSrc={previewSrc}
+                    previewLabel={previewLabel}
                     onLightbox={openLightbox}
                     onApplyConfig={applyConfig}
                     onDownload={download}
