@@ -157,7 +157,7 @@
   }
   /* 关闭钮:实心警报红 + 纸白(与品牌红拉开语义距离) */
   [data-theme="vostok"] .titlebar-close:hover {
-    background: var(--color-danger); color: var(--color-accent-ink);
+    background: var(--color-danger-solid); color: var(--color-accent-ink);
   }
   [data-theme="vostok"] .header { background: var(--color-glass) }
   [data-theme="vostok"] .header-logo .brand-zh {
