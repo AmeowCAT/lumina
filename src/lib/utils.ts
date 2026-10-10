@@ -25,6 +25,18 @@ export function normalizeSdPort(port: unknown): number {
   return value;
 }
 
+/** 尺寸滑杆的像素步进默认值：每跳 1 像素，便于精确微调。 */
+export const DEFAULT_SIZE_STEP = 1;
+/** 步进上限：再大就超过了常见模型的尺寸上限，属于误填。 */
+export const MAX_SIZE_STEP = 1024;
+
+/** 把任意输入夹到合法步进区间（1–1024 的整数），非法值回落到默认。 */
+export function normalizeSizeStep(value: unknown): number {
+  const step = Math.trunc(Number(value));
+  if (!Number.isFinite(step) || step < 1) return DEFAULT_SIZE_STEP;
+  return Math.min(step, MAX_SIZE_STEP);
+}
+
 export const LINGBOT_PROMPT_TEMPLATE = JSON.stringify(
   {
     caption: {

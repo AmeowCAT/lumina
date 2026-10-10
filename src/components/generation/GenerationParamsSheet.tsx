@@ -46,6 +46,9 @@ export interface GenerationParamsSheetProps {
   params: GenParams;
   seedRandom: boolean;
   sizeScale: number;
+  /** 宽 / 高滑杆与数字输入的每跳像素数（界面偏好，默认 1）。 */
+  sizeStep: number;
+  onSizeStep: (v: number) => void;
   showDistilled: boolean;
   sheetTarget: "size" | "sampling" | null;
   onUpdate: (path: string, val: unknown) => void;
@@ -88,6 +91,8 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
     params,
     seedRandom,
     sizeScale,
+    sizeStep,
+    onSizeStep,
     showDistilled,
     sheetTarget,
     onUpdate,
@@ -168,6 +173,8 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         framePresets={framePresets}
         framePresetsLabel={`${FAMILY_CONFIG[family]?.name || "视频"} 帧数快捷项`}
         onUpdate={onUpdate}
+        sizeStep={sizeStep}
+        onSizeStep={onSizeStep}
         onSizeScale={onSizeScale}
         onSizeBaseReset={onSizeBaseReset}
         onSeedEdit={onSeedEdit}

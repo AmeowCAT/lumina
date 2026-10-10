@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { DEFAULT_SD_PORT } from "./lib/utils";
+import { DEFAULT_SD_PORT, DEFAULT_SIZE_STEP, normalizeSizeStep } from "./lib/utils";
 import type {
   Capabilities,
   GenMode,
@@ -103,6 +103,12 @@ interface StoreState {
   setControlFrames: (updater: (r: string[]) => string[]) => void;
   seedRandom: boolean;
   setSeedRandom: (v: boolean) => void;
+  /**
+   * 尺寸滑杆的像素步进（界面偏好，不进入请求体）：默认 1，填 32 时拖动
+   * 宽 / 高滑杆每跳加减 32。持久化到 localStorage，重启后沿用。
+   */
+  sizeStep: number;
+  setSizeStep: (v: number) => void;
   clearImages: () => void;
   /**
    * 独立放大（同步接口）是否进行中。放在 store 而不是组件 state：切到控制台
@@ -290,6 +296,8 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({ controlFrames: updater(s.controlFrames) })),
   seedRandom: true,
   setSeedRandom: (v) => set({ seedRandom: v }),
+  sizeStep: DEFAULT_SIZE_STEP,
+  setSizeStep: (v) => set({ sizeStep: normalizeSizeStep(v) }),
   upscaleBusy: false,
   setUpscaleBusy: (busy) => set({ upscaleBusy: busy }),
   clearImages: () =>
@@ -400,6 +408,24 @@ useStore.subscribe((s, prev) => {
   if (prev && s.seedRandom === prev.seedRandom) return;
   try {
     localStorage.setItem(SEED_KEY, s.seedRandom ? "true" : "false");
+  } catch {
+    /* ignore */
+  }
+});
+
+// 尺寸步进同样只在该字段真正变化时写盘。
+const SIZE_STEP_KEY = "sdcpp:sizeStep";
+try {
+  const saved = localStorage.getItem(SIZE_STEP_KEY);
+  // 存储里是字符串：交给 normalizeSizeStep 解析并夹取，非法值回落到默认。
+  if (saved !== null) useStore.setState({ sizeStep: normalizeSizeStep(saved) });
+} catch {
+  /* ignore */
+}
+useStore.subscribe((s, prev) => {
+  if (prev && s.sizeStep === prev.sizeStep) return;
+  try {
+    localStorage.setItem(SIZE_STEP_KEY, String(s.sizeStep));
   } catch {
     /* ignore */
   }

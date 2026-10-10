@@ -19,6 +19,7 @@ function renderDock(overrides: Record<string, unknown> = {}) {
       showLingbotTools={false}
       width={512}
       height={768}
+      sizeStep={1}
       steps={20}
       txtCfg={7}
       limits={undefined}
@@ -73,6 +74,35 @@ describe("PromptDock chip editors", () => {
       "aria-valuenow",
       "768"
     );
+  });
+
+  it("steps width and height by the configured pixel step", async () => {
+    const user = userEvent.setup();
+    const { onUpdate } = renderDock({ sizeStep: 32 });
+
+    await user.click(screen.getByRole("button", { name: "512×768" }));
+
+    const width = await screen.findByRole("slider", { name: "宽度" });
+    width.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(onUpdate).toHaveBeenCalledWith("width", 544);
+
+    const height = screen.getByRole("slider", { name: "高度" });
+    height.focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(onUpdate).toHaveBeenCalledWith("height", 736);
+  });
+
+  it("keeps single-pixel stepping as the default", async () => {
+    const user = userEvent.setup();
+    const { onUpdate } = renderDock();
+
+    await user.click(screen.getByRole("button", { name: "512×768" }));
+    const width = await screen.findByRole("slider", { name: "宽度" });
+    width.focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(onUpdate).toHaveBeenCalledWith("width", 513);
   });
 
   it("deep-links from a popover into the full params sheet", async () => {

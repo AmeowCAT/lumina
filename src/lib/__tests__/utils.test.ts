@@ -14,6 +14,7 @@ import {
   legacyTilingDroppedOnPixels,
   LINGBOT_PROMPT_TEMPLATE,
   modelFileOptionLabel,
+  normalizeSizeStep,
   pixelTilingDroppedOnLatent,
   previewModesFromCapabilities,
   resolvePreviewMode,
@@ -23,6 +24,27 @@ import {
   validateLingbotPrompt,
 } from "../utils";
 import type { Capabilities, GenImages, GenParams } from "../../types";
+
+describe("normalizeSizeStep", () => {
+  it("defaults to 1 and keeps positive integers", () => {
+    expect(normalizeSizeStep(1)).toBe(1);
+    expect(normalizeSizeStep(32)).toBe(32);
+    // localStorage 里存的是字符串，恢复路径必须同样可用。
+    expect(normalizeSizeStep("32")).toBe(32);
+    expect(normalizeSizeStep(16.9)).toBe(16);
+  });
+
+  it("falls back to 1 for missing or unusable values", () => {
+    for (const value of [undefined, null, "", "abc", 0, -8, NaN, Infinity]) {
+      expect(normalizeSizeStep(value)).toBe(1);
+    }
+  });
+
+  it("clamps oversized steps instead of passing them through", () => {
+    expect(normalizeSizeStep(4096)).toBe(1024);
+    expect(normalizeSizeStep("1e9")).toBe(1024);
+  });
+});
 
 describe("preview capability gating", () => {
   it("requires support from the current generation mode", () => {

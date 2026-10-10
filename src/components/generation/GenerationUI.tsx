@@ -108,6 +108,8 @@ export function GenerationUI() {
   const setControlFrames = useStore((s) => s.setControlFrames);
   const seedRandom = useStore((s) => s.seedRandom);
   const setSeedRandom = useStore((s) => s.setSeedRandom);
+  const sizeStep = useStore((s) => s.sizeStep);
+  const setSizeStep = useStore((s) => s.setSizeStep);
   const clearProgress = useStore((s) => s.clearProgress);
   const toast = useStore((s) => s.toast);
   const settings = useStore((s) => s.settings);
@@ -1172,6 +1174,7 @@ export function GenerationUI() {
             showLingbotTools={family === "lingbot-video"}
             width={params.width}
             height={params.height}
+            sizeStep={sizeStep}
             steps={sp?.sample_steps ?? 20}
             txtCfg={sp?.guidance?.txt_cfg ?? 7}
             limits={caps?.limits}
@@ -1216,6 +1219,8 @@ export function GenerationUI() {
               params={params}
               seedRandom={seedRandom}
               sizeScale={sizeScale}
+              sizeStep={sizeStep}
+              onSizeStep={setSizeStep}
               showDistilled={DISTILL_FAMILIES.includes(family)}
               sheetTarget={sheetTarget}
               onUpdate={update}

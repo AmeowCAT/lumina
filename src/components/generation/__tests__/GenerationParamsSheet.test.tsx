@@ -38,6 +38,8 @@ function renderSheet(family: string) {
       }
       seedRandom={false}
       sizeScale={1}
+      sizeStep={1}
+      onSizeStep={vi.fn()}
       showDistilled={false}
       sheetTarget={null}
       onUpdate={onUpdate}

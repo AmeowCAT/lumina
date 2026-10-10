@@ -18,6 +18,8 @@ interface Props {
   showLingbotTools: boolean;
   width: number;
   height: number;
+  /** 宽 / 高滑杆的每跳像素数（界面偏好，默认 1）。 */
+  sizeStep: number;
   steps: number;
   txtCfg: number;
   limits: Limits | undefined;
@@ -81,6 +83,7 @@ export const PromptDock = memo(function PromptDock({
   showLingbotTools,
   width,
   height,
+  sizeStep,
   steps,
   txtCfg,
   limits,
@@ -146,7 +149,7 @@ export const PromptDock = memo(function PromptDock({
             onChange={(v) => onUpdate("width", v)}
             min={limits?.min_width || 64}
             max={limits?.max_width || 4096}
-            step={64}
+            step={sizeStep}
           />
           <Slider
             label="高度"
@@ -154,7 +157,7 @@ export const PromptDock = memo(function PromptDock({
             onChange={(v) => onUpdate("height", v)}
             min={limits?.min_height || 64}
             max={limits?.max_height || 4096}
-            step={64}
+            step={sizeStep}
           />
         </ChipEditor>
         <ChipEditor

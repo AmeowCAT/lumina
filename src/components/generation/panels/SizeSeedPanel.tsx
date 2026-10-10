@@ -10,6 +10,7 @@ import {
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { NumberInput } from "../../ui/NumberInput";
+import { MAX_SIZE_STEP } from "../../../lib/utils";
 import { IC } from "../../ui/Icons";
 import { cn } from "../../ui/cn";
 
@@ -36,6 +37,9 @@ interface Props {
   framePresets: number[] | undefined;
   framePresetsLabel: string;
   onUpdate: (path: string, v: unknown) => void;
+  /** 宽 / 高滑杆与数字输入的每跳像素数（界面偏好，默认 1）。 */
+  sizeStep: number;
+  onSizeStep: (v: number) => void;
   /** 尺寸缩放滑块（仅 vid_gen 渲染）：按倍率等比缩放宽高 */
   onSizeScale?: (scale: number) => void;
   /** 预设/手动设定尺寸后调用，把缩放基准锚定为新尺寸 */
@@ -63,6 +67,8 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
   framePresets,
   framePresetsLabel,
   onUpdate,
+  sizeStep,
+  onSizeStep,
   onSizeScale,
   onSizeBaseReset,
   onSeedEdit,
@@ -116,7 +122,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
           }}
           min={limits?.min_width || 64}
           max={limits?.max_width || 4096}
-          step={64}
+          step={sizeStep}
         />
       </div>
       <div className="form-row">
@@ -132,7 +138,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
           }}
           min={limits?.min_height || 64}
           max={limits?.max_height || 4096}
-          step={64}
+          step={sizeStep}
         />
         {spatialMultiple && sizeWillChange && (
           <div className="field-hint field-hint-flush mt-0.5">
@@ -140,6 +146,23 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             向上对齐）
           </div>
         )}
+      </div>
+      <div className="form-row">
+        <label className="form-label" htmlFor="generation-size-step">
+          像素步进
+          <span className="form-sublabel">
+            宽 / 高滑杆每跳的像素数，默认 1；填 32 则每次加减 32
+          </span>
+        </label>
+        <NumberInput
+          id="generation-size-step"
+          value={sizeStep}
+          onChange={onSizeStep}
+          min={1}
+          max={MAX_SIZE_STEP}
+          step={1}
+          className="w-20"
+        />
       </div>
       {mode === "vid_gen" && onSizeScale && (
         <Slider
