@@ -248,6 +248,9 @@ export const EXTERNAL_TOKENIZER_FAMILIES = [
 	// Ming-Image（上游 #2063）：Ling 词表不再内嵌，缺 tokenizer 时上游在
 	// 建文本编码器阶段直接抛错。
 	"ming-image",
+	// MOSS-Image（上游 #2148）：Qwen3.5 的词表与内嵌 Qwen 不同，必须用官方
+	// tokenizer.json，否则建文本编码器时直接抛错。
+	"moss-image",
 ] as const;
 
 /** 家族专属的 --tokenizer 说明（没有条目时用通用文案）。 */
@@ -258,6 +261,7 @@ export const EXTERNAL_TOKENIZER_HINT: Record<string, string> = {
 	"llada-image": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
 	"llada-image-turbo": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
 	"ming-image": "必须用 Ming-Image 0.1 Design 仓库 mllm/ 下的 Ling tokenizer.json。",
+	"moss-image": "必须用 MOSS-Image 官方 tokenizer.json（Qwen3.5 词表，与 Qwen3 不通用）。",
 };
 
 /** 该家族是否强制要求外部 tokenizer。 */
@@ -345,6 +349,12 @@ export const SIZE_SPATIAL_ALIGN: Record<string, number> = {
 	// Z-Image L2P：FakeVAE 缩放因子 1、DiT 下采样 16（上游 vae.hpp /
 	// diffusion_engine.cpp），宽高必须是 16 的倍数——1080 实际为 1088。
 	"zimage-l2p": 16,
+	// Iris-3B：同样是 FakeVAE（scale 1、下采样 16），上游 docs/iris.md 要求宽高
+	// 为 16 的倍数。
+	iris: 16,
+	// MOSS-Image：FLUX.2 VAE（scale 16）+ DiT 下采样 1，上游 docs/moss_image.md
+	// 要求宽高可被 16 整除。
+	"moss-image": 16,
 };
 
 /** 返回该家族下 `dim` 实际生效的宽/高；无对齐要求的家族原样返回。 */
@@ -393,7 +403,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 		hint: "完整 MoT 模型目录 / 分片索引，无需独立文本编码器或 VAE（上游 #1935）",
 		mode: "img",
 		fields: [F("model", "完整模型 / 分片索引", "model", "model")],
-		fixedArgs: { fa: true, rng: "cuda" },
+		fixedArgs: { "flash-attn": "on", rng: "cuda" },
 		generationHint: "SenseNova U1.5 当前仅支持 non-thinking 文生图，不支持参考图编辑、视觉理解或思考模式。推荐 2048×2048 / Euler 50 步 / CFG 4 / Flow Shift 3 / 空负向提示词；宽高按 32 对齐，低分辨率仅用于非训练尺寸冒烟测试。",
 		disabledFeatures: ["init_image", "mask_image", "control_image", "ip_adapter_image", "end_image", "ref_images", "control_frames", "vae_tiling", "hires"],
 		sizePresetsByMode: {
@@ -461,7 +471,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Mistral)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -484,7 +494,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -506,7 +516,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -515,6 +525,107 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				sample_steps: 20,
 				sample_method: "euler",
 				guidance: { txt_cfg: 4.0 },
+			},
+		},
+	},
+	// FLUX.3 Image Klein / Klein Base（上游 #2143）：DiT + FLUX.2 VAE + Qwen3-VL-4B。
+	// 两版默认值不同（蒸馏 16 步 / CFG 1.0，基础 20 步 / CFG 3.5），共用同一套
+	// 组件但权重不可混用，所以拆成两族；参考图编辑走 Flux.2 的同一路径。
+	"flux3-klein": {
+		name: "Flux.3 Image Klein",
+		hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（蒸馏版：16 步 / CFG 1.0）",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("vae", "VAE (FLUX.2)", "vae", "vae"),
+			F("llm", "LLM (Qwen3-VL-4B)", "llm", "llm"),
+			F("llm_vision", "LLM Vision (编辑用，可选)", "llm_vision", "llm_vision"),
+		],
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
+		generationHint:
+			"蒸馏版用 16 步 / CFG 1.0，调高 CFG 会明显劣化。参考图编辑要另配视觉塔，最多 10 张参考图；宽高不强制对齐，但用 16 的倍数更稳。默认离散调度器的时间偏移可用 --flow-shift 覆盖。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 16,
+				sample_method: "euler",
+				guidance: { txt_cfg: 1.0 },
+			},
+		},
+	},
+	"flux3-klein-base": {
+		name: "Flux.3 Image Klein Base",
+		hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B — 基础模型（CFG 3.5 / 20 步）",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("vae", "VAE (FLUX.2)", "vae", "vae"),
+			F("llm", "LLM (Qwen3-VL-4B)", "llm", "llm"),
+			F("llm_vision", "LLM Vision (编辑用，可选)", "llm_vision", "llm_vision"),
+		],
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
+		generationHint:
+			"基础模型用 20 步 / CFG 3.5；与蒸馏版的权重不能混用。参考图编辑要另配视觉塔，最多 10 张参考图。默认离散调度器的时间偏移可用 --flow-shift 覆盖。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 20,
+				sample_method: "euler",
+				guidance: { txt_cfg: 3.5 },
+			},
+		},
+	},
+	// Iris-3B（上游 #2117）：像素空间 DiT（FakeVAE：scale 1、下采样 16），
+	// Qwen3-VL-4B 文本编码器，不需要 VAE；宽高按 16 对齐。
+	iris: {
+		name: "Iris-3B",
+		hint: "像素空间 DiT + Qwen3-VL-4B，无需 VAE（宽高需 16 对齐）",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("llm", "LLM (Qwen3-VL-4B)", "llm", "llm"),
+			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+		],
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
+		generationHint:
+			"不要指定 VAE。宽高需为 16 的倍数；正向与负向提示词共用同一模板，上限 300 token（含模板后缀），超长部分会被截断而不是报错。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 20,
+				sample_method: "euler",
+				guidance: { txt_cfg: 3.0 },
+			},
+		},
+	},
+	// MOSS-Image Base / SFT（上游 #2148）：5B DiT + FLUX.2 VAE + Qwen3.5-9B。
+	// Qwen3.5 的词表与内嵌 Qwen 不同，必须另配外部 tokenizer.json。
+	"moss-image": {
+		name: "MOSS-Image (Base / SFT)",
+		hint: "Diffusion + FLUX.2 VAE + Qwen3.5-9B；需外部 tokenizer（宽高需 16 对齐）",
+		mode: "img",
+		fields: [
+			F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+			F("vae", "VAE (FLUX.2)", "vae", "vae"),
+			F("llm", "LLM (Qwen3.5-9B)", "llm", "llm"),
+		],
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
+		generationHint:
+			"宽高需为 16 的倍数；必须为该模型的 Qwen3.5 文本编码器单独指定 tokenizer.json，缺了会在建文本编码器时直接报错。Base 与 SFT 共用同一套组件，默认 CFG 3.0，时间偏移可用 --flow-shift 覆盖。",
+		genDefaults: {
+			seed: -1,
+			width: 1024,
+			height: 1024,
+			sample_params: {
+				sample_steps: 20,
+				sample_method: "euler",
+				guidance: { txt_cfg: 3.0 },
 			},
 		},
 	},
@@ -646,7 +757,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("vae", "匹配 VAE", "vae", "vae"),
 			F("llm", "Gemma 2 2B", "llm", "llm"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		requiredInputsByMode: { img_gen: ["ref_images"] },
 		genDefaults: {
 			seed: -1,
@@ -670,7 +781,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("vae", "VAE", "vae", "vae"),
 			F("t5xxl", "UMT5-XXL", "t5xxl", "t5xxl"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 832,
@@ -695,7 +806,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("t5xxl", "UMT5-XXL", "t5xxl", "t5xxl"),
 			F("clip_vision", "CLIP Vision", "clip_vision", "clip_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 832,
@@ -719,7 +830,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("vae", "VAE", "vae", "vae"),
 			F("t5xxl", "UMT5-XXL", "t5xxl", "t5xxl"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 832,
@@ -754,7 +865,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("vae", "VAE", "vae", "vae"),
 			F("t5xxl", "UMT5-XXL", "t5xxl", "t5xxl"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 832,
@@ -788,7 +899,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL 4B)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 832,
@@ -812,7 +923,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "Qwen2.5-VL 7B", "llm", "llm"),
 			F("t5xxl", "ByT5 Small GlyphXL", "t5xxl", "t5xxl"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1280,
@@ -848,7 +959,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
 				F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 			],
-			fixedArgs: { "diffusion-fa": true },
+			fixedArgs: { "flash-attn": "off,diffusion=on" },
 			genDefaults: {
 				seed: -1,
 				width: 864,
@@ -903,7 +1014,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
 				F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 			],
-			fixedArgs: { "diffusion-fa": true },
+			fixedArgs: { "flash-attn": "off,diffusion=on" },
 		},
 		zimage: {
 		name: "Z-Image",
@@ -915,7 +1026,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -937,7 +1048,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -964,7 +1075,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		// 上游 runner 对非空参考潜变量直接报错返回（z_image_l2p.hpp），而
 		// capabilities 的 ref_images 是协议级通用值、不会为它自动收窄，
 		// 因此必须在这里关掉，避免旧任务/别的模型残留的参考图被提交。
@@ -992,7 +1103,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen2.5-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1015,7 +1126,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("vae", "VAE", "vae", "vae"),
 			F("llm", "LLM (Qwen2.5-VL)", "llm", "llm"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1040,7 +1151,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen2.5-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1067,7 +1178,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL-8B)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (编辑用，可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		generationHint:
 			"宽高需为 32 的倍数；必须使用该模型自带的 VAE。做图片编辑要另配视觉塔；要透明背景就在提示词里写明输出 RGBA，且只有 PNG / WebP 会保留 alpha。分辨率相关的 flow schedule（上游 #2048）由内核按尺寸自动选择，手动指定调度器或自定义 sigma 会覆盖它。文本前缀缓存默认 auto：想省显存可在附加启动参数里写 --model-args qwen_image_2_1_prefix_cache_type=q8_0（也支持 f32 / f16 等，含权重量化以外的大小写敏感类型名）；启用 SageAttention 或自定义 attention scale 时 auto 会保留 FP32，缓存占用偏高不等于配置失效。",
 		genDefaults: {
@@ -1099,7 +1210,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				"embeddings",
 			),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		generationHint:
 			"基础模型用 50 步 / CFG 5。做参考图编辑需要带图元编码器的连接器文件；编辑时参考图与目标同序列计算，显存占用约为文生图的两倍。启动前必须选好 tokenizer。",
 		genDefaults: {
@@ -1129,7 +1240,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				"embeddings",
 			),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		generationHint:
 			"Turbo 用 4 步 / CFG 1.0，调高 CFG 会明显劣化。它与基础模型的权重不能混用，混搭只会让出图变差而不会报错。512 与 1024 都能正常编辑。",
 		genDefaults: {
@@ -1156,7 +1267,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1178,7 +1289,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1200,7 +1311,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1222,7 +1333,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1287,7 +1398,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 			F("embeddings", "嵌入连接器", "embeddings-connectors", "embeddings"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1280,
@@ -1339,7 +1450,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 				"LTX-2.5 的文本投影已内置于 Gemma 4，无需此文件；它是 LTX-2.3 的必需组件",
 			),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1280,
@@ -1370,7 +1481,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1409,7 +1520,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Ministral)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1432,7 +1543,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Ministral)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1454,7 +1565,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1476,7 +1587,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL 4B)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (编辑可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1499,7 +1610,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL 4B)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (编辑可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1521,7 +1632,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("vae", "VAE (Flux2)", "vae", "vae"),
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1542,7 +1653,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("vae", "VAE (Flux2)", "vae", "vae"),
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1564,7 +1675,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (GPT-OSS)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1586,7 +1697,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (GPT-OSS)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1608,7 +1719,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1631,7 +1742,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (mmproj)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1654,7 +1765,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen3-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1677,7 +1788,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Qwen2.5-VL)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1700,7 +1811,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "LLM (Ovis)", "llm", "llm"),
 			F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		genDefaults: {
 			seed: -1,
 			width: 1024,
@@ -1806,7 +1917,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
 			F("llm", "文本编码器 (Ling-mini-2.0 BF16)", "llm", "llm"),
 			F("vae", "VAE (Ming)", "vae", "vae"),
 		],
-		fixedArgs: { "diffusion-fa": true },
+		fixedArgs: { "flash-attn": "off,diffusion=on" },
 		generationHint:
 			"当前仅支持文生图：参考图会被内核拒绝，负向提示词也不参与编码（上游用全零 uncond）。文本编码器必须用配套的 Ling-mini-2.0 BF16 完整权重（含 connector 与条件投影），INT8 / W4A8 版本会被上游拒绝；VAE 必须用 Ming 专用权重，不能换用 Wan 的。支持 RGBA 输出，另存为 PNG / WebP 才保留 alpha。宽高按 16 对齐，推荐 1024×1024 / 12 步 / Euler / CFG 1；flow shift 由分辨率自动决定，不要手工叠加其他家族的固定值。",
 		// 协议层的图片 features 是通用的（对所有模型都报 true），而 Ming 的
@@ -1863,6 +1974,9 @@ const FAKE_VAE_FAMILIES = [
 	"minit2i",
 	"sensenova-u1",
 	"zimage-l2p",
+	// Iris-3B 直接在像素空间生成（scale 1、3 通道 latent），上游 docs/iris.md
+	// 明确要求不要传 --vae。
+	"iris",
 ];
 
 const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
@@ -1901,6 +2015,10 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
 			"flux2",
 			"flux2-klein",
 			"flux2-klein-base",
+			// FLUX.3 两族与 MOSS-Image 复用 Flux.2 VAE（上游 #2143 / #2148）。
+			"flux3-klein",
+			"flux3-klein-base",
+			"moss-image",
 			// LLaDA-Image 复用 Flux.2 的 VAE（上游 docs/llada_image.md）。
 			"llada-image",
 			"llada-image-turbo",
@@ -1930,6 +2048,12 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
 	{
 		hint: "taeh3（MiniMax-H3 视频 TAE，24ch latent；上游 #1874 起支持）",
 		families: ["minimax-h3-fl2va", "minimax-h3-ref2va"],
+	},
+	{
+		// Qwen Image 2.1 用专门的 TAEQI2.1（64ch latent、16x 空间缩放、支持
+		// RGBA），旧 Qwen Image 的 taew2_1 不能拿来做替代。
+		hint: "taeqi2_1（Qwen Image 2.1 专用 TAE，64ch latent）",
+		families: ["qwen-image-2.1"],
 	},
 ];
 

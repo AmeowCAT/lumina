@@ -659,7 +659,7 @@ describe("Dashboard onboarding validation", () => {
           vae: "/models/hunyuanvideo15_vae.safetensors",
           llm: "/models/qwen_2.5_vl_7b.safetensors",
           t5xxl: "/models/byt5_small_glyphxl_fp16.safetensors",
-          "diffusion-fa": true,
+          "flash-attn": "off,diffusion=on",
         }),
         1234
       )

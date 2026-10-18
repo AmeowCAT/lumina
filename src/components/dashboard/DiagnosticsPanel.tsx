@@ -48,7 +48,7 @@ export function DiagnosticsPanel() {
       ))}
       <div className="field-hint field-hint-flush mt-1">
         0 保留模型内置缩放，1 关闭相应缩放；override 须为有限正数。
-        attn-scale 仅在启用 --fa / --diffusion-fa 且后端支持 Flash Attention 时生效。
+        attn-scale 仅在 Flash Attention 被选中（--flash-attn）且后端支持时生效。
         这些值不是 CFG，也不能填写到“额外采样参数”。
       </div>
       <div className="flex flex-wrap gap-2 mt-3">

@@ -58,9 +58,33 @@ impl CliCapabilities {
         }
     }
 
-    fn supports(&self, name: &str) -> Option<bool> {
+    /// `Some(_)` only when the executable's help was parsed; `None` means the
+    /// capability is unknown, which must never be treated as "unsupported".
+    pub fn supports(&self, name: &str) -> Option<bool> {
         self.verified
             .then(|| self.options.iter().any(|s| s == name))
+    }
+}
+
+/// Test-only capability stub: the probe needs a real executable, but the
+/// version-adaptive launch path only reads the parsed option names.
+#[cfg(test)]
+impl CliCapabilities {
+    pub(crate) fn for_test(options: &[&str]) -> Self {
+        Self {
+            executable: String::new(),
+            version: None,
+            verified: true,
+            options: options.iter().map(|name| (*name).to_string()).collect(),
+            auto_fit: AutoFitSyntax::OnOff,
+            memory_mode: MemoryMode::Automatic,
+            warnings: Vec::new(),
+            value_options: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn unknown_for_test() -> Self {
+        Self::unknown()
     }
 }
 
@@ -170,6 +194,11 @@ fn parse_help(help: &str) -> CliCapabilities {
         // 以 `--` 开头的值误判成开关。
         "--tokenizer",
         "--conditioning-cache-size",
+        // 上游 #2132/#2134：注意力与卷积的自动选择模式串（on/off/auto 或模块赋值），
+        // --batched-cfg 收 on/off。都按取值选项处理，避免把注入的取值当成开关。
+        "--flash-attn",
+        "--conv-direct",
+        "--batched-cfg",
     ] {
         value_options.insert(name.into());
     }
@@ -356,13 +385,65 @@ pub fn parse_scale(raw: &str) -> Option<f32> {
     Some(value)
 }
 
+/// Validate a `--flash-attn` / `--conv-direct` assignment string: `on|off|auto`
+/// plus optional `module=on|off|auto` segments. Module names are left to the
+/// kernel (it accepts backend-style aliases); only the mode token is checked
+/// here so typos like `--flash-attn yes` are caught before launch.
+fn validate_mode_spec(name: &str, spec: &str) -> Result<()> {
+    if spec.trim().is_empty() {
+        bail!("{} 需要 on、off、auto 或模块赋值。", name);
+    }
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            bail!("{} 中存在空的赋值段：{}。", name, spec);
+        }
+        let mode = part.rsplit_once('=').map_or(part, |(_, mode)| mode.trim());
+        if !matches!(mode.to_ascii_lowercase().as_str(), "on" | "off" | "auto") {
+            bail!("{} 的取值必须为 on、off 或 auto：{}。", name, part);
+        }
+    }
+    Ok(())
+}
+
+/// True when a `--flash-attn` assignment can enable flash attention for the
+/// diffusion module (explicit `diffusion=` wins over the default segment).
+fn flash_attn_selects_diffusion(spec: &str) -> bool {
+    let mut default_mode = "auto";
+    let mut diffusion_mode: Option<&str> = None;
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match part.split_once('=') {
+            Some((module, mode)) => {
+                let module = module.trim().to_ascii_lowercase();
+                let mode = mode.trim();
+                if matches!(module.as_str(), "all" | "default" | "*") {
+                    default_mode = mode;
+                } else if matches!(module.as_str(), "diffusion" | "model" | "unet" | "dit") {
+                    diffusion_mode = Some(mode);
+                }
+            }
+            None => default_mode = part,
+        }
+    }
+    !diffusion_mode
+        .unwrap_or(default_mode)
+        .eq_ignore_ascii_case("off")
+}
+
 /// Validate the *effective argv*, including extra_args after --key=value has
 /// been normalized by server::build_args. Do not silently drop or migrate flags.
 pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<String>> {
     let mut warnings = Vec::new();
     let mut index = 0;
     let mut attention_override = false;
-    let mut flash_attention = false;
+    // 上游 #2132：--flash-attn 取代 --fa / --diffusion-fa（后两者仍被接受并写同一
+    // 模式串，最后一次出现生效）。这里只记录最终模式串，遍历结束后再判定
+    // diffusion 模块是否可能启用 Flash Attention。
+    let mut flash_attn_spec: Option<String> = None;
     // 上游 #1967 起只有 --params-backend 会关闭 auto-fit；显式 --backend 改为
     // 被 auto-fit 保留、用于约束计算设备，因此两者必须分开判定。
     let mut params_placement = false;
@@ -385,7 +466,11 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
             params_placement = true;
         }
         if matches!(name, "--fa" | "--diffusion-fa") {
-            flash_attention = true;
+            flash_attn_spec = Some(if name == "--fa" {
+                "on".into()
+            } else {
+                "off,diffusion=on".into()
+            });
         }
         match name {
             "--stream-layers" if caps.supports(name) == Some(false) => {
@@ -438,6 +523,29 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     bail!("--conditioning-cache-size 必须是非负整数（0 表示关闭条件缓存）。");
                 }
             }
+            "--flash-attn" | "--conv-direct" | "--batched-cfg" => {
+                if caps.supports(name) == Some(false) {
+                    // 结构化的 flash-attn 已在 server::start 里按能力回退到旧参数，
+                    // 走到这里说明它是用户写在附加启动参数里的。
+                    let hint = if name == "--flash-attn" {
+                        "该内核请改用 --fa 或 --diffusion-fa"
+                    } else {
+                        "请删除该参数"
+                    };
+                    bail!("所选 sd-server 不支持 {}；{}。", name, hint);
+                }
+                let value = value.ok_or_else(|| anyhow!("{} 缺少取值。", name))?;
+                if name == "--batched-cfg" {
+                    if !matches!(value, "on" | "off") {
+                        bail!("--batched-cfg 必须为 on 或 off。");
+                    }
+                } else {
+                    validate_mode_spec(name, value)?;
+                    if name == "--flash-attn" {
+                        flash_attn_spec = Some(value.to_string());
+                    }
+                }
+            }
             _ => {}
         }
         // Typed value options must consume their value even if it starts with
@@ -461,6 +569,9 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     | "--attn-scale"
                     | "--tokenizer"
                     | "--conditioning-cache-size"
+                    | "--flash-attn"
+                    | "--conv-direct"
+                    | "--batched-cfg"
             )
             || name == "--auto-fit"
                 && (caps.auto_fit == AutoFitSyntax::OnOff
@@ -468,9 +579,15 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                         && matches!(value, Some("on" | "off")));
         index += if takes_value && value.is_some() { 2 } else { 1 };
     }
-    if attention_override && !flash_attention {
+    // 新内核（声明了 --flash-attn）不写该参数时默认 auto，仍可能启用 Flash
+    // Attention；旧内核不写就是关。能力未知时不猜，避免假警报。
+    let flash_attention_possible = match flash_attn_spec.as_deref() {
+        Some(spec) => flash_attn_selects_diffusion(spec),
+        None => caps.supports("--flash-attn") != Some(false),
+    };
+    if attention_override && !flash_attention_possible {
         warnings.push(
-            "attn-scale 仅在启用 --fa / --diffusion-fa 且后端支持 Flash Attention 时生效。".into(),
+            "attn-scale 仅在 Flash Attention 被选中（--flash-attn，或旧版 --fa / --diffusion-fa）且后端支持时生效。".into(),
         );
     }
     if auto_fit_on && params_placement {
@@ -497,7 +614,7 @@ mod tests {
         parse_help(&help("  --stream-layers       stream weights\n  --auto-fit            pick placements\n  -v, --verbose         print extra info\n"))
     }
     fn new() -> CliCapabilities {
-        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --conditioning-cache-size <int>   conditioning cache capacity\n"))
+        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --conditioning-cache-size <int>   conditioning cache capacity\n  --flash-attn          on|off|auto or module assignments (default: auto)\n  --conv-direct         on|off|auto or diffusion/vae/controlnet assignments\n  --batched-cfg         on|off (default: on)\n"))
     }
     fn argv(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| (*s).into()).collect()
@@ -604,10 +721,13 @@ mod tests {
     }
     #[test]
     fn explains_attention_and_auto_fit_conflicts() {
+        // --flash-attn off 才让 attn-scale 的提示成立（新内核默认 auto）。
         let warnings = validate_args(
             &argv(&[
                 "--attn-scale",
                 "0.5",
+                "--flash-attn",
+                "off",
                 "--auto-fit",
                 "on",
                 "--offload-to-cpu",
@@ -704,5 +824,102 @@ mod tests {
         // help 不可判定（Unknown）时按"不静默丢弃"处理：透传不报错。
         let unknown = CliCapabilities::unknown();
         assert!(validate_args(&argv(&["--tokenizer", "/x.json"]), &unknown).is_ok());
+    }
+
+    /// 上游 #2132：--flash-attn 取代 --fa / --diffusion-fa。旧的裸开关仍被接受，
+    /// 新的模式串只校验取值；老内核上的 --flash-attn 必须报"不支持"而不是让
+    /// sd-server 启动即退。
+    #[test]
+    fn validates_flash_attention_modes_and_legacy_aliases() {
+        let legit = [
+            vec!["--flash-attn", "on"],
+            vec!["--flash-attn", "off"],
+            vec!["--flash-attn", "auto"],
+            vec!["--flash-attn", "off,diffusion=on"],
+            vec!["--flash-attn", "auto,te=off,vae=on"],
+            vec!["--flash-attn", "all=on,default=off"],
+            vec!["--fa"],
+            vec!["--diffusion-fa"],
+        ];
+        for args in &legit {
+            assert!(validate_args(&argv(args), &new()).is_ok(), "{args:?}");
+        }
+        for bad in ["yes", "", "on,", "diffusion", "diffusion=maybe"] {
+            let args = ["--flash-attn", bad];
+            let err = validate_args(&argv(&args), &new()).unwrap_err();
+            assert!(
+                err.to_string().contains("on、off") || err.to_string().contains("空"),
+                "{bad:?}：{err}"
+            );
+        }
+        // 老内核：结构化参数由 server::start 回退，这里报出用户写进附加参数的场景。
+        let old_caps = parse_help(&help("  --stream-layers       stream weights\n"));
+        let err = validate_args(&argv(&["--flash-attn", "on"]), &old_caps).unwrap_err();
+        assert!(err.to_string().contains("不支持"), "{err}");
+        assert!(err.to_string().contains("--fa"), "{err}");
+        // --conv-direct / --batched-cfg 同样只接受合法取值。
+        assert!(validate_args(&argv(&["--conv-direct", "auto,vae=off"]), &new()).is_ok());
+        assert!(validate_args(&argv(&["--conv-direct", "vae"]), &new()).is_err());
+        assert!(validate_args(&argv(&["--batched-cfg", "on"]), &new()).is_ok());
+        assert!(validate_args(&argv(&["--batched-cfg", "auto"]), &new()).is_err());
+    }
+
+    /// attn-scale 只在 diffusion 模块**确定**关掉 Flash Attention 时才有意义：
+    /// 新内核不写 --flash-attn 即 auto（可能启用），不能报警；旧内核不写就是关。
+    #[test]
+    fn attn_scale_warning_follows_effective_flash_attention_mode() {
+        let warns_with = |caps: &CliCapabilities, args: &[&str]| {
+            validate_args(&argv(args), caps)
+                .unwrap()
+                .iter()
+                .any(|w| w.contains("attn-scale"))
+        };
+        let new_caps = new();
+        // 新内核默认 auto：不写 --flash-attn 时不再误报"不生效"。
+        assert!(!warns_with(&new_caps, &["--attn-scale", "0.5"]));
+        assert!(!warns_with(
+            &new_caps,
+            &["--attn-scale", "0.5", "--flash-attn", "on"]
+        ));
+        assert!(!warns_with(
+            &new_caps,
+            &["--attn-scale", "0.5", "--flash-attn", "auto"]
+        ));
+        assert!(!warns_with(
+            &new_caps,
+            &["--attn-scale", "0.5", "--flash-attn", "off,diffusion=on"]
+        ));
+        assert!(warns_with(
+            &new_caps,
+            &["--attn-scale", "0.5", "--flash-attn", "off"]
+        ));
+        assert!(warns_with(
+            &new_caps,
+            &["--attn-scale", "0.5", "--flash-attn", "off,diffusion=off"]
+        ));
+        // 上游语义：多个写法写同一模式串，最后一次生效。
+        assert!(warns_with(
+            &new_caps,
+            &[
+                "--attn-scale",
+                "0.5",
+                "--flash-attn",
+                "off,diffusion=on",
+                "--flash-attn",
+                "off",
+            ]
+        ));
+        // 旧内核（声明了 --attn-scale、没有 --flash-attn）不写开关时默认关。
+        let old_caps = parse_help(&help(
+            "  --stream-layers       stream weights\n  --attn-scale          scale\n",
+        ));
+        assert!(warns_with(&old_caps, &["--attn-scale", "0.5"]));
+        assert!(!warns_with(&old_caps, &["--attn-scale", "0.5", "--fa"]));
+        assert!(!warns_with(
+            &old_caps,
+            &["--attn-scale", "0.5", "--diffusion-fa"]
+        ));
+        // scale 为 0 表示保留模型默认，不产生提示。
+        assert!(!warns_with(&new_caps, &["--attn-scale", "0"]));
     }
 }

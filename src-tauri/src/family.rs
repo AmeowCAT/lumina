@@ -32,6 +32,32 @@ fn is_z_image_l2p(path: &str) -> bool {
         })
 }
 
+/// Iris-3B（上游 #2117）：像素空间 DiT，文件名只有 `iris-3b.safetensors` 这类
+/// 线索（官方仓库根目录的 `model.safetensors` 没有线索）。按**文件名 token**
+/// 判定，避免把用户目录名里的 iris（如用户名）当成模型。
+fn is_iris(path: &str) -> bool {
+    let mut parts = path.rsplit(['/', '\\']).filter(|part| !part.is_empty());
+    let name = parts.next().unwrap_or("");
+    if has_any(name, &["iris-3b", "iris_3b", "iris3b"]) {
+        return true;
+    }
+    if name
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| token == "iris")
+    {
+        return true;
+    }
+    // 官方发布的是仓库根目录的 model.safetensors，线索只在目录名里；此时只认
+    // 确切的目录段，避免把用户目录名（例如用户名 Iris）当成模型。
+    let opaque = matches!(
+        name,
+        "model.safetensors"
+            | "model.safetensors.index.json"
+            | "diffusion_pytorch_model.safetensors"
+    );
+    opaque && parts.any(|part| matches!(part, "iris" | "iris-3b" | "iris_3b" | "iris3b"))
+}
+
 /// Map a model file path to one of the supported family ids.
 pub fn detect_family(path: &str) -> &'static str {
     let t = path.to_lowercase();
@@ -105,6 +131,26 @@ pub fn detect_family(path: &str) -> &'static str {
     }
     if has_any(&t, &["kontext"]) {
         return "kontext";
+    }
+    // FLUX.3 Image Klein / Klein Base（上游 #2143）：DiT + FLUX.2 VAE + Qwen3-VL-4B。
+    // 必须排在通用 flux 与 flux2 规则之前，否则 "flux-3-image-klein-base" 会被
+    // flux2-klein-base 的子串规则抢走。Klein 是蒸馏版（16 步 / CFG 1），Base 是
+    // 基础版（20 步 / CFG 3.5），默认值不同所以拆成两族。
+    if has_any(&t, &["flux-3", "flux3", "flux.3", "flux_3"]) {
+        if has_any(&t, &["base"]) {
+            return "flux3-klein-base";
+        }
+        return "flux3-klein";
+    }
+    // Iris-3B（上游 #2117）：像素空间 DiT（scale 1、下采样 16）+ Qwen3-VL-4B，
+    // 不需要 VAE，宽高需为 16 的倍数（上游 docs/iris.md）。
+    if is_iris(&t) {
+        return "iris";
+    }
+    // MOSS-Image Base / SFT（上游 #2148）：5B DiT + FLUX.2 VAE + Qwen3.5-9B，
+    // 必须另配外部 tokenizer.json（Qwen3.5 与内嵌 Qwen 词表不同）。
+    if has_any(&t, &["moss-image", "moss_image", "mossimage"]) {
+        return "moss-image";
     }
     if has_any(
         &t,
@@ -365,6 +411,12 @@ fn is_llm_encoder(test: &str, name_test: &str) -> bool {
             // MiniMax-H3 文本编码器（qwen3vl_32b_minimax_h3）：不带连字符/下划线，
             // 上面的 qwen3- / qwen3_ 都匹配不到。
             "qwen3vl",
+            // MOSS-Image 的 Qwen3.5-9B（上游 #2148）：写法是 qwen3.5-9b，既不含
+            // qwen3- 也不含 qwen3_。
+            "qwen3.5",
+            "qwen3_5",
+            "qwen3-5",
+            "qwen35",
         ],
     )
 }
@@ -380,6 +432,18 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "flux-2-",
             "flux.1-",
             "flux.2-",
+            // FLUX.3 Image Klein（上游 #2143）。
+            "flux-3",
+            "flux_3",
+            "flux.3",
+            "flux3",
+            // Iris-3B / MOSS-Image（上游 #2117 / #2148）。
+            "iris-3b",
+            "iris_3b",
+            "iris3b",
+            "moss-image",
+            "moss_image",
+            "mossimage",
             "kontext",
             "sd_xl",
             "sdxl",
@@ -498,6 +562,8 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
             "taehv",
             "taew2",
             "taeh3",
+            // TAEQI2.1：Qwen Image 2.1 的 64ch / 16x TAE（上游 #2123，docs/taesd.md）。
+            "taeqi",
             "taeltx",
             "tiny_autoencoder",
             "tiny-autoencoder",
@@ -1085,6 +1151,92 @@ mod tests {
                 5000.0
             ),
             "llm"
+        );
+    }
+
+    /// 上游 #2143 / #2117 / #2148：FLUX.3 Image Klein、Iris-3B、MOSS-Image。
+    /// 三者的名字都落在既有规则附近（flux / flux2-klein / iris token），
+    /// 检测顺序写错就会被吞成旧家族。
+    #[test]
+    fn detects_flux3_iris_and_moss_image() {
+        for path in [
+            "flux-3-image-klein.safetensors",
+            "/models/diffusion_models/flux-3-image-klein-Q4_K.gguf",
+            "flux3_image_klein.safetensors",
+            "D:\\models\\flux-3-image-klein-base-Q8_0.gguf",
+        ] {
+            let expected = if path.to_lowercase().contains("base") {
+                "flux3-klein-base"
+            } else {
+                "flux3-klein"
+            };
+            assert_eq!(detect_family(path), expected, "{path}");
+        }
+        // FLUX.2 两族不受影响（flux-3 规则排在它们之前，但没有误吞）。
+        assert_eq!(
+            detect_family("flux-2-klein-base-4b.safetensors"),
+            "flux2-klein-base"
+        );
+        assert_eq!(detect_family("flux-2-klein-4b.safetensors"), "flux2-klein");
+        assert_eq!(detect_family("flux2_dev_fp16.safetensors"), "flux2");
+
+        assert_eq!(detect_family("iris-3b.safetensors"), "iris");
+        assert_eq!(detect_family("Iris-3B-Q8_0.gguf"), "iris");
+        // 官方入口是根目录 model.safetensors，只能靠目录段识别。
+        assert_eq!(
+            detect_family("/models/diffusion_models/iris-3b/model.safetensors"),
+            "iris"
+        );
+        // 只是路径里出现 iris 的普通模型不能被误判（例如用户名/模型集目录）。
+        assert_eq!(
+            detect_family("C:\\Users\\Iris\\models\\z_image_turbo.safetensors"),
+            "zimage-turbo"
+        );
+
+        assert_eq!(
+            detect_family("moss_image_base_int8_convrot_attn.safetensors"),
+            "moss-image"
+        );
+        assert_eq!(
+            detect_family("D:\\models\\MOSS-Image\\moss_image_sft_int8_convrot_attn.safetensors"),
+            "moss-image"
+        );
+    }
+
+    #[test]
+    fn classifies_flux3_iris_moss_components() {
+        // 三个家族的 DiT 都必须归到 model，否则模型列表里根本看不到。
+        for name in [
+            "flux-3-image-klein.safetensors",
+            "iris-3b.safetensors",
+            "moss_image_base_int8_convrot_attn.safetensors",
+        ] {
+            let stem = name.trim_end_matches(".safetensors");
+            assert_eq!(
+                classify_file(name, stem, "diffusion_models", 5000.0),
+                "model",
+                "{name}"
+            );
+        }
+        // MOSS-Image 的 Qwen3.5-9B 文本编码器：qwen3.5 既不含 qwen3- 也不含
+        // qwen3_，必须单独识别成 llm。
+        assert_eq!(
+            classify_file(
+                "Qwen3.5-9B-Q4_K_M.gguf",
+                "Qwen3.5-9B-Q4_K_M",
+                "text_encoders",
+                6000.0
+            ),
+            "llm"
+        );
+        // FLUX3 / MOSS 都复用 Flux.2 VAE；Qwen Image 2.1 新增 TAEQI2.1。
+        assert_eq!(
+            classify_file("flux2_ae.safetensors", "flux2_ae", "vae", 320.0),
+            "vae"
+        );
+        assert_eq!(
+            classify_file("taeqi2_1.safetensors", "taeqi2_1", "vae", 25.0),
+            "taesd"
         );
     }
 

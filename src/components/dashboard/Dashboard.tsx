@@ -1198,7 +1198,7 @@ export function Dashboard() {
 							onChange={(v) => setSettings((s) => ({ ...s, sageAttn: v }))}
 						/>
 						<div className="field-hint field-hint-flush mt-0.5">
-							仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与 --fa / --diffusion-fa 同时存在时，Sage 在 diffusion 内优先。会改变数值结果，建议固定种子对比。
+							仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与 --flash-attn 同时存在时，Sage 在 diffusion 内优先；把 diffusion 的注意力显式设为 off 会同时关掉 Sage 的 Flash Attention 回退。会改变数值结果，建议固定种子对比。
 						</div>
 					</div>
 					<div className="form-row mt-2">

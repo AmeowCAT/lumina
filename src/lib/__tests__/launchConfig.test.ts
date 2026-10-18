@@ -262,7 +262,7 @@ describe("launch configuration", () => {
         vae: "/models/ae.sft",
         llm: "/models/gemma_2_2b.safetensors",
         tokenizer: "/models/tokenizers/tokenizer_gemma2.json",
-        "diffusion-fa": true,
+        "flash-attn": "off,diffusion=on",
         "vae-format": "flux",
       })
     );
@@ -366,8 +366,8 @@ describe("launch configuration", () => {
 
   // 上游对除 FakeVAE 家族外的所有版本都会构建 TAE（stable-diffusion.cpp
   // create_tae），MiniMax-H3 自 #1874（taeh3）起也支持。
-  // Z-Image L2P（上游 #2075）同样走 FakeVAE：它的 latent 就是 RGB 像素，
-  // TAE 分支被 FakeVAE 抢先，给 TAE 只会白读权重。
+  // Z-Image L2P（上游 #2075）与 Iris-3B（上游 #2117）同样走 FakeVAE：latent
+  // 就是 RGB 像素，TAE 分支被 FakeVAE 抢先，给 TAE 只会白读权重。
   it("offers an optional TAE component for every non-FakeVAE family", () => {
     const fakeVae = [
       "chroma-radiance",
@@ -375,6 +375,7 @@ describe("launch configuration", () => {
       "minit2i",
       "sensenova-u1",
       "zimage-l2p",
+      "iris",
     ];
     for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
       const tae = config.fields.filter((field) => field.arg === "taesd");
@@ -411,6 +412,13 @@ describe("launch configuration", () => {
     expect(hints.get("ltx25")).toMatch(/LTX-AV/);
     expect(hints.get("minimax-h3-fl2va")).toMatch(/taeh3/);
     expect(hints.get("minimax-h3-ref2va")).toMatch(/taeh3/);
+    // Qwen Image 2.1 用专门的 TAEQI2.1，旧 Qwen Image 的 taew2_1 不适用。
+    expect(hints.get("qwen-image-2.1")).toMatch(/taeqi2_1/);
+    expect(hints.get("qwen-image-2.1")).not.toMatch(/taew2_1/);
+    // FLUX.3 与 MOSS-Image 复用 Flux.2 VAE。
+    expect(hints.get("flux3-klein")).toMatch(/Flux\.2/);
+    expect(hints.get("flux3-klein-base")).toMatch(/Flux\.2/);
+    expect(hints.get("moss-image")).toMatch(/Flux\.2/);
     // PiD 的 latent 随 --vae-format 变，不能给单一权重名。
     expect(hints.get("pid")).toMatch(/--vae-format/);
     // 未分组的家族拿到通用文案，而不是某个具体权重名。
@@ -529,7 +537,7 @@ describe("launch configuration", () => {
         vae: "/models/hunyuanvideo15_vae.safetensors",
         llm: "/models/qwen_2.5_vl_7b.safetensors",
         t5xxl: "/models/byt5_small_glyphxl.safetensors",
-        "diffusion-fa": true,
+        "flash-attn": "off,diffusion=on",
       })
     );
   });
@@ -554,7 +562,7 @@ describe("launch configuration", () => {
         vae: "/models/minimax_h3_video_vae_fp16.safetensors",
         "audio-vae": "/models/minimax_h3_audio_vae_fp32.safetensors",
         llm: "/models/qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
-        "diffusion-fa": true,
+        "flash-attn": "off,diffusion=on",
       })
     );
   });
@@ -798,7 +806,7 @@ describe("newly supported families", () => {
     });
     expect(withTokenizer.missing).toEqual([]);
     expect(withTokenizer.args.tokenizer).toBe("/models/tokenizer.json");
-    expect(withTokenizer.args["diffusion-fa"]).toBe(true);
+    expect(withTokenizer.args["flash-attn"]).toBe("off,diffusion=on");
   });
 
   // --tokenizer 的槽位写法由上游 TokenizerConfig 解析：Ming 的文本编码器只从
@@ -895,7 +903,7 @@ describe("newly supported families", () => {
     expect(built.missing).toEqual([]);
     expect(built.args.vae).toBeUndefined();
     expect(built.args.taesd).toBeUndefined();
-    expect(built.args["diffusion-fa"]).toBe(true);
+    expect(built.args["flash-attn"]).toBe("off,diffusion=on");
   });
 
   it("aligns Z-Image L2P to 16 and keeps the upstream reference defaults", () => {
@@ -997,5 +1005,104 @@ describe("exclusive family inputs", () => {
     expect(exclusiveInputConflicts(FAMILY_CONFIG.flux, both)).toEqual([]);
     expect(exclusiveInputConflicts(FAMILY_CONFIG.sd, both)).toEqual([]);
     expect(exclusiveInputConflicts(undefined, both)).toEqual([]);
+  });
+});
+
+// 上游 #2132 起 --fa / --diffusion-fa 只是弃用别名（会打警告），家族固定参数
+// 必须写新的 --flash-attn 模式串；写错了用户每次启动都会在日志里看到弃用提示。
+describe("flash attention launch flag", () => {
+  it("never emits the deprecated attention aliases", () => {
+    for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
+      expect(config.fixedArgs, `${family} 仍在使用已弃用的 --fa`).not.toHaveProperty(
+        "fa"
+      );
+      expect(
+        config.fixedArgs,
+        `${family} 仍在使用已弃用的 --diffusion-fa`
+      ).not.toHaveProperty("diffusion-fa");
+    }
+  });
+
+  it("keeps diffusion-only flash attention for DiT families", () => {
+    // `off,diffusion=on` 与旧 --diffusion-fa 语义等价：注意力只在扩散模型内开。
+    for (const family of [
+      "flux2",
+      "flux2-klein",
+      "flux3-klein",
+      "qwen-image-2.1",
+      "moss-image",
+    ]) {
+      expect(FAMILY_CONFIG[family].fixedArgs["flash-attn"]).toBe(
+        "off,diffusion=on"
+      );
+    }
+  });
+
+  it("registers the FLUX.3, Iris-3B and MOSS-Image families", () => {
+    // FLUX.3：两版共用 FLUX.2 VAE + Qwen3-VL，只有默认步数/CFG 不同。
+    for (const [family, steps, cfg] of [
+      ["flux3-klein", 16, 1.0],
+      ["flux3-klein-base", 20, 3.5],
+    ] as const) {
+      const config = FAMILY_CONFIG[family];
+      expect(config, `${family} 未注册`).toBeTruthy();
+      const args = config.fields.map((field) => field.arg);
+      expect(args).toEqual(
+        expect.arrayContaining(["diffusion-model", "vae", "llm"])
+      );
+      expect(
+        familyDefaults(config, "img_gen")?.sample_params
+      ).toMatchObject({
+        sample_steps: steps,
+        sample_method: "euler",
+        guidance: { txt_cfg: cfg },
+      });
+    }
+
+    // Iris-3B：像素空间，没有 VAE 槽位；宽高按 16 对齐。
+    const iris = FAMILY_CONFIG.iris;
+    expect(iris.fields.map((field) => field.arg)).toEqual([
+      "diffusion-model",
+      "llm",
+      "llm_vision",
+    ]);
+    expect(alignSizeUp("iris", 1080)).toBe(1088);
+    expect(alignSizeUp("iris", 720)).toBe(720);
+    expect(
+      familyDefaults(iris, "img_gen")?.sample_params
+    ).toMatchObject({ guidance: { txt_cfg: 3.0 } });
+
+    // MOSS-Image：Flux.2 VAE + Qwen3.5，强制外部 tokenizer，宽高按 16 对齐。
+    const moss = FAMILY_CONFIG["moss-image"];
+    expect(moss.fields.map((field) => field.arg)).toEqual(
+      expect.arrayContaining(["diffusion-model", "vae", "llm"])
+    );
+    expect(familyNeedsExternalTokenizer("moss-image")).toBe(true);
+    expect(alignSizeUp("moss-image", 1080)).toBe(1088);
+    const mossBuilt = buildLaunchConfig({
+      family: "moss-image",
+      modelPath: "/models/moss_image_sft_int8_convrot_attn.safetensors",
+      components: {
+        vae: "/models/flux2_ae.safetensors",
+        llm: "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      },
+      runtime,
+    });
+    expect(mossBuilt.missing).toContain(
+      "外部 Tokenizer（--tokenizer，tokenizer.json）"
+    );
+    const mossWithTokenizer = buildLaunchConfig({
+      family: "moss-image",
+      modelPath: "/models/moss_image_sft_int8_convrot_attn.safetensors",
+      components: {
+        vae: "/models/flux2_ae.safetensors",
+        llm: "/models/Qwen3.5-9B-Q4_K_M.gguf",
+      },
+      runtime: { ...runtime, tokenizer: "/models/tokenizer_qwen3.5.json" },
+    });
+    expect(mossWithTokenizer.missing).toEqual([]);
+    expect(mossWithTokenizer.args.tokenizer).toBe(
+      "/models/tokenizer_qwen3.5.json"
+    );
   });
 });

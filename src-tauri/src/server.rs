@@ -195,6 +195,40 @@ fn validate_path_arg(key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Downgrade the structured `--flash-attn` launch argument for kernels that do
+/// not declare it (upstream #2132). Only the two values Lumina emits have an
+/// exact legacy equivalent, and only the structured key is rewritten — a
+/// `--flash-attn` typed into extra_args is left for cli::validate_args to reject
+/// with a readable message instead of being silently migrated.
+fn adapt_flash_attn_for_kernel(
+    args: &mut serde_json::Value,
+    cli: &crate::cli::CliCapabilities,
+) -> Option<String> {
+    if cli.supports("--flash-attn") != Some(false) {
+        return None;
+    }
+    let value = args.get("flash-attn")?.as_str()?.to_string();
+    let legacy = match value.as_str() {
+        "off,diffusion=on" => Some(("diffusion-fa", "--diffusion-fa")),
+        "on" => Some(("fa", "--fa")),
+        _ => None,
+    };
+    let Some((key, flag)) = legacy else {
+        args.as_object_mut()?.remove("flash-attn");
+        return Some(format!(
+            "所选 sd-server 不支持 --flash-attn，已忽略该参数（{}）；请升级内核以指定注意力模式。",
+            value
+        ));
+    };
+    let object = args.as_object_mut()?;
+    object.remove("flash-attn");
+    object.insert(key.into(), serde_json::Value::Bool(true));
+    Some(format!(
+        "所选 sd-server 不支持 --flash-attn，已回退到 {}（语义等价）。",
+        flag
+    ))
+}
+
 fn build_args(args: &serde_json::Value, port: u16) -> Result<Vec<String>> {
     let mut out = vec![
         "--listen-port".into(),
@@ -316,8 +350,11 @@ pub async fn preflight_cli(
     args: &serde_json::Value,
     port: u16,
 ) -> Result<crate::cli::CliCapabilities> {
-    let cmd_args = build_args(args, validate_port(port)?)?;
+    let mut args = args.clone();
     let mut capabilities = inspect_cli(exe_path).await?;
+    let flash_attn_warning = adapt_flash_attn_for_kernel(&mut args, &capabilities);
+    let cmd_args = build_args(&args, validate_port(port)?)?;
+    capabilities.warnings.extend(flash_attn_warning);
     capabilities
         .warnings
         .extend(crate::cli::validate_args(&cmd_args, &capabilities)?);
@@ -1173,12 +1210,21 @@ impl ServerManager {
             validate_max_vram_spec(&spec)
                 .map_err(|e| anyhow!("附加启动参数中的 --max-vram 格式无效：{}", e))?;
         }
-        let cmd_args = build_args(&args_json, port)?;
         // Validate against this executable before unloading the current model.
         // Unknown help is a warning, not proof that an old executable lacks a flag.
+        // The probe has to run before build_args: the structured --flash-attn
+        // argument falls back to --fa / --diffusion-fa on kernels predating
+        // upstream #2132 (the flag itself does not exist there).
         let cli = crate::cli::probe(&exe).await;
+        let flash_attn_warning = adapt_flash_attn_for_kernel(&mut args_json, &cli);
+        let cmd_args = build_args(&args_json, port)?;
         let compatibility_warnings = crate::cli::validate_args(&cmd_args, &cli)?;
-        for warning in cli.warnings.iter().chain(compatibility_warnings.iter()) {
+        for warning in cli
+            .warnings
+            .iter()
+            .chain(flash_attn_warning.iter())
+            .chain(compatibility_warnings.iter())
+        {
             emit_line(app, &format!("[WARN] {}", warning));
         }
         // 结构性 backend 错误（disk / 列表内 default）不需要探测即可拦截。
@@ -1556,6 +1602,47 @@ mod tests {
                 error
             );
         }
+    }
+
+    /// 上游 #2132：--flash-attn 取代旧的裸开关。结构化参数在新旧内核之间自动
+    /// 选择写法；用户写进 extra_args 的同名参数不在这里改写。
+    #[test]
+    fn adapts_flash_attention_argument_to_kernel_age() {
+        let modern = crate::cli::CliCapabilities::for_test(&["--flash-attn"]);
+        let legacy = crate::cli::CliCapabilities::for_test(&["--fa", "--diffusion-fa"]);
+
+        let mut args = serde_json::json!({ "flash-attn": "off,diffusion=on" });
+        assert!(adapt_flash_attn_for_kernel(&mut args, &modern).is_none());
+        assert_eq!(args["flash-attn"], "off,diffusion=on");
+        assert!(args.get("diffusion-fa").is_none());
+
+        let mut args = serde_json::json!({ "flash-attn": "off,diffusion=on" });
+        let warning = adapt_flash_attn_for_kernel(&mut args, &legacy).unwrap();
+        assert!(warning.contains("--diffusion-fa"), "{warning}");
+        assert_eq!(args["diffusion-fa"], true);
+        assert!(args.get("flash-attn").is_none());
+
+        let mut args = serde_json::json!({ "flash-attn": "on" });
+        assert!(adapt_flash_attn_for_kernel(&mut args, &legacy).is_some());
+        assert_eq!(args["fa"], true);
+        assert!(args.get("flash-attn").is_none());
+
+        // 没有旧等价写法的模式串：丢掉该参数，不让老内核因未知参数启动即退。
+        let mut args = serde_json::json!({ "flash-attn": "auto,te=off" });
+        let warning = adapt_flash_attn_for_kernel(&mut args, &legacy).unwrap();
+        assert!(warning.contains("已忽略"), "{warning}");
+        assert!(args.get("flash-attn").is_none());
+
+        // extra_args 里手写的 --flash-attn 保持原样（由 validate_args 报错）。
+        let mut args = serde_json::json!({ "extra_args": "--flash-attn on" });
+        assert!(adapt_flash_attn_for_kernel(&mut args, &legacy).is_none());
+        assert_eq!(args["extra_args"], "--flash-attn on");
+
+        // 能力未知时不改写，交给 sd-server 最终校验。
+        let unknown = crate::cli::CliCapabilities::unknown_for_test();
+        let mut args = serde_json::json!({ "flash-attn": "on" });
+        assert!(adapt_flash_attn_for_kernel(&mut args, &unknown).is_none());
+        assert_eq!(args["flash-attn"], "on");
     }
 
     #[test]

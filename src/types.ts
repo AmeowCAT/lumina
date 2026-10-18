@@ -18,7 +18,7 @@ export interface ModelConfigSnapshot extends RuntimeDiagnostics {
   refImagePreset: string;
   /** PiD VAE latent layout override (flux / sd3 / flux2 / wan). */
   vaeFormat?: string;
-  /** 外部 HuggingFace tokenizer.json（--tokenizer）；PiD / Lens / LLaDA-Image 必需。 */
+  /** 外部 HuggingFace tokenizer.json（--tokenizer）；PiD / Lens / LLaDA-Image / MOSS-Image 必需。 */
   tokenizer?: string;
   /** 原生 CUDA SageAttention（--sage-attn）；不可用时内核会拒绝建上下文。 */
   sageAttn?: boolean;
@@ -40,7 +40,7 @@ export interface Settings extends RuntimeDiagnostics {
   refImagePreset: string;
   /** PiD VAE latent layout override (flux / sd3 / flux2 / wan). */
   vaeFormat?: string;
-  /** 外部 HuggingFace tokenizer.json（--tokenizer）；PiD / Lens / LLaDA-Image 必需。 */
+  /** 外部 HuggingFace tokenizer.json（--tokenizer）；PiD / Lens / LLaDA-Image / MOSS-Image 必需。 */
   tokenizer?: string;
   /** 原生 CUDA SageAttention（--sage-attn）。 */
   sageAttn?: boolean;

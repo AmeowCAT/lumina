@@ -21,7 +21,7 @@ describe("SenseNova U1.5 integration", () => {
     expect(result.modelField).toBe("model");
     expect(result.args.model).toContain("model.safetensors.index.json");
     for (const key of ["diffusion-model", "vae", "llm", "taesd"]) expect(result.args).not.toHaveProperty(key);
-    expect(result.args).toMatchObject({ fa: true, rng: "cuda" });
+    expect(result.args).toMatchObject({ "flash-attn": "on", rng: "cuda" });
   });
 
   it("offers official defaults and 32-pixel spatial alignment", () => {
