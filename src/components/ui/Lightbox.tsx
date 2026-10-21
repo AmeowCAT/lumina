@@ -8,7 +8,25 @@ export interface LightboxItem {
   src: string;
   /** 展示在底部工具栏的说明(种子/尺寸/文件名等) */
   title?: string;
+  /**
+   * 结果的容器 MIME（`video/webm`、`image/webp`、`video/x-msvideo`…）。
+   * 渲染器仍由 `type` 决定（animated WebP 归 image、浏览器原生播放），
+   * 这里只用于"该容器能不能播"的判定——不要用扩展名猜（审查 §2.2）。
+   */
+  mime?: string;
 }
+
+/** 浏览器（WebView2）不能直接播放的容器：交给 `<video>` 只会永远黑屏且
+ *  没有任何报错，因此改为可读提示。当前只有上游 vid_gen 的 AVI/MJPG。 */
+export function isUnplayableVideoMime(mime?: string): boolean {
+  if (!mime) return false;
+  const m = mime.trim().toLowerCase();
+  return m === "video/x-msvideo" || m === "video/avi" || m === "video/msvideo";
+}
+
+/** 不可播容器的提示文案：结果区与全屏预览共用一份，避免两处漂移。 */
+export const UNPLAYABLE_VIDEO_HINT =
+  "此容器（AVI / MJPG）浏览器多半不能播放，建议下载后用本地播放器观看";
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 10;
@@ -290,6 +308,37 @@ export function Lightbox({
           }}
           onMouseDown={onMouseDown}
         />
+      ) : isUnplayableVideoMime(item.mime) ? (
+        // AVI/MJPG：WebView2 一般解不了，塞进 <video> 只会留一个无报错的黑框。
+        <div
+          role="note"
+          style={{
+            maxWidth: 460,
+            padding: "18px 20px",
+            textAlign: "center",
+            lineHeight: 1.8,
+            fontSize: 12.5,
+            color: "var(--color-warn)",
+            border: "1px solid rgb(217 115 74 / 0.35)",
+            borderRadius: "var(--radius-md)",
+            background: "var(--color-warn-dim)",
+            cursor: "default",
+          }}
+        >
+          <p>{UNPLAYABLE_VIDEO_HINT}</p>
+          {item.mime && (
+            <p
+              style={{
+                marginTop: 6,
+                fontFamily: "var(--font-mono)",
+                fontSize: 10.5,
+                color: "var(--color-muted)",
+              }}
+            >
+              {item.mime}
+            </p>
+          )}
+        </div>
       ) : (
         <video src={item.src} controls autoPlay loop />
       )}

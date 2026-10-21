@@ -36,6 +36,13 @@ export default defineConfig({
               name: "ui-vendor",
               test: /node_modules\/(radix-ui|@radix-ui|lucide-react|zustand|clsx|tailwind-merge)\//,
             },
+            {
+              // 家族数据表约 2000 行、只在"选模型/改参数"路径上被读，且几乎不随
+              // 逻辑改动变化。单独成 chunk 后入口 chunk 变小，这张表也能被浏览器
+              // 长期缓存（审查 20-frontend-arch §2.11）。
+              name: "families-data",
+              test: /src[\\/]config[\\/]families\.data\.ts$/,
+            },
           ],
         },
       },

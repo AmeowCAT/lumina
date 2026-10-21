@@ -17,7 +17,12 @@
   --color-hover: #221d16;
   --color-fg: #efe9df;
   --color-fg2: #b3aa9c;
-  --color-muted: #7a7264;
+  /* 审查 ux-a11y F-04：原 #7a7264 配 9.5px 小字在 surface/elevated 上只有
+     3.75–4.13:1，不达 WCAG AA 4.5:1（表单副标签/字段提示/结果元信息/日志行）。
+     提亮到 #9a9184 后最低 5.1:1。 */
+  --color-muted: #9a9184;
+  /* 输入框占位符专用：默认浏览器 placeholder 带透明度，实测 2.13–2.34:1。 */
+  --color-placeholder: #8d8578;
   --color-line: rgb(239 233 223 / 0.07);
   --color-line2: rgb(239 233 223 / 0.14);
   --color-accent: #d9a441;
@@ -241,12 +246,12 @@
   .form-row { margin-bottom: 9px }
   .form-row:last-child { margin-bottom: 0 }
   .form-label {
-    display: block; font-family: var(--font-mono); font-size: 9.5px; font-weight: 500;
-    color: var(--color-muted); margin-bottom: 5px; letter-spacing: 0.13em;
+    display: block; font-family: var(--font-mono); font-size: 10.5px; font-weight: 500;
+    color: var(--color-muted); margin-bottom: 5px; letter-spacing: 0.1em;
     text-transform: uppercase;
   }
   .form-sublabel {
-    font-size: 10px; color: var(--color-muted); margin-left: 6px;
+    font-size: 10.5px; color: var(--color-muted); margin-left: 6px;
     text-transform: none; letter-spacing: 0.02em;
   }
   .input {
@@ -261,7 +266,10 @@
     border-color: rgb(var(--color-accent-rgb) / 0.6);
     box-shadow: 0 0 0 3px rgb(var(--color-accent-rgb) / 0.14);
   }
-  .input::placeholder { color: rgb(110 113 120 / 0.65) }
+  /* 审查 ux-a11y F-04：原 rgb(110 113 120 / .65) 在暗底上合成后只有 2.13–2.34:1
+     （正向提示词框的占位提示就踩在这条上）。改成不透明色，约 5.2:1。 */
+  .input::placeholder { color: var(--color-placeholder); opacity: 1 }
+  textarea::placeholder { color: var(--color-placeholder); opacity: 1 }
   .input.invalid {
     border-color: rgb(229 72 77 / 0.65);
     box-shadow: 0 0 0 3px var(--color-danger-dim);
@@ -275,7 +283,7 @@
     font-family: var(--font-mono); font-size: 11.5px;
     color: var(--color-accent-hi); font-variant-numeric: tabular-nums;
   }
-  .field-hint { font-size: 10px; color: var(--color-muted); margin: -3px 0 8px 122px }
+  .field-hint { font-size: 11px; color: var(--color-muted); margin: -3px 0 8px 122px }
   /* 顶格变体:紧贴标签左缘(开关行/块级控件下方的说明),不跟随输入框缩进 */
   .field-hint-flush { margin-left: 0 }
 
@@ -810,7 +818,9 @@
     font-family: var(--font-mono); font-size: 10.5px; color: var(--color-fg2);
     min-width: 96px; font-variant-numeric: tabular-nums;
   }
-  .job-mode { font-family: var(--font-mono); font-size: 9.5px; color: var(--color-muted); min-width: 34px }
+  .job-mode { font-family: var(--font-mono); font-size: 10.5px; color: var(--color-muted); min-width: 34px }
+  /* 排队位次（审查 30-api §2.8）：1 = 下一个执行 */
+  .job-pos { font-family: var(--font-mono); font-size: 10.5px; color: var(--color-accent-hi) }
   .job-status {
     font: 600 9px/1 var(--font-mono); letter-spacing: 0.1em;
     padding: 3px 8px; border-radius: 999px;
@@ -886,7 +896,10 @@
   .result-card-actions {
     position: absolute; top: 8px; right: 8px; display: flex; gap: 4px;
     max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: flex-end;
-    opacity: 0; transition: opacity 0.18s var(--ease-expo);
+    /* opacity:0 不阻断命中测试：桌面上鼠标划过右上角会点到"看不见的按钮"，
+       最坏是删除（有两段式兜底，但不该发生）。pointer-events 一并关掉（审查 F-15）。 */
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.18s var(--ease-expo);
   }
   .result-card-actions .btn {
     background: rgb(10 10 12 / 0.85); border-color: var(--color-line2);
@@ -901,11 +914,11 @@
     animation: pulse-soft 1.2s ease-in-out infinite;
   }
   .result-card:hover .result-card-actions,
-  .result-card:focus-within .result-card-actions { opacity: 1 }
+  .result-card:focus-within .result-card-actions { opacity: 1; pointer-events: auto }
   .result-meta {
     display: flex; gap: 8px; flex-wrap: wrap; padding: 7px 4px 0;
     width: 0; min-width: 100%; overflow-wrap: anywhere;
-    font-size: 9.5px; color: var(--color-muted); font-family: var(--font-mono);
+    font-size: 10.5px; color: var(--color-muted); font-family: var(--font-mono);
     font-variant-numeric: tabular-nums; letter-spacing: 0.03em;
   }
   .result-meta .meta-seed { color: var(--color-accent-hi) }
@@ -1056,6 +1069,12 @@
   }
   .toast.error { border-left-color: var(--color-danger) }
   .toast-message { flex: 1; min-width: 0 }
+  /* 合并计数（F-21）：同一句提示重复出现时只在原位累加次数，不再堆卡片。 */
+  .toast-count {
+    flex-shrink: 0; padding: 0 5px; border-radius: var(--radius-xs);
+    font-size: 11px; font-variant-numeric: tabular-nums;
+    color: var(--color-muted); background: var(--color-surface-2, rgb(255 255 255 / 0.06));
+  }
   .toast-icon { color: var(--color-danger); flex-shrink: 0 }
   .toast-action {
     padding: 3px 9px; border-radius: var(--radius-xs);

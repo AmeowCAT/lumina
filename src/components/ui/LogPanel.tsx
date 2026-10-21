@@ -16,18 +16,19 @@ export function LogPanel() {
   const clearLogs = useStore((s) => s.clearLogs);
   const toast = useStore((s) => s.toast);
   const serverStatus = useStore((s) => s.serverStatus);
-  const jobs = useStore((s) => s.jobs);
+  // 标量 selector：订阅整个 jobs 数组会让日志面板在生成期间每 2 秒重渲染。
+  const activeCount = useStore(
+    (s) =>
+      s.jobs.filter(
+        (j) =>
+          j.status === "queued" || j.status === "generating" || j.status === "unknown"
+      ).length
+  );
   const [open, setOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyId = useId();
   const external = serverStatus?.external ?? false;
-  // 停止服务器 = 卸载模型：进行中/排队中的任务会随服务器内存一起蒸发，
-  // 存在活动任务时必须两段式确认（对抗性审查 B3）。
-  const activeCount = jobs.filter(
-    (j) =>
-      j.status === "queued" || j.status === "generating" || j.status === "unknown"
-  ).length;
 
   useEffect(() => {
     if (open && bodyRef.current) {
@@ -35,7 +36,25 @@ export function LogPanel() {
     }
   }, [logs, open]);
 
-  const last = logs[logs.length - 1] || "（暂无日志）";
+  const last = logs[logs.length - 1]?.text || "（暂无日志）";
+
+  /** 一键复制全部日志：README 让用户「先看日志面板」，但此前只能截图（审查 99 §5.4）。 */
+  const copyAll = async () => {
+    const text = useStore
+      .getState()
+      .logs.map((l) => l.text)
+      .join("\n");
+    if (!text) {
+      toast("暂无日志可复制");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(`已复制 ${logs.length} 行日志`);
+    } catch {
+      toast("复制失败：当前环境不允许访问剪贴板", true);
+    }
+  };
 
   // 停止 sd-server 进程（=卸载模型/释放显存），并立即切回首页重新选模型。
   const onStop = async () => {
@@ -85,6 +104,14 @@ export function LogPanel() {
             >
               清空
             </button>
+            <button
+              className="log-clear"
+              aria-label="复制全部服务器日志到剪贴板"
+              title="复制全部日志（报 issue 时贴这个，比截图有用）"
+              onClick={() => void copyAll()}
+            >
+              复制
+            </button>
             {!external && (
               <TwoTapButton
                 className="log-stop"
@@ -115,18 +142,18 @@ export function LogPanel() {
           className="log-body"
           ref={bodyRef}
           role="log"
-          aria-live="polite"
+          aria-live="off"
           aria-relevant="additions text"
           tabIndex={0}
         >
           {logs.length === 0 ? (
             <div className="log-empty">等待日志…</div>
           ) : (
-            logs.map((l, i) => {
-              const severity = logSeverity(l);
+            logs.map((l) => {
+              const severity = logSeverity(l.text);
               return (
                 <div
-                  key={i}
+                  key={l.id}
                   className={
                     "log-line" +
                     (severity === "error"
@@ -136,7 +163,7 @@ export function LogPanel() {
                         : "")
                   }
                 >
-                  {l}
+                  {l.text}
                 </div>
               );
             })

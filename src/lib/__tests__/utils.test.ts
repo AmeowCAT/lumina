@@ -10,20 +10,24 @@ import {
   formatError,
   hasLegacyLatentTiling,
   hasPixelTiling,
+  jobElapsed,
   legacyLatentTilingAxes,
   legacyTilingDroppedOnPixels,
   LINGBOT_PROMPT_TEMPLATE,
-  modelFileOptionLabel,
-  normalizeSizeStep,
+  matchAvailableLora,
+  modelFileOptionLabel,  normalizeSizeStep,
   pixelTilingDroppedOnLatent,
   previewModesFromCapabilities,
   resolvePreviewMode,
   resolveVaeTilingForProtocol,
   sdcppMetadataToGenParams,
+  setTilingArgValue,
+  tilingArgValue,
+  trimJobsToBudget,
   vaeTilingProtocolFromCapabilities,
   validateLingbotPrompt,
 } from "../utils";
-import type { Capabilities, GenImages, GenParams } from "../../types";
+import type { Capabilities, GenImages, GenParams, Job } from "../../types";
 
 describe("normalizeSizeStep", () => {
   it("defaults to 1 and keeps positive integers", () => {
@@ -289,6 +293,31 @@ describe("buildRequestBody", () => {
         refImagePreset: "flux_kontext",
       });
       expect(body.ref_image_args).toBe("preset=longcat,resize_before_vae=off");
+    });
+
+    // 审查 30-api §2.10：embed_image_metadata 此前只在 img_gen 分支发送，
+    // 视频永远带元数据、用户关不掉；fps 缺省也要跟上游一致（16，不是 24）。
+    it.each(["img_gen", "vid_gen"] as const)(
+      "sends embed_image_metadata=false in %s when the user disables it",
+      (mode) => {
+        expect(
+          buildRequestBody(mode, { ...baseParams, embed_image_metadata: false }, {} as GenImages)
+            .embed_image_metadata
+        ).toBe(false);
+        expect(
+          buildRequestBody(mode, { ...baseParams, embed_image_metadata: undefined }, {} as GenImages)
+            .embed_image_metadata
+        ).toBe(true);
+      }
+    );
+
+    it("defaults vid_gen fps to the upstream value, not 24", () => {
+      expect(
+        buildRequestBody("vid_gen", { ...baseParams, fps: undefined }, {} as GenImages).fps
+      ).toBe(16);
+      expect(
+        buildRequestBody("vid_gen", { ...baseParams, fps: 30 }, {} as GenImages).fps
+      ).toBe(30);
     });
 
     it.each(["img_gen", "vid_gen"] as const)("normalizes draft rules only when building %s requests", (mode) => {
@@ -1149,6 +1178,10 @@ describe("sdcppMetadataToGenParams", () => {
     });
   });
 
+  // 回归（审查 S-10）：元数据的 name 是**含扩展名的文件名**（上游
+  // common.cpp:3146 的 sd_basename），capabilities 的 name 是 **stem**
+  // （runtime.cpp:286）。夹具必须按真实形状构造，两侧都写 "style.safetensors"
+  // 会让这个缺陷一直是绿灯。
   it("matches loras by name and skips unmatched ones", () => {
     const meta = {
       seed: 1,
@@ -1158,7 +1191,7 @@ describe("sdcppMetadataToGenParams", () => {
       ],
     };
     const p = sdcppMetadataToGenParams(meta, [
-      { name: "style.safetensors", path: "D:/loras/style.safetensors" },
+      { name: "style", path: "D:/loras/style.safetensors" },
     ]);
     expect(p.lora).toEqual([
       {
@@ -1167,6 +1200,29 @@ describe("sdcppMetadataToGenParams", () => {
         is_high_noise: false,
       },
     ]);
+  });
+
+  it("matches loras through path basename and bare stems", () => {
+    // 三种真实存在的写法：caps 只给文件名、元数据不带扩展名、路径尾部匹配。
+    expect(
+      matchAvailableLora(
+        [{ name: "style", path: "loras/style.safetensors" }],
+        "style.safetensors"
+      )?.path
+    ).toBe("loras/style.safetensors");
+    expect(
+      matchAvailableLora([{ name: "style.safetensors", path: "a/b.pt" }], "style")
+        ?.path
+    ).toBe("a/b.pt");
+    expect(
+      matchAvailableLora(
+        [{ name: "unrelated", path: "D:/loras/style.safetensors" }],
+        "style.safetensors"
+      )?.path
+    ).toBe("D:/loras/style.safetensors");
+    expect(
+      matchAvailableLora([{ name: "style", path: "loras/style.safetensors" }], "other")
+    ).toBeUndefined();
   });
 
   it("leaves beta fields unset for unrelated extra_sample_args", () => {
@@ -1270,5 +1326,101 @@ describe("sdcppMetadataToGenParams", () => {
   it("leaves vae_tiling_params unset when the metadata omits the section", () => {
     const p = sdcppMetadataToGenParams({ seed: 1 });
     expect(p.vae_tiling_params).toBeUndefined();
+  });
+});
+
+// 审查 20-frontend §2.3：结果侧有字节预算，任务侧的 config.images 此前只有条数上限。
+// 审查 30-api §2.9：视频时间维分块存在 extra_tiling_args 里，界面按单键读写。
+describe("extra_tiling_args 单键读写", () => {
+  it("reads a key without disturbing the others", () => {
+    expect(
+      tilingArgValue("temporal_tile_frames=8,temporal_tile_overlap=2", "temporal_tile_frames")
+    ).toBe(8);
+    expect(tilingArgValue("other=1", "temporal_tile_frames")).toBeNull();
+    expect(tilingArgValue(undefined, "temporal_tile_frames")).toBeNull();
+  });
+
+  it("writes a key in place and removes it when cleared", () => {
+    expect(
+      setTilingArgValue("temporal_tile_overlap=2", "temporal_tile_frames", 4)
+    ).toBe("temporal_tile_overlap=2,temporal_tile_frames=4");
+    expect(setTilingArgValue("a=1,b=2", "a", 9)).toBe("b=2,a=9");
+    expect(setTilingArgValue("a=1,b=2", "a", null)).toBe("b=2");
+    expect(setTilingArgValue(undefined, "a", 3)).toBe("a=3");
+  });
+});
+
+describe("trimJobsToBudget", () => {
+  const job = (id: string, b64?: string): Job => ({
+    id,
+    kind: "img_gen",
+    status: "completed",
+    config: b64
+      ? {
+          mode: "img_gen",
+          params: {
+            width: 512,
+            height: 512,
+            seed: 1,
+            sample_params: { guidance: {} },
+          },
+          images: {
+            initImage: b64,
+            maskImage: null,
+            controlImage: null,
+            ipAdapterImage: null,
+            endImage: null,
+            refImages: [],
+            controlFrames: [],
+          },
+        }
+      : undefined,
+  });
+
+  it("keeps the list untouched while under budget", () => {
+    const jobs = [job("a", "A".repeat(1024)), job("b", "B".repeat(1024))];
+    expect(trimJobsToBudget(jobs, 1024 * 1024)).toBe(jobs);
+  });
+
+  it("strips images from the oldest jobs first and never from the newest", () => {
+    // 3 条任务各 1024 字符 base64 ≈ 768 B；总 2304 B 超出 2048 B 预算，
+    // 只需剥离最旧的一条即可回到预算内。
+    const jobs = [
+      job("newest", "C".repeat(1024)),
+      job("mid", "B".repeat(1024)),
+      job("oldest", "A".repeat(1024)),
+    ];
+    const trimmed = trimJobsToBudget(jobs, 2048);
+    expect(trimmed[0].config?.images?.initImage).toBeTruthy();
+    expect(trimmed[1].config?.images).toBeTruthy();
+    expect(trimmed[2].config?.images).toBeUndefined();
+  });
+});
+
+// 审查 30-api §2.8：耗时优先用内核的 started/completed，而不是 created→轮询时刻。
+describe("jobElapsed", () => {
+  it("uses the kernel timestamps when both are present", () => {
+    const j: Job = {
+      id: "x",
+      kind: "img_gen",
+      status: "completed",
+      created: 100,
+      started: 110,
+      completed: 125,
+    };
+    expect(jobElapsed(j, true)).toBe("15s");
+  });
+
+  it("returns nothing for queued jobs and falls back to created for legacy payloads", () => {
+    expect(jobElapsed({ id: "q", kind: "img_gen", status: "queued", created: 100 }, false)).toBe("");
+    const legacy: Job = {
+      id: "l",
+      kind: "img_gen",
+      status: "completed",
+      created: 100,
+      // 旧内核没有 completed，用最近一次成功轮询兜底
+      lastPollSuccess: 130_000,
+    };
+    expect(jobElapsed(legacy, true)).toBe("30s");
   });
 });

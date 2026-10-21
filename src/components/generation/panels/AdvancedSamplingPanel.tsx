@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type {
+  GenMode,
   SlgGuidance,
   VaeTilingParams,
   VaeTilingProtocol,
@@ -10,6 +11,8 @@ import {
   legacyLatentTilingAxes,
   legacyTilingDroppedOnPixels,
   pixelTilingDroppedOnLatent,
+  setTilingArgValue,
+  tilingArgValue,
 } from "../../../lib/utils";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
@@ -20,11 +23,15 @@ import { NumberInput } from "../../ui/NumberInput";
 interface Props {
   eta: number | undefined;
   flowShift: number | undefined;
+  /** 时间步平移（0/undefined = 内核默认）；F-18 补的入口。 */
+  shiftedTimestep?: number | undefined;
   slg: SlgGuidance | undefined;
   vaeTilingParams: VaeTilingParams | undefined;
   showVaeTiling?: boolean;
   /** 所选内核使用哪套分块字段（上游 #2059 前后不同）。 */
   vaeTilingProtocol?: VaeTilingProtocol;
+  /** 视频模式才显示时间维分块（审查 30-api §2.9）。 */
+  mode?: GenMode;
   cacheMode: string | undefined;
   clipSkip: number | undefined;
   extraSampleArgs: string | undefined;
@@ -34,10 +41,12 @@ interface Props {
 export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   eta,
   flowShift,
+  shiftedTimestep,
   slg,
   vaeTilingParams,
   showVaeTiling = true,
   vaeTilingProtocol = "pixels",
+  mode = "img_gen",
   cacheMode,
   clipSkip,
   extraSampleArgs,
@@ -56,6 +65,26 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
     (vaeTilingParams?.rel_size_w ?? 0) > 0 ? "宽" : null,
     (vaeTilingParams?.rel_size_h ?? 0) > 0 ? "高" : null,
   ].filter(Boolean) as string[];
+  // 视频时间维分块（审查 30-api §2.9）：上游把它放在 extra_tiling_args 里，
+  // 是长视频解码 OOM 的主要缓解手段，界面此前完全没有入口。
+  const temporalOn = !!vaeTilingParams?.temporal_tiling;
+  const temporalFrames = tilingArgValue(
+    vaeTilingParams?.extra_tiling_args,
+    "temporal_tile_frames"
+  );
+  const temporalOverlap = tilingArgValue(
+    vaeTilingParams?.extra_tiling_args,
+    "temporal_tile_overlap"
+  );
+  const setTemporalArg = (key: string, value: number | null) =>
+    onUpdate("vae_tiling_params", {
+      ...vaeTilingParams,
+      extra_tiling_args: setTilingArgValue(
+        vaeTilingParams?.extra_tiling_args,
+        key,
+        value
+      ),
+    });
   return (
     <Panel title="高级采样" collapsed>
       <Slider
@@ -75,6 +104,17 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
         max={20}
         step={0.1}
         hint="Flow 类模型的时间步偏移"
+      />
+      {/* 审查 50-ux F-18：`shifted_timestep` 一直会随请求体发送（utils.ts），
+          但界面没有入口——Flow 类模型微调时间步的第二个旋钮。0 表示用内核默认。 */}
+      <Slider
+        label="Shifted Timestep"
+        value={shiftedTimestep ?? 0}
+        onChange={(v) => onUpdate("sample_params.shifted_timestep", v)}
+        min={0}
+        max={1000}
+        step={10}
+        hint="时间步平移；0 = 用内核默认"
       />
       <Slider
         label="SLG Scale"
@@ -165,8 +205,65 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                   </button>
                 </div>
               )}
-              {droppedLegacyTiling && (
-                <div className="field-hint field-hint-flush" role="alert">
+              {mode === "vid_gen" && (
+                <>
+                  <Toggle
+                    label="视频时间维分块"
+                    checked={temporalOn}
+                    onChange={(v) =>
+                      onUpdate("vae_tiling_params", {
+                        ...vaeTilingParams,
+                        temporal_tiling: v,
+                      })
+                    }
+                  />
+                  <div className="field-hint field-hint-flush">
+                    长视频解码显存不足时开启：按帧把时间轴切块，块间保留因果状态
+                    （Wan / LTX）或用重叠混合（Hunyuan / TAE）。
+                  </div>
+                  {temporalOn && (
+                    <>
+                      <div className="form-row">
+                        <label className="form-label" htmlFor="vae-temporal-frames">
+                          时间分块帧数
+                          <span className="form-sublabel">
+                            temporal_tile_frames，内核默认 4；越小越省显存
+                          </span>
+                        </label>
+                        <NumberInput
+                          id="vae-temporal-frames"
+                          value={temporalFrames ?? 0}
+                          onChange={(v) =>
+                            setTemporalArg("temporal_tile_frames", v > 0 ? v : null)
+                          }
+                          min={0}
+                          max={256}
+                          step={1}
+                        />
+                      </div>
+                      <div className="form-row">
+                        <label className="form-label" htmlFor="vae-temporal-overlap">
+                          时间分块重叠
+                          <span className="form-sublabel">
+                            temporal_tile_overlap，内核默认 1
+                          </span>
+                        </label>
+                        <NumberInput
+                          id="vae-temporal-overlap"
+                          value={temporalOverlap ?? 0}
+                          onChange={(v) =>
+                            setTemporalArg("temporal_tile_overlap", v > 0 ? v : null)
+                          }
+                          min={0}
+                          max={32}
+                          step={1}
+                        />
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+              {droppedLegacyTiling && (                <div className="field-hint field-hint-flush" role="alert">
                   旧内核的 latent 单位尺寸仍在设置里：
                   {[
                     legacyAxes.tileX != null ? `tile_size_x=${legacyAxes.tileX}` : null,
@@ -262,3 +359,4 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
     </Panel>
   );
 });
+

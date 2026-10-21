@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { DEFAULT_SD_PORT, DEFAULT_SIZE_STEP, normalizeSizeStep } from "./lib/utils";
+import { DEFAULT_SD_PORT, DEFAULT_SIZE_STEP, normalizeSizeStep, trimJobsToBudget } from "./lib/utils";
 import type {
   Capabilities,
   GenMode,
@@ -12,16 +12,26 @@ import type {
   Settings,
 } from "./types";
 
+/** 一条日志行。`id` 单调递增，供 React 用稳定 key 渲染（审查 20-frontend §2.4）。 */
+export interface LogLine {
+  id: number;
+  text: string;
+}
+
+/** 日志行 id 序列；只在 store 内部使用，跨 clearLogs 保持递增以免 key 复用。 */
+let logSeq = 0;
+
 export interface ToastAction {
   label: string;
   onClick: () => void;
 }
-
 export interface ToastEntry {
   id: number;
   msg: string;
   error: boolean;
   action?: ToastAction;
+  /** 合并计数：同文案在可见期内再次出现时累加，而不是再堆一张卡片（F-21）。 */
+  count?: number;
 }
 
 /** 单张图片/视频保存到输出目录的状态 */
@@ -119,7 +129,9 @@ interface StoreState {
   setUpscaleBusy: (busy: boolean) => void;
 
   // sd-server 日志（stdout/stderr 流式捕获，内置日志面板展示）
-  logs: string[];
+  /** 每行带一个单调递增 id：日志面板用 `key=id` 渲染才不会在裁头
+   *  （slice(-1500)）后整表错位重写（审查 20-frontend §2.4）。 */
+  logs: LogLine[];
   lastProgress: boolean;
   appendLog: (text: string) => void;
   updateProgress: (text: string) => void;
@@ -160,28 +172,44 @@ function parseStepProgress(text: string): { step: number; total: number } | null
   return { step, total };
 }
 
-/** 进度行合并：若上一行也是进度行（\r 原地刷新）则覆盖，否则追加。 */
+/** 进度行合并：若上一行也是进度行（\r 原地刷新）则覆盖内容并保留 id，
+ *  否则追加新行。保留 id 让 React 复用同一个 DOM 节点。 */
 function mergeProgressLine(
-  logs: string[],
+  logs: LogLine[],
   lastProgress: boolean,
   text: string
-): { logs: string[]; lastProgress: boolean } {
+): { logs: LogLine[]; lastProgress: boolean } {
   if (lastProgress && logs.length > 0) {
     const next = logs.slice();
-    next[next.length - 1] = text;
+    next[next.length - 1] = { ...next[next.length - 1], text };
     return { logs: next, lastProgress: true };
   }
-  return { logs: [...logs, text], lastProgress: true };
+  return { logs: [...logs, { id: ++logSeq, text }], lastProgress: true };
 }
 
 /** 日志数组封顶：到 2000 条裁到 1500，避免无限增长。 */
-function capLogs(logs: string[]): string[] {
+function capLogs(logs: LogLine[]): LogLine[] {
   return logs.length >= 2000 ? logs.slice(-1500) : logs;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
   toasts: [],
   toast: (msg, error = false, action) => {
+    // 审查 50-ux F-21：同一句提示在可见期内重复出现时（轮询失败每 3 秒一次、
+    // 批量保存每张都失败），旧实现会堆出多条肉眼无差别的卡片，只是把屏幕刷满。
+    // 这里对"同文案 + 同级别"就地合并：保留原条目、重置消失计时器、计数 +1。
+    const existing = get().toasts.find((t) => t.msg === msg && t.error === error);
+    if (existing) {
+      const prev = toastTimers.get(existing.id);
+      if (prev) clearTimeout(prev);
+      scheduleToastDismiss(existing.id, error);
+      set((s) => ({
+        toasts: s.toasts.map((t) =>
+          t.id === existing.id ? { ...t, count: (t.count ?? 1) + 1 } : t
+        ),
+      }));
+      return;
+    }
     const id = ++toastSeq;
     set((s) => {
       const next = [...s.toasts, { id, msg, error, action }];
@@ -279,7 +307,9 @@ export const useStore = create<StoreState>((set, get) => ({
       return { params: n };
     }),
   jobs: [],
-  setJobs: (updater) => set((s) => ({ jobs: updater(s.jobs) })),
+  // 任务侧的 config.images 走字节预算：结果侧有字节上限、任务侧此前只有条数
+  // 上限（审查 20-frontend §2.3），集中在这里做，覆盖所有 setJobs 调用点。
+  setJobs: (updater) => set((s) => ({ jobs: trimJobsToBudget(updater(s.jobs)) })),
   results: [],
   setResults: (updater) => set((s) => ({ results: updater(s.results) })),
   initImage: null,
@@ -315,7 +345,7 @@ export const useStore = create<StoreState>((set, get) => ({
   appendLog: (text) =>
     set((s) => {
       const logs = s.logs.length >= 2000 ? s.logs.slice(-1500) : s.logs.slice();
-      return { logs: [...logs, text], lastProgress: false };
+      return { logs: [...logs, { id: ++logSeq, text }], lastProgress: false };
     }),
   updateProgress: (text) =>
     set((s) => {
@@ -353,7 +383,7 @@ export const useStore = create<StoreState>((set, get) => ({
       for (const ev of events) {
         if (ev.type === "line") {
           if (ev.text === "") continue;
-          logs.push(ev.text);
+          logs.push({ id: ++logSeq, text: ev.text });
           lastProgress = false;
           continue;
         }
@@ -384,7 +414,6 @@ export const useStore = create<StoreState>((set, get) => ({
       };
     }),
   clearLogs: () => set({ logs: [], lastProgress: false }),
-
   progressStep: 0,
   progressTotal: 0,
   progressStartedAt: 0,

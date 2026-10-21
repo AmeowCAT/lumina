@@ -6,7 +6,7 @@ import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { ImageUpload } from "../../ui/ImageUpload";
 import { IC } from "../../ui/Icons";
-import { readFileAsDataUrl } from "../../../lib/utils";
+import { featureEnabled, readFileAsDataUrl } from "../../../lib/utils";
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
@@ -111,6 +111,8 @@ interface Props {
   strength: number | undefined;
   controlStrength: number | undefined;
   ipAdapterStrength: number | undefined;
+  /** VACE 的条件强度（审查 50-ux F-18：上游 webui 有、Lumina 请求体已接但无控件）。 */
+  vaceStrength: number | undefined;
   imgCfg: number | undefined;
   txtCfg: number | undefined;
   onUpdate: (path: string, v: unknown) => void;
@@ -144,6 +146,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   strength,
   controlStrength,
   ipAdapterStrength,
+  vaceStrength,
   imgCfg,
   txtCfg,
   onUpdate,
@@ -153,8 +156,8 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   onInitSize,
 }: Props) {
   return (
-    <Panel title="图片输入" collapsed={!features.init_image}>
-      {features.init_image && (
+    <Panel title="图片输入" collapsed={!featureEnabled(features, "init_image")}>
+      {featureEnabled(features, "init_image") && (
         <ImageUpload
           label="初始图片"
           value={initImage}
@@ -162,35 +165,35 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           onSizeDetected={onInitSize}
         />
       )}
-      {features.mask_image && mode === "img_gen" && (
+      {featureEnabled(features, "mask_image") && mode === "img_gen" && (
         <ImageUpload
           label="蒙版"
           value={maskImage}
           onChange={(v) => onSetImage("maskImage", v)}
         />
       )}
-      {features.control_image && mode === "img_gen" && (
+      {featureEnabled(features, "control_image") && mode === "img_gen" && (
         <ImageUpload
           label="Control 图片"
           value={controlImage}
           onChange={(v) => onSetImage("controlImage", v)}
         />
       )}
-      {features.ip_adapter_image && mode === "img_gen" && (
+      {featureEnabled(features, "ip_adapter_image") && mode === "img_gen" && (
         <ImageUpload
           label="IP-Adapter 图片"
           value={ipAdapterImage}
           onChange={(v) => onSetImage("ipAdapterImage", v)}
         />
       )}
-      {features.end_image && mode === "vid_gen" && (
+      {featureEnabled(features, "end_image") && mode === "vid_gen" && (
         <ImageUpload
           label="结束帧"
           value={endImage}
           onChange={(v) => onSetImage("endImage", v)}
         />
       )}
-      {(features.init_image || features.control_image) && mode === "img_gen" && (
+      {(featureEnabled(features, "init_image") || featureEnabled(features, "control_image")) && mode === "img_gen" && (
         <>
           <Slider
             label="重绘强度"
@@ -221,7 +224,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           />
         </>
       )}
-      {features.ip_adapter_image && mode === "img_gen" && (
+      {featureEnabled(features, "ip_adapter_image") && mode === "img_gen" && (
         <Slider
           label="IP-Adapter 强度"
           value={ipAdapterStrength ?? 1.0}
@@ -231,7 +234,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           step={0.05}
         />
       )}
-      {features.init_image && mode === "vid_gen" && (
+      {featureEnabled(features, "init_image") && mode === "vid_gen" && (
         <Slider
           label="图生视频强度"
           value={strength ?? 0.75}
@@ -258,12 +261,24 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
         />
       )}
       {controlFramesSupported && mode === "vid_gen" && (
-        <MultiImageRow
-          label="条件帧（VACE）"
-          images={controlFrames}
-          onChange={onSetControlFrames}
-          addLabel="添加条件帧"
-        />
+        <>
+          <MultiImageRow
+            label="条件帧（VACE）"
+            images={controlFrames}
+            onChange={onSetControlFrames}
+            addLabel="添加条件帧"
+          />
+          {/* 审查 50-ux F-18：上游 webui 有 VACE Strength，Lumina 请求体一直会发
+              vace_strength（utils.ts），但界面没有入口——VACE 的唯一行为旋钮。 */}
+          <Slider
+            label="VACE 条件强度"
+            value={vaceStrength ?? 1.0}
+            onChange={(v) => onUpdate("vace_strength", v)}
+            min={0}
+            max={2}
+            step={0.05}
+          />
+        </>
       )}
     </Panel>
   );

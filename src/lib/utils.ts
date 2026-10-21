@@ -1,14 +1,17 @@
 import type {
   Capabilities,
+  Features,
   GenImages,
   GenMode,
   GenParams,
+  Job,
   LoraEntry,
   ModelFile,
   SampleParams,
   VaeTilingParams,
   VaeTilingProtocol,
 } from "../types";
+import { MEMORY_BUDGET } from "./memoryBudget";
 
 /** sd-server 的历史默认端口；与 Rust 侧 `server::DEFAULT_SD_PORT` 保持一致。 */
 export const DEFAULT_SD_PORT = 1234;
@@ -421,6 +424,166 @@ export function buildRefImageArgs(
 }
 
 /**
+ * 任务耗时的显示文案。
+ *
+ * 优先用内核时间戳 `completed - started`（真实采样时长）；旧内核不给
+ * `started`/`completed` 时退回「created → 最近一次成功轮询」。旧实现一律用
+ * created，把排队等待与 2s 轮询抖动都算进生成耗时（审查 30-api §2.8）。
+ */
+export function jobElapsed(job: Job, terminal: boolean): string {
+  if (job.status === "queued") return "";
+  const beginSec = job.started ?? job.created;
+  if (!beginSec) return "";
+  const endedAt = job.completed
+    ? job.completed * 1000
+    : terminal
+      ? job.lastPollSuccess
+      : undefined;
+  if (terminal && !endedAt) return "";
+  const ms = (endedAt ?? Date.now()) - beginSec * 1000;
+  if (ms < 1000) return "";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${s % 60}s`;
+}
+
+/**
+ * 任务的 `config.images` 字节预算：取自统一总账的 `jobs` 份额
+ * （[memoryBudget](./memoryBudget.ts)，审查 20-frontend §2.2/§2.3）。
+ *
+ * `config.images` 是 dataURL：一张 1080p 输入 2–8 MB，VACE 家族的
+ * `controlFrames` 是一整段条件帧序列，单条任务即可达数十 MB。用户换图后旧字符串
+ * 仍被每条任务各钉住一份。
+ */
+export const MAX_JOB_CONFIG_BYTES = MEMORY_BUDGET.jobs;
+
+function jobImagesBytes(job: Job): number {
+  const images = job.config?.images;
+  if (!images) return 0;
+  const all = [
+    images.initImage,
+    images.maskImage,
+    images.controlImage,
+    images.ipAdapterImage,
+    images.endImage,
+    ...images.refImages,
+    ...images.controlFrames,
+  ];
+  let total = 0;
+  for (const src of all) if (src) total += b64ByteLength(src);
+  return total;
+}
+
+/**
+ * 从最旧的任务开始剥离 `config.images`，直到总字节回到预算内。
+ * 剥离后「应用此配置」只能恢复参数（图片输入丢失），UI 会在 toast 里说明。
+ * 最新的任务永远保留图片，避免刚提交就丢。
+ */
+export function trimJobsToBudget(
+  jobs: Job[],
+  maxBytes: number = MAX_JOB_CONFIG_BYTES
+): Job[] {
+  let total = 0;
+  for (const job of jobs) total += jobImagesBytes(job);
+  if (total <= maxBytes) return jobs;
+  const next = jobs.slice();
+  for (let i = next.length - 1; i >= 1 && total > maxBytes; i--) {
+    const job = next[i];
+    if (!job.config?.images) continue;
+    total -= jobImagesBytes(job);
+    next[i] = { ...job, config: { ...job.config, images: undefined } };
+  }
+  return next;
+}
+
+/**
+ * 读取/写入 `vae_tiling_params.extra_tiling_args` 里的单个键（审查 30-api §2.9）。
+ *
+ * 上游把视频时间维分块放在这个 `key=value,key=value` 串里
+ * （`temporal_tile_frames` / `temporal_tile_overlap`）。界面此前完全没有入口，
+ * 而它是长视频解码 OOM 的主要缓解手段。这里只做「定位一个键、就地改值、保留
+ * 其余键与原顺序」的最小操作。
+ */
+export function tilingArgValue(
+  extra: string | undefined,
+  key: string
+): number | null {
+  if (!extra) return null;
+  for (const part of extra.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() !== key) continue;
+    const n = Number(part.slice(eq + 1).trim());
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+export function setTilingArgValue(
+  extra: string | undefined,
+  key: string,
+  value: number | null
+): string {
+  const parts = (extra || "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const kept = parts.filter((p) => {
+    const eq = p.indexOf("=");
+    return eq < 0 || p.slice(0, eq).trim() !== key;
+  });
+  if (value != null) kept.push(`${key}=${value}`);
+  return kept.join(",");
+}
+
+/**
+ * 统一的能力开关判定（审查 30-api §2.5）。
+ *
+ * 此前同一份 `features` 在两条路径上用了相反的极性：面板显隐用真值
+ * （缺键即隐藏），提交裁剪用 `=== false`（缺键即照发），于是缺键的能力会
+ * 变成「看不见但仍在生效」。这里把判定收成一处，显隐与提交必须用**同一个**
+ * 调用（包括 fallback），缺键时由 fallback 决定，两边不会分叉。
+ *
+ * 注意 `features_by_mode` 在上游是硬编码常量（routes_sdcpp.cpp:195-225），
+ * 缺键只可能出现在旧内核或裁剪过的实现里；`vae_tiling` 这类通用能力按
+ * 历史行为保留 fallback = true。
+ */
+export function featureEnabled(
+  features: Features | undefined,
+  key: keyof Features,
+  fallback = false
+): boolean {
+  const value = features?.[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+/**
+ * 把 `output_format` 收敛到当前内核支持的枚举（审查 30-api §2.6）。
+ *
+ * 生成参数是按 **mode** 而不是按内核持久化的：从「编译了 WebP 的内核」切到
+ * 没有 WebP 的内核后，localStorage 里的旧值仍会随每次提交发出，服务端
+ * `assign_output_options` 直接拒绝（400），而 UI 下拉里根本没有这一项、当前值
+ * 只显示成占位符，用户看不出原因。上游 webui 有同款收敛（App.vue:246-247）。
+ */
+export function reconcileOutputFormat(
+  params: GenParams,
+  caps:
+    | {
+        output_formats_by_mode?: Partial<Record<GenMode, string[]>>;
+        output_formats?: string[];
+      }
+    | null
+    | undefined,
+  mode: GenMode
+): GenParams {
+  const perMode = caps?.output_formats_by_mode?.[mode];
+  const formats = perMode?.length ? perMode : caps?.output_formats;
+  if (!formats?.length) return params;
+  if (params.output_format && formats.includes(params.output_format)) return params;
+  return { ...params, output_format: formats[0] };
+}
+
+/**
  * 所选内核使用哪一套 VAE 分块字段。
  *
  * capabilities 的 `defaults_by_mode[*].vae_tiling_params` 一定带键名，用它
@@ -571,6 +734,38 @@ function mapSamplingMetadata(s: unknown): SampleParams | undefined {
   };
 }
 
+/** 取路径/文件名的 stem（去目录、去扩展名）；Windows 分隔符一并处理。 */function fileStem(name: string): string {
+  const base = name.replace(/\\/g, "/").split("/").pop() || name;
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+/**
+ * 把元数据里的 LoRA 名字匹配回 capabilities 的条目。
+ *
+ * 两侧 `name` 语义不同：元数据写的是**含扩展名的文件名**（上游
+ * `common.cpp:3146` 用 `sd_basename`），capabilities 给的是 **stem**
+ * （上游 `runtime.cpp:286` 用 `p.stem()`）。直接 `a.name === name` 会让所有
+ * LoRA 静默匹配失败（审查 S-10），所以这里按「原名 → 去扩展名 → 路径尾部」
+ * 逐级归一化比较。
+ */
+export function matchAvailableLora(
+  available: { name: string; path: string }[],
+  metaName: string
+): { name: string; path: string } | undefined {
+  const target = fileStem(metaName);
+  const basenameOf = (p: string) => p.replace(/\\/g, "/").split("/").pop() || p;
+  return (
+    available.find((a) => a.name === metaName) ||
+    available.find((a) => a.name === target) ||
+    available.find((a) => fileStem(a.name) === target) ||
+    available.find((a) => {
+      const base = basenameOf(a.path);
+      return base === metaName || fileStem(base) === target;
+    })
+  );
+}
+
 /** 把 sd-server 嵌入图片的 `sdcpp.image.params/v1` 元数据映射为 GenParams。
  * 元数据中的 LoRA 只有文件名，需用 `availableLoras` 按名字匹配回完整路径，
  * 匹配不到的 LoRA 跳过（无法恢复路径）。 */
@@ -667,7 +862,7 @@ export function sdcppMetadataToGenParams(
       if (!isMetaObj(raw)) continue;
       const name = metaStr(raw.name);
       if (!name) continue;
-      const found = availableLoras.find((a) => a.name === name);
+      const found = matchAvailableLora(availableLoras, name);
       if (found) {
         loras.push({
           path: found.path,
@@ -787,7 +982,12 @@ export function buildRequestBody(
   }
   if (mode === "vid_gen") {
     b.video_frames = params.video_frames || 33;
-    b.fps = params.fps || 24;
+    // 上游 SDGenerationParams::fps 缺省是 16（common.h:249），上游 webui 也用 16。
+    // 这里写 24 会在参数缺失时强加一个与「按内核默认」不同的值（审查 30-api §2.6）。
+    b.fps = params.fps || 16;
+    // vid_gen 同样接受 embed_image_metadata（审查 30-api §2.10）：此前只有
+    // img_gen 会发，视频结果永远带元数据、用户关不掉。
+    b.embed_image_metadata = params.embed_image_metadata !== false;
     if (params.moe_boundary != null) b.moe_boundary = params.moe_boundary;
     if (params.vace_strength != null) b.vace_strength = params.vace_strength;
   }

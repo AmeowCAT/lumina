@@ -38,6 +38,9 @@ export function ParamsSheet({
         }}
         className="params-sheet"
         role="dialog"
+        // 焦点陷阱只管 Tab；读屏的虚拟光标不受它限制，缺 aria-modal 时用户
+        // 会读到被浮层盖住的背景控件（审查 ux-a11y F-06）。
+        aria-modal="true"
         aria-label="生成参数"
         aria-hidden={!open}
         initial={false}

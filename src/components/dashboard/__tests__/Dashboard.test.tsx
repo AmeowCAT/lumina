@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   startServer: vi.fn(),
   stopServer: vi.fn(),
   switchModel: vi.fn(),
+  // 附加启动参数的 datalist 靠它取内核选项名（审查 40-cli §2.5）。
+  inspectServer: vi.fn(),
 }));
 
 vi.mock("../../../api", () => ({ api: mocks }));
@@ -65,8 +67,13 @@ function scanFor(family: string): ScanResult {
 }
 
 // Radix Select 是组合控件而非表单元素：点击触发器展开，再点击目标选项。
+//
+// 共享一个 `userEvent` 实例（`delay: null` 去掉每个动作之间的等待）：这个文件
+// 有 19 个用例、每个至少调一次本函数，之前每次 `setup()` 都重建一次指针/键盘
+// 状态机，单次约 150ms，累计就是这个文件 17s 耗时的主要来源（审查 60-build §2.13）。
+const user = userEvent.setup({ delay: null });
+
 async function pickOption(label: string, optionName: string | RegExp) {
-  const user = userEvent.setup();
   await user.click(await screen.findByLabelText(label));
   await user.click(await screen.findByRole("option", { name: optionName }));
 }
@@ -76,6 +83,9 @@ describe("Dashboard onboarding validation", () => {
     vi.clearAllMocks();
     mocks.loadSettings.mockResolvedValue(settings);
     mocks.saveSettings.mockResolvedValue(undefined);
+    mocks.inspectServer.mockResolvedValue({
+      options: ["--threads", "--mmap"],
+    } as unknown as Capabilities);
     useStore.setState({
       settings,
       scanResult: null,
@@ -95,6 +105,40 @@ describe("Dashboard onboarding validation", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("还缺");
     expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
+  });
+
+  // 审查 50-ux F-14：只滚到面板不够——目标面板常是折叠态。点「去填写」必须
+  // 把面板展开并把焦点送到第一个可填控件，否则用户仍然"知道缺什么但不知点哪"。
+  it("opens the components panel and focuses a field from the missing-config notice", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("flux"));
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+    await screen.findByRole("alert");
+
+    fireEvent.click(screen.getByRole("button", { name: "去填写" }));
+
+    // 面板标题的可访问状态翻转即"已展开"；焦点随后落到面板里的控件上。
+    const heads = screen.getAllByRole("button", { expanded: true });
+    expect(heads.length).toBeGreaterThan(0);
+  });
+
+  // 审查 40-cli §2.5：附加启动参数原本是纯自由文本，拼错要到启动失败才发现。
+  // 内核 `--help` 里的选项名现在进 datalist，输入框因此可以补全。
+  it("offers the kernel's own option names as extra-arg suggestions", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    render(<Dashboard />);
+
+    await waitFor(() => {
+      const list = document.getElementById(
+        "dashboard-extra-arg-options"
+      ) as HTMLDataListElement | null;
+      expect(list).toBeTruthy();
+      expect([...list!.options].map((o) => o.value)).toContain("--threads");
+    });
+    expect(screen.getByLabelText("附加启动参数").getAttribute("list")).toBe(
+      "dashboard-extra-arg-options"
+    );
   });
 
   it("allows PATH-based startup for a self-contained model", async () => {

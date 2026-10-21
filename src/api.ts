@@ -95,9 +95,6 @@ export const api = {
       { body }
     ),
 
-  parsePngMetadata: (path: string) =>
-    invoke<Record<string, unknown> | null>("parse_png_metadata", { path }),
-
   listOutputFiles: (dir: string) =>
     invoke<{ path: string; name: string; size: number; modified: number; ext: string; metadata?: Record<string, unknown> }[]>("list_output_files", { dir }),
 

@@ -10,11 +10,13 @@ import {
   deepClone,
   deepMerge,
   extractApiError,
+  featureEnabled,
   formatError,
   LINGBOT_PROMPT_TEMPLATE,
   MAX_JOBS,
   MAX_RESULTS,
   previewModesFromCapabilities,
+  reconcileOutputFormat,
   resolvePreviewMode,
   sdcppMetadataToGenParams,
   validateLingbotPrompt,
@@ -141,6 +143,8 @@ export function GenerationUI() {
   // 这里用 ref 读取避免频繁重订阅）。
   const upscaleOpenRef = useRef(false);
   upscaleOpenRef.current = upscaleTarget !== null;
+  // 「内核过旧、读不到默认值」只提示一次，避免每次 caps 轮询都弹（审查 S-11）。
+  const staleKernelNotified = useRef(false);
   const [showNegative, setShowNegative] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<"size" | "sampling" | null>(null);
@@ -218,11 +222,11 @@ export function GenerationUI() {
   const features = applyFamilyFeatureLimits(caps?.features_by_mode?.[mode] || {}, FAMILY_CONFIG[family]);
   // The protocol's control_frames flag is generic; only VACE consumes it.
   const controlFramesSupported =
-    mode === "vid_gen" && !!features.control_frames && isVaceModel(caps?.model);
+    mode === "vid_gen" && featureEnabled(features, "control_frames") && isVaceModel(caps?.model);
   // MiniMax-H3 Ref2VA 半支持：vid_gen 协议已接受 ref_images（参考图像条件），
   // 但 capabilities 的 vid_gen features 未广告 ref_images，按家族声明判定。
   const refImagesSupported =
-    (mode === "img_gen" && !!features.ref_images) ||
+    (mode === "img_gen" && featureEnabled(features, "ref_images")) ||
     !!FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images");
   useEffect(() => {
     if (activeFamilyOverride) return;
@@ -281,39 +285,75 @@ export function GenerationUI() {
   // Initialize / switch params from caps defaults + persisted family defaults.
   // MUST depend on `caps` too: caps load asynchronously, and without it this
   // effect never re-runs → params stays null → component returns null (black).
+  //
+  // 降级链（审查 S-11）：新内核只给 `defaults_by_mode`；旧内核/裁剪实现可能
+  // 只给 deprecated 的顶层 `defaults`（上游 api.md:486-491）；两者都没有时用
+  // 家族预设兜底，绝不 return 让界面白屏。三档都拿不到才提示内核过旧。
   useEffect(() => {
     if (!caps) return;
-    let d = caps.defaults_by_mode?.[mode];
+    const familyCfg = FAMILY_CONFIG[family];
+    const candidates: (Partial<GenParams> | undefined)[] = [
+      caps.defaults_by_mode?.[mode],
+      caps.defaults,
+      familyCfg ? familyDefaults(familyCfg, mode) : undefined,
+    ];
+    const d = candidates.find((c) => c && typeof c === "object");
     if (!d) {
       const fallback = caps.current_mode || caps.supported_modes?.[0];
-      if (!fallback) return;
-      setMode(fallback);
+      if (fallback && fallback !== mode) {
+        setMode(fallback);
+        return;
+      }
+      if (!staleKernelNotified.current) {
+        staleKernelNotified.current = true;
+        toast("内核过旧：无法读取生成默认值，已使用中性默认值，请核对参数", true);
+      }
+      // 最后一道兜底：至少给出尺寸/步数的中性默认值，保证界面可用。
+      setParams({ width: 1024, height: 1024, seed: -1, sample_params: {} } as GenParams);
       return;
     }
     try {
       const s = localStorage.getItem("sdcpp:params:" + mode);
-      setParams(s ? deepMerge(deepClone(d), JSON.parse(s)) : deepClone(d));
+      setParams(
+        reconcileOutputFormat(
+          s ? deepMerge(deepClone(d as GenParams), JSON.parse(s)) : deepClone(d as GenParams),
+          caps,
+          mode
+        )
+      );
     } catch {
-      setParams(deepClone(d));
+      setParams(reconcileOutputFormat(deepClone(d as GenParams), caps, mode));
     }
-  }, [mode, caps]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- family/familyCfg 变化由 mode/caps 覆盖（切换模型时 caps 必变）
+  }, [mode, caps, family]);
 
+  // 生成参数按 mode 落 localStorage 的防抖写。带「可强制 flush」的挂起记录：
+  // 切 mode 时 cleanup 会 clearTimeout，若不先 flush，最近 300ms 内的改动会
+  // 永远丢（审查 20-frontend §2.9：拖滑杆后立刻切 vid_gen，数值会自己变回去）。
+  const pendingParamsWrite = useRef<{ mode: GenMode; params: GenParams } | null>(null);
+  const flushParamsWrite = useCallback(() => {
+    const pending = pendingParamsWrite.current;
+    if (!pending) return;
+    pendingParamsWrite.current = null;
+    try {
+      localStorage.setItem("sdcpp:params:" + pending.mode, JSON.stringify(pending.params));
+    } catch {
+      /* ignore */
+    }
+  }, []);
   useEffect(() => {
     if (!params) return;
     // Debounce：拖动滑块会高频更新 params，避免每次都 JSON.stringify 落盘。
-    const t = setTimeout(() => {
-      try {
-        localStorage.setItem("sdcpp:params:" + mode, JSON.stringify(params));
-      } catch {
-        /* ignore */
-      }
-    }, 300);
+    pendingParamsWrite.current = { mode, params };
+    const t = setTimeout(flushParamsWrite, 300);
     return () => clearTimeout(t);
-  }, [params, mode]);
+  }, [params, mode, flushParamsWrite]);
 
   const switchMode = useCallback(
     (m: GenMode) => {
       if (m === mode) return;
+      // 先把当前模式在防抖窗口内的改动落盘，再切（否则这些改动会被 cleanup 吞掉）。
+      flushParamsWrite();
       imageSnapshots.current[mode] = {
         initImage,
         maskImage,
@@ -346,6 +386,7 @@ export function GenerationUI() {
       setRefImages,
       setControlFrames,
       setMode,
+      flushParamsWrite,
     ]
   );
 
@@ -395,8 +436,11 @@ export function GenerationUI() {
         width: alignSizeUp(family, params.width),
         height: alignSizeUp(family, params.height),
         preview: resolvePreviewMode(params.preview, previewModesFromCapabilities(caps, mode)),
-        ...(features.hires === false ? { hires: { enabled: false } } : {}),
-        ...(features.vae_tiling === false ? { vae_tiling_params: { enabled: false } } : {}),
+        // 与面板显隐用同一个判定，避免「看不见但仍生效」（审查 30-api §2.5）。
+        ...(featureEnabled(features, "hires") ? {} : { hires: { enabled: false } }),
+        ...(featureEnabled(features, "vae_tiling", true)
+          ? {}
+          : { vae_tiling_params: { enabled: false } }),
       };
       if (seedRandom || params.seed < 0) {
         const rs = randSeed();
@@ -825,7 +869,7 @@ export function GenerationUI() {
   // 即被 revoke），且 sd-server 无法解码 blob: 协议（对抗性审查 B2）。
   const useAsInit = useCallback(
     (src: string, fmt?: string) => {
-      if (features.init_image === false) {
+      if (!featureEnabled(features, "init_image")) {
         toast("当前模型不支持初始图片输入", true);
         return;
       }
@@ -998,6 +1042,8 @@ export function GenerationUI() {
     onRandomSeed: randomSeed,
     onEscape: handleEscape,
     escapeActive: !!(lightbox || sheetOpen || queueOpen || upscaleTarget !== null),
+    // 参数面板不拦提交（用户可能就想按 Ctrl+Enter 提交），其余三个浮层拦。
+    blockBackgroundShortcuts: !!(lightbox || queueOpen || upscaleTarget !== null),
   });
 
   if (!caps || !params) return null;
@@ -1129,7 +1175,7 @@ export function GenerationUI() {
                     onDownload={download}
                     onRemove={removeResult}
                     onSaveImage={saveImageStable}
-                    onUseAsInit={features.init_image === false ? undefined : useAsInit}
+                    onUseAsInit={featureEnabled(features, "init_image") ? useAsInit : undefined}
                     onUpscale={upscaleAvailable ? openUpscale : undefined}
                     getVideoUrl={getVideoUrl}
                     getImageUrl={getImageUrl}
@@ -1155,7 +1201,7 @@ export function GenerationUI() {
                     >
                       <HistoryGallery
                         onRestoreParams={restoreFromMetadata}
-                        onUseAsInit={features.init_image === false ? undefined : useAsInit}
+                        onUseAsInit={featureEnabled(features, "init_image") ? useAsInit : undefined}
                       />
                     </Suspense>
                   </div>
@@ -1178,6 +1224,7 @@ export function GenerationUI() {
             steps={sp?.sample_steps ?? 20}
             txtCfg={sp?.guidance?.txt_cfg ?? 7}
             limits={caps?.limits}
+            family={family}
             onUpdate={update}
             onToggleNegative={toggleNegative}
             onRandomSeed={randomSeed}

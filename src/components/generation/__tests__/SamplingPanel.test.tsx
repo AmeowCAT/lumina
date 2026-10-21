@@ -31,6 +31,15 @@ describe("SamplingPanel option fallbacks", () => {
     expect(screen.getByLabelText("调度器")).toHaveTextContent("Discrete");
     expect(screen.getByLabelText("采样器")).toHaveTextContent("Euler");
   });
+
+  // 审查 30-api §2.7：陈旧值不仅要在下拉里保留，还必须标出「当前内核不支持」，
+  // 否则界面显示 A、内核静默用默认，用户看不出原因。
+  it("marks persisted values the current kernel does not advertise", () => {
+    render(<SamplingPanel {...baseProps} scheduler="discrete" />);
+
+    expect(screen.getByLabelText("调度器")).toHaveTextContent("当前内核不支持");
+    expect(screen.getByRole("alert")).toHaveTextContent("静默忽略");
+  });
 });
 
 describe("SamplingPanel beta scheduler args", () => {

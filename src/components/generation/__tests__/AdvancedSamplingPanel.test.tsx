@@ -12,8 +12,7 @@ const baseProps = {
   extraSampleArgs: undefined,
 };
 
-describe("AdvancedSamplingPanel VAE 分块", () => {
-  // 上游 get_tile_sizes 里相对尺寸优先于绝对尺寸：改绝对值却不清掉相对值，
+describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes 里相对尺寸优先于绝对尺寸：改绝对值却不清掉相对值，
   // 用户会看到"输入的数字根本没生效"。
   it("编辑分块宽/高时清除该轴的相对尺寸覆盖", async () => {
     const onUpdate = vi.fn();
@@ -101,5 +100,22 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(/不会下发到该内核/);
+  });
+});
+
+// 审查 50-ux F-18：`shifted_timestep` 一直随请求体发送，但此前没有 UI 入口。
+describe("AdvancedSamplingPanel shifted timestep", () => {
+  it("reports edits on the sample_params path", async () => {
+    const onUpdate = vi.fn();
+    render(
+      <AdvancedSamplingPanel
+        {...baseProps}
+        onUpdate={onUpdate}
+        shiftedTimestep={0}
+        vaeTilingParams={undefined}
+      />
+    );
+
+    expect(screen.getByLabelText(/Shifted Timestep/)).toBeTruthy();
   });
 });

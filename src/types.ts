@@ -55,6 +55,12 @@ export interface Settings extends RuntimeDiagnostics {
   maxQueueSize: number;
   /** Port sd-server is launched on and proxied through. Default 1234. */
   sdPort: number;
+  /**
+   * 生成完成后自动保存到输出目录（审查 F-16：结果只在内存，关窗/刷新/内存
+   * 淘汰即整批丢失）。**默认关**：只有显式 `true` 才开启，`undefined` 视为关。
+   * 未配置 outputDir 时该开关不生效。Rust 侧字段 `auto_save_results` 默认 false。
+   */
+  autoSaveResults?: boolean;
   modelSnapshots: Record<string, ModelConfigSnapshot>;
   loadWarning?: {
     code: string;
@@ -337,6 +343,17 @@ export interface Capabilities {
   supported_modes: GenMode[];
   /** 上游只包含支持的模式，缺键可能存在（routes_sdcpp.cpp） */
   defaults_by_mode: Partial<Record<GenMode, GenParams>>;
+  /**
+   * 上游 `api.md` 标注为 deprecated 的**顶层兼容镜像**（`defaults` /
+   * `output_formats` / `features`），只有旧内核或裁剪过的实现才只给这一层。
+   * 生成界面的降级链第一顺位是 `defaults_by_mode`，第二顺位才是它，
+   * 都没有时回落到家族预设——用于兜住「HTTP 200 但形状不同」的白屏（审查 S-11）。
+   */
+  defaults?: GenParams;
+  /** 兼容镜像（旧内核）；语义同 `output_formats_by_mode`。 */
+  output_formats?: string[];
+  /** 兼容镜像（旧内核）；语义同 `features_by_mode`。 */
+  features?: Features;
   limits: Limits;
   samplers: string[];
   schedulers: string[];
@@ -458,6 +475,16 @@ export interface Job {
    *  前端两处耗时换算（JobQueue `created*1000`、ResultsGrid
    *  `completedAt/1000 - created`）都依赖此约定,上游改单位要同步改。 */
   created?: number;
+  /**
+   * 排队位次（1 起，上游 `async_jobs.cpp:167-176`）。队列里只有它还回答
+   * 「前面还有几个」，缺键=旧内核或已完成。
+   */
+  queue_position?: number;
+  /** 真正开始采样的内核时间戳（秒）。`completed - started` 才是生成耗时，
+   *  用 `created` 到轮询时刻估算会混入排队等待与 2s 轮询抖动（审查 30-api §2.8）。 */
+  started?: number;
+  /** 完成时间戳（秒）。 */
+  completed?: number;
   result?: JobResult | null;
   error?: { code?: string; message?: string } | null;
   /** 生成中的最新预览帧；完成任务不再携带该键。 */

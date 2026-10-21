@@ -44,8 +44,6 @@ export function Dashboard() {
 	const setSettings = useStore((s) => s.setSettings);
 	const serverStatus = useStore((s) => s.serverStatus);
 	const caps = useStore((s) => s.caps);
-	const jobs = useStore((s) => s.jobs);
-	const results = useStore((s) => s.results);
 	const scanResult = useStore((s) => s.scanResult);
 	const setScanResult = useStore((s) => s.setScanResult);
 	const mainModel = useStore((s) => s.mainModel);
@@ -67,6 +65,9 @@ export function Dashboard() {
 	} = useModelSwitch();
 	const [scanning, setScanning] = useState(false);
 	const [scanError, setScanError] = useState("");
+	// 内核 `--help` 里出现的选项名（审查 40-cli §2.5）：附加启动参数输入框用
+	// datalist 提示，避免用户把 `--threads` 拼成 `-thread` 之后才发现启动失败。
+	const [cliOptions, setCliOptions] = useState<string[]>([]);
 	const [settingsState, setSettingsState] = useState<
 		"loading" | "saved" | "saving" | "error"
 	>("loading");
@@ -102,6 +103,22 @@ export function Dashboard() {
 				toast("设置加载失败: " + formatError(e), true);
 			});
 	}, [toast]);
+
+	// 预检内核 `--help` 里的选项名，供「附加启动参数」做输入补全（审查
+	// 40-cli §2.5）。失败静默：内核路径无效/离线时，启动流程本身会给出更准确的
+	// 报错，这里不该抢先弹 toast。探测结果在后端有 30s 缓存，切目录也不会打爆。
+	useEffect(() => {
+		let alive = true;
+		api
+			.inspectServer(settings.exeDir || "sd-server")
+			.then((caps) => {
+				if (alive) setCliOptions(caps.options ?? []);
+			})
+			.catch(() => {});
+		return () => {
+			alive = false;
+		};
+	}, [settings.exeDir]);
 
 	// 卸载时冲刷未落盘的设置。防抖（400ms）期间的变更——典型如切换模型
 	// 成功后写入的模型快照——会随 Dashboard 卸载（切回生成界面）被
@@ -277,7 +294,10 @@ export function Dashboard() {
 	const pathsSection = useRef<HTMLDivElement>(null);
 	const modelSection = useRef<HTMLDivElement>(null);
 	const componentsSection = useRef<HTMLDivElement>(null);
-	const revealSection = (ref: { current: HTMLElement | null }) => {
+	const revealSection = (
+		ref: { current: HTMLElement | null },
+		focusFirstField = false
+	) => {
 		const el = ref.current;
 		if (!el) return;
 		el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -285,6 +305,17 @@ export function Dashboard() {
 		el.classList.remove("section-flash");
 		void el.offsetWidth;
 		el.classList.add("section-flash");
+		if (!focusFirstField) return;
+		// 审查 50-ux F-14：滚动 + 闪烁只到"面板"，而目标面板常常是折叠态，
+		// 用户点完检查单看到的是一片折叠面板，还得自己猜在哪一个里。这里先展开
+		// 本区域内第一个折叠面板（走用户点击标题同一条路径），再把焦点送到
+		// 该区域第一个控件上，检查单的"最后一厘米"才算走完。
+		el.querySelector<HTMLElement>(".panel.collapsed .panel-head")?.click();
+		requestAnimationFrame(() => {
+			el.querySelector<HTMLElement>(
+				"select, input, textarea, button.input"
+			)?.focus();
+		});
 	};
 
 	const browse = async (key: "exeDir" | "modelDir" | "outputDir") => {
@@ -455,6 +486,10 @@ export function Dashboard() {
 				setDashboardOpen(false);
 				return;
 			}
+			// 只在点击时取一次状态：订阅整个 jobs/results 数组会让「任务在后台跑、
+			// 用户在控制台改设置」这个最常见的场景每 2 秒整页重渲染一次
+			// （审查 20-frontend §2.6）。
+			const { jobs, results } = useStore.getState();
 			const activeJobs = jobs.filter(
 				(job) =>
 					job.status === "queued" ||
@@ -544,12 +579,16 @@ export function Dashboard() {
 	const external = serverStatus?.external ?? false;
 	// 停止服务器 = 卸载模型：进行中/排队中的任务会随服务器内存一起蒸发，
 	// 存在活动任务时必须两段式确认（对抗性审查 B3）。
-	const activeJobsCount = jobs.filter(
-		(job) =>
-			job.status === "queued" ||
-			job.status === "generating" ||
-			job.status === "unknown",
-	).length;
+	// 用标量 selector：数量不变就不重渲染（审查 20-frontend §2.6）。
+	const activeJobsCount = useStore(
+		(s) =>
+			s.jobs.filter(
+				(job) =>
+					job.status === "queued" ||
+					job.status === "generating" ||
+					job.status === "unknown",
+			).length,
+	);
 	// 安全灯 orb 的四种活法:灭(未运行)/闪烁(启动中)/长明(就绪)/警示(失败)
 	const orbState = running
 		? serverStatus?.phase === "failed"
@@ -679,7 +718,10 @@ export function Dashboard() {
 						type="button"
 						className={cn("check-item", componentsReady && "done")}
 						onClick={() =>
-							revealSection(modelReady ? componentsSection : pathsSection)
+							revealSection(
+								modelReady ? componentsSection : pathsSection,
+								modelReady
+							)
 						}
 					>
 						<span className="check-dot" aria-hidden="true" />
@@ -733,6 +775,15 @@ export function Dashboard() {
 							<div className="validation-summary" role="alert">
 								还缺 {missingRequirements.length} 个必需配置：
 								{missingRequirements.join("、")}
+								{/* 审查 50-ux F-14：给"缺 X 项"一个直达入口，点开就是
+								    组件面板展开 + 光标落在第一个可填控件上。 */}
+								<button
+									type="button"
+									className="btn btn-sm ml-2"
+									onClick={() => revealSection(componentsSection, true)}
+								>
+									去填写
+								</button>
 							</div>
 						)}
 					{mainModel && familyConfig?.unsupported && (
@@ -931,7 +982,21 @@ export function Dashboard() {
 							{IC.folder}
 						</button>
 					</div>
-					<div className="field-hint">「保存到输出目录」按钮的目标路径（不再自动保存）</div>
+					<div className="field-hint">「保存到输出目录」按钮的目标路径；开启下方开关后，生成完成也会自动写入这里</div>
+					<div style={{ marginTop: 10 }}>
+						<Toggle
+							label="生成完成后自动保存到输出目录"
+							checked={settings.autoSaveResults === true}
+							onChange={(v) =>
+								setSettings((s) => ({ ...s, autoSaveResults: v }))
+							}
+						/>
+						<div className="field-hint">
+							{settings.outputDir.trim()
+								? "默认关闭：关闭时结果只存在内存里，关闭窗口、刷新或内存淘汰都会丢失未保存的结果"
+								: "未配置输出目录时该开关不生效"}
+						</div>
+					</div>
 				</Panel>
 				</div>
 
@@ -1415,14 +1480,22 @@ export function Dashboard() {
 							id="dashboard-extra-args"
 							className="input"
 							type="text"
+							list="dashboard-extra-arg-options"
 							value={settings.extraArgs}
 							onChange={(e) =>
 								setSettings((s) => ({ ...s, extraArgs: e.target.value }))
 							}
 							placeholder="例如 --threads 8 --mmap"
 						/>
+						<datalist id="dashboard-extra-arg-options">
+							{cliOptions.map((opt) => (
+								<option key={opt} value={opt} />
+							))}
+						</datalist>
 						<div className="field-hint field-hint-flush mt-0.5">
-							最后追加到 sd-server 命令行，同名值优先于控件；启动前按实际内核预检，不会改写保存值
+							{cliOptions.length > 0
+								? `最后追加到 sd-server 命令行，同名值优先于控件；输入时按 ↓ 可从当前内核的 ${cliOptions.length} 个选项里补全`
+								: "最后追加到 sd-server 命令行，同名值优先于控件；启动前按实际内核预检，不会改写保存值"}
 						</div>
 					</div>
 					<div className="form-row mt-2">

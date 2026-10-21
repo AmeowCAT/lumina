@@ -33,6 +33,10 @@ export default function App() {
   const toast = useStore((s) => s.toast);
   const lastCapsSync = useRef(0);
   const lastCapsErrorToast = useRef(0);
+  // 3s 轮询里含两次 IPC（serverStatus + capabilities，Rust 侧 reqwest 硬超时
+  // 最长 30s）。没有互斥时慢请求会叠加下一轮，多轮结果乱序回写 caps
+  // （审查 20-frontend §2.7）。
+  const checkBusy = useRef(false);
 
   // 任务轮询挂在整个 App 生命周期（而非 GenerationUI）：切到控制台改设置
   // 期间任务仍在服务器上跑，停止轮询会让完成的结果无人收货、随服务器
@@ -44,6 +48,8 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     const check = async () => {
+      if (checkBusy.current) return;
+      checkBusy.current = true;
       try {
         const s = await api.serverStatus();
         if (!alive) return;
@@ -124,14 +130,22 @@ export default function App() {
             setPhase("dashboard");
           }
         } else {
-          if (useStore.getState().caps) {
+          // 用户主动切模型时会先 stopServer 再 start（Dashboard 里），那段时间
+          // 必然「不可达」——此时弹红色「连接已断开」是假错误（审查 20-frontend
+          // §2.7）。只在工作室里（非控制台）突然失联才算异常。
+          if (useStore.getState().caps && !useStore.getState().dashboardOpen) {
             setCaps(null);
             toast("与服务器的连接已断开", true);
+          } else if (useStore.getState().caps) {
+            // 控制台里（多半是切换模型/重启中）：静默清空能力，不报错。
+            setCaps(null);
           }
           setPhase("dashboard");
         }
       } catch {
         if (alive) setPhase((p) => (p === "checking" ? "dashboard" : p));
+      } finally {
+        checkBusy.current = false;
       }
     };
     check();

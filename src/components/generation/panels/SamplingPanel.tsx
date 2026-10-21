@@ -55,16 +55,21 @@ export const SamplingPanel = memo(function SamplingPanel({
   // capabilities 对"未设置"返回 "default"（routes_sdcpp.cpp
   // capability_*_name），固定放一个"默认（自动）"选项；
   // 当前值不在 caps 列表时再补一项，避免触发器空态。
+  // 陈旧值（持久化里是别的内核的枚举）保留可选项，但必须**标出来**：上游对未知
+  // 枚举是静默忽略，于是界面显示 A、实际跑默认，用户完全看不出原因
+  // （审查 30-api §2.7）。
   const samplerOptions = [
     { value: "default", label: "默认（自动）" },
     ...samplers
       .filter((s) => s !== "default")
       .map((s) => ({ value: s, label: SAMPLER_NAMES[s] || s })),
   ];
-  if (sampleMethod && sampleMethod !== "default" && !samplers.includes(sampleMethod)) {
+  const staleSampler =
+    !!sampleMethod && sampleMethod !== "default" && !samplers.includes(sampleMethod);
+  if (staleSampler) {
     samplerOptions.push({
       value: sampleMethod,
-      label: SAMPLER_NAMES[sampleMethod] || sampleMethod,
+      label: `${SAMPLER_NAMES[sampleMethod] || sampleMethod}（当前内核不支持）`,
     });
   }
   const schedulerOptions = [
@@ -73,10 +78,12 @@ export const SamplingPanel = memo(function SamplingPanel({
       .filter((s) => s !== "default")
       .map((s) => ({ value: s, label: SCHEDULER_NAMES[s] || s })),
   ];
-  if (scheduler && scheduler !== "default" && !schedulers.includes(scheduler)) {
+  const staleScheduler =
+    !!scheduler && scheduler !== "default" && !schedulers.includes(scheduler);
+  if (staleScheduler) {
     schedulerOptions.push({
       value: scheduler,
-      label: SCHEDULER_NAMES[scheduler] || scheduler,
+      label: `${SCHEDULER_NAMES[scheduler] || scheduler}（当前内核不支持）`,
     });
   }
   const previewChoices = [...new Set(previewModes.filter((m) => m !== "none"))];
@@ -112,6 +119,12 @@ export const SamplingPanel = memo(function SamplingPanel({
           options={schedulerOptions}
         />
       </div>
+      {(staleSampler || staleScheduler) && (
+        <div className="field-hint field-hint-flush" role="alert">
+          当前内核的采样器/调度器列表里没有已保存的值：内核会静默忽略未知枚举，
+          界面上显示的并不是实际生效的采样方式。建议改选「默认（自动）」。
+        </div>
+      )}
       {sampleMethod === "lms" && (
         <>
           <Slider

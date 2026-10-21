@@ -245,3 +245,181 @@ describe("ResultsGrid 聚焦区 + 瀑布流", () => {
     expect(document.querySelector(".featured-item video")).toBeTruthy();
   });
 });
+
+/** vid_gen 结果的容器 MIME 决定渲染器（审查 §2.2）。 */
+function animatedWebpEntry(jobId: string): ResultEntry {
+  return {
+    jobId,
+    mode: "vid_gen",
+    result: {
+      mime_type: "image/webp",
+      output_format: "webp",
+      fps: 24,
+      frame_count: 33,
+      b64_json: `d2VicC0${jobId}`,
+    },
+    created: 1000,
+    completedAt: 4000,
+    config: { mode: "vid_gen", params: params() } as JobConfig,
+  };
+}
+
+function aviEntry(jobId: string): ResultEntry {
+  return {
+    jobId,
+    mode: "vid_gen",
+    result: {
+      mime_type: "video/x-msvideo",
+      output_format: "avi",
+      fps: 24,
+      frame_count: 33,
+      b64_json: `YXZpLQ${jobId}`,
+    },
+    created: 1000,
+    completedAt: 4000,
+    config: { mode: "vid_gen", params: params() } as JobConfig,
+  };
+}
+
+describe("ResultsGrid 容器 MIME 分支（审查 §2.2）", () => {
+  afterEach(() => cleanup());
+
+  it("animated WebP 走 <img>，不再创建注定黑屏的 <video>", () => {
+    const getVideoUrl = vi.fn(() => "blob:should-not-be-used");
+    const getImageUrl = vi.fn(
+      (b64: string, fmt: string) => `data:image/${fmt};base64,${b64}`
+    );
+    render(
+      <ResultsGrid
+        results={[animatedWebpEntry("anim")]}
+        {...baseProps}
+        getVideoUrl={getVideoUrl}
+        getImageUrl={getImageUrl}
+      />
+    );
+    expect(document.querySelector(".featured-item video")).toBeNull();
+    expect(document.querySelector(".featured-item img")).toHaveAttribute(
+      "src",
+      "data:image/webp;base64,d2VicC0anim"
+    );
+    expect(getVideoUrl).not.toHaveBeenCalled();
+  });
+
+  it("video/webm 结果仍然渲染 <video>，且使用视频 URL", () => {
+    const getVideoUrl = vi.fn(
+      (jobId: string, _b64: string, mime: string) => `blob:${jobId}/${mime}`
+    );
+    render(
+      <ResultsGrid
+        results={[videoEntry("clip")]}
+        {...baseProps}
+        getVideoUrl={getVideoUrl}
+      />
+    );
+    expect(document.querySelector(".featured-item video")).toHaveAttribute(
+      "src",
+      "blob:clip/video/webm"
+    );
+    expect(document.querySelector(".featured-item img")).toBeNull();
+  });
+
+  it("AVI 结果给可读提示，而不是永远黑屏的播放器", () => {
+    render(<ResultsGrid results={[aviEntry("avi")]} {...baseProps} />);
+    const note = screen.getByRole("note");
+    expect(note.textContent).toContain("AVI");
+    expect(note.textContent).toContain("video/x-msvideo");
+    expect(document.querySelector(".featured-item video")).toBeNull();
+  });
+
+  it("animated WebP 进 lightbox 时归图片通道（浏览器原生播放动图）", () => {
+    const onLightbox = vi.fn();
+    const getImageUrl = vi.fn((_b64: string, fmt: string) => `data:image/${fmt};b64`);
+    render(
+      <ResultsGrid
+        results={[animatedWebpEntry("anim")]}
+        {...baseProps}
+        onLightbox={onLightbox}
+        getImageUrl={getImageUrl}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "全屏预览动图" }));
+    expect(onLightbox).toHaveBeenCalledWith(
+      [
+        {
+          type: "image",
+          src: "data:image/webp;b64",
+          mime: "image/webp",
+          title: "24 FPS · 33 帧",
+        },
+      ],
+      0
+    );
+  });
+
+  it("mime_type 缺失时按 output_format 反查容器", () => {
+    const entry = animatedWebpEntry("fallback");
+    delete entry.result!.mime_type;
+    const getImageUrl = vi.fn((_b64: string, fmt: string) => `data:image/${fmt};b64`);
+    const getVideoUrl = vi.fn(() => "blob:video");
+    render(
+      <ResultsGrid
+        results={[entry]}
+        {...baseProps}
+        getImageUrl={getImageUrl}
+        getVideoUrl={getVideoUrl}
+      />
+    );
+    expect(document.querySelector(".featured-item img")).toBeTruthy();
+    expect(getVideoUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("ResultsGrid 新结果自动回顶（审查 §2.17 #5）", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  /** jsdom 未实现元素滚动：打桩后断言"是否发生回顶"。 */
+  function stubScrollTo() {
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      value: scrollTo,
+      writable: true,
+      configurable: true,
+    });
+    return scrollTo;
+  }
+
+  it("结果数不再增长时（已到上限）仍会为新结果回顶", () => {
+    const scrollTo = stubScrollTo();
+    const { rerender } = render(
+      <ResultsGrid
+        results={[imageEntry("a"), imageEntry("b")]}
+        {...baseProps}
+      />
+    );
+    expect(scrollTo).not.toHaveBeenCalled(); // 首次挂载不打断阅读位置
+
+    // 长度不变（模拟 MAX_RESULTS 淘汰最旧一条），但最新一条换了 → 回顶
+    rerender(
+      <ResultsGrid
+        results={[imageEntry("c"), imageEntry("b")]}
+        {...baseProps}
+      />
+    );
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("删除结果不会把用户拽回顶部", () => {
+    const scrollTo = stubScrollTo();
+    const { rerender } = render(
+      <ResultsGrid
+        results={[imageEntry("a"), imageEntry("b")]}
+        {...baseProps}
+      />
+    );
+    rerender(<ResultsGrid results={[imageEntry("b")]} {...baseProps} />);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+});

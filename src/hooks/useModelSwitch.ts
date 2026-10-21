@@ -163,8 +163,11 @@ export function useModelSwitch() {
           if (!snapshot) throw new Error("缺少当前模型的启动快照");
           previousConfig = await buildLaunchConfig(previousPath, snapshot, true);
         } catch (error) {
+          // 附上 cause：面板只展示这句人话，控制台/日志里还能看到原始堆栈
+          // （eslint preserve-caught-error）。
           throw new Error(
-            `无法准备当前模型的回滚配置，已保留运行中的模型：${formatError(error)}。请检查旧模型配置；如需放弃自动回滚，请先手动停止服务再启动目标模型。`
+            `无法准备当前模型的回滚配置，已保留运行中的模型：${formatError(error)}。请检查旧模型配置；如需放弃自动回滚，请先手动停止服务再启动目标模型。`,
+            { cause: error }
           );
         }
       }

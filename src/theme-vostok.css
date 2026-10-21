@@ -28,7 +28,7 @@
     --color-hover: oklch(0.275 0.012 65);        /* #2c2722 悬停 */
     --color-fg: oklch(0.935 0.024 95);           /* #eeead8 奶油纸白 */
     --color-fg2: oklch(0.76 0.018 90);           /* #b5b1a4 次级 */
-    --color-muted: oklch(0.575 0.016 75);        /* #7f786f 弱化 */
+    --color-muted: oklch(0.66 0.016 75);        /* 弱化文字：原 0.575 只有 4.16–4.41:1，提亮后 ≥5.2:1（审查 F-04） */
     --color-line: color-mix(in oklch, var(--color-fg) 8%, transparent);
     --color-line2: color-mix(in oklch, var(--color-fg) 16%, transparent);
     /* 朱砂红:全局唯一强调色 */
@@ -214,6 +214,19 @@
     filter: drop-shadow(0 4px 14px color-mix(in oklch, var(--color-accent) 38%, transparent));
   }
   [data-theme="vostok"] .btn-primary:active:not(:disabled) { transform: translateY(1px) }
+  /* 可读性修正（审查 ux-a11y F-05）：grad-flow 上的奶油字只有 4.20:1、hover 3.28:1。
+     把主 CTA 底色压深到 AA 达标区间（≈6:1），hover 不再提亮，改用位移+辉光表达。 */
+  [data-theme="vostok"] .btn-primary,
+  [data-theme="vostok"] .btn-primary:hover {
+    background: linear-gradient(
+      100deg,
+      oklch(0.46 0.17 33) 0%,
+      oklch(0.50 0.19 28) 60%,
+      oklch(0.47 0.18 30) 100%
+    );
+    background-size: 160% 100%;
+  }
+  [data-theme="vostok"] .btn-primary:hover { background-position: 80% 0 }
   [data-theme="vostok"] .btn-primary:focus-visible {
     outline: none;
     filter: drop-shadow(0 0 5px color-mix(in oklch, var(--color-accent-hi) 85%, transparent))
