@@ -5,22 +5,22 @@
 
 ## 1. 门禁矩阵
 
-| #   | 命令                                                                         | 结果                                                                                 |
-| --- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 1   | `npm run check:types`                                                        | exit 0（`src` + `vite/vitest/scripts` 两套 project）                                 |
-| 2   | `npm run lint`                                                               | exit 0 —— 0 error / 52 warning（React 19 建议类与 `exhaustive-deps`，见第九轮说明）  |
-| 3   | `npm test`                                                                   | 42 files / **489 passed**                                                            |
-| 4   | `npm run test:coverage`                                                      | 语句 71.92% / 分支 67.26% / 函数 65.41% / 行 73.77%，**全部通过阈值**（60/55/55/62） |
-| 5   | `npm run build`                                                              | 通过；入口 `index.js` 112.58 kB（gzip 36.56）、`families-data` 独立 chunk 40.66 kB   |
-| 6   | `npm audit`                                                                  | 0 vulnerabilities                                                                    |
-| 7   | `npm ls --depth=0`                                                           | 无 extraneous / UNMET / invalid                                                      |
-| 8   | `npm run check:version`                                                      | 5 处版本号一致（含 `package-lock.json`），Tauri npm↔crate 主次版本匹配               |
-| 9   | `cd src-tauri && cargo fmt --check`                                          | exit 0                                                                               |
-| 10  | `cargo clippy --all-targets -- -D warnings`                                  | exit 0                                                                               |
-| 11  | `cargo test`                                                                 | **108 passed**                                                                       |
-| 12  | `npx tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json` | 产出 `src-tauri/target/debug/lumina.exe`                                             |
-| 13  | `node scripts/upstream-diff.mjs`                                             | 与上游 `d55cc0f…master` 相比无参数/字段增删                                          |
-| 14  | `npm run format:check`                                                       | 全库已格式化（Prettier 独立 commit 之后）                                            |
+| #   | 命令                                                                         | 结果                                                                                          |
+| --- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1   | `npm run check:types`                                                        | exit 0（`src` + `vite/vitest/scripts` 两套 project）                                          |
+| 2   | `npm run lint`                                                               | exit 0 —— 0 error / 52 warning（React 19 建议类与 `exhaustive-deps`，见第九轮说明）           |
+| 3   | `npm test`                                                                   | 42 files / **489 passed**                                                                     |
+| 4   | `npm run test:coverage`                                                      | 语句 72.03% / 分支 67.29% / 函数 65.50% / 行 73.92%，**全部通过阈值**（60/55/55/62）          |
+| 5   | `npm run build`                                                              | 通过；入口 `index.js` 112.58 kB（gzip 36.56）、`families-data` 独立 chunk 40.66 kB            |
+| 6   | `npm audit`                                                                  | 0 vulnerabilities                                                                             |
+| 7   | `npm ls --depth=0`                                                           | 无 extraneous / UNMET / invalid                                                               |
+| 8   | `npm run check:version`                                                      | 5 处版本号一致（含 `package-lock.json`），Tauri npm↔crate 主次版本匹配                        |
+| 9   | `cd src-tauri && cargo fmt --check`                                          | exit 0                                                                                        |
+| 10  | `cargo clippy --all-targets -- -D warnings`                                  | exit 0                                                                                        |
+| 11  | `cargo test`                                                                 | **108 passed**                                                                                |
+| 12  | `npx tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json` | 产出 `src-tauri/target/debug/lumina.exe`                                                      |
+| 13  | `node scripts/upstream-diff.mjs`                                             | 请求体字段无增删；启动参数新增 `--model-dir`，已裁定不接并登记理由（`docs/UPSTREAM-SYNC.md`） |
+| 14  | `npm run format:check`                                                       | 全库已格式化（Prettier 独立 commit 之后）                                                     |
 
 ## 2. P1 逐条核对（S-1 … S-11）
 
