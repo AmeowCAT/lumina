@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -287,13 +287,28 @@ async fn probe_output(exe: &Path, arg: &str) -> Option<(String, bool)> {
 
 /// Cache one successful probe, keyed by the resolved file and its metadata.
 /// Short TTL also covers in-place replacements preserving file size/mtime.
+///
+/// 锁只保护缓存读写，探测本身在锁外（审查 10 §2.13）。旧实现用一把
+/// `tokio::sync::Mutex` 横跨「两次 spawn 子进程（各 5s 超时）」整段持锁，
+/// 于是 `inspect_server` / `preflight_server` / `start_server` 三条命令被串行化：
+/// 前端切模型走 `preflight → start`，用户会看到最多约 10s 的无响应。
+/// 缓存也从「单条 Option」改成按 exe 路径索引的 HashMap——在
+/// `sd-server-cuda` / `sd-server-vulkan` 之间来回切时不会每次必然 miss。
 pub async fn probe(exe: &Path) -> CliCapabilities {
-    static CACHE: OnceLock<Mutex<Option<CachedProbe>>> = OnceLock::new();
-    let mut cache = CACHE.get_or_init(|| Mutex::new(None)).lock().await;
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedProbe>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
     let key = probe_key(exe);
-    if let (Some(key), Some(cached)) = (&key, cache.as_ref()) {
-        if *key == cached.key && cached.at.elapsed() < Duration::from_secs(30) {
-            return cached.capabilities.clone();
+    // 读缓存：短暂持锁，命中即返回。
+    if let Some(key) = key.as_ref() {
+        let hit = {
+            let guard = cache.lock().await;
+            guard.get(&key.path).and_then(|cached| {
+                (*key == cached.key && cached.at.elapsed() < Duration::from_secs(30))
+                    .then(|| cached.capabilities.clone())
+            })
+        };
+        if let Some(caps) = hit {
+            return caps;
         }
     }
     let (help, version) = tokio::join!(probe_output(exe, "--help"), probe_output(exe, "--version"));
@@ -309,12 +324,21 @@ pub async fn probe(exe: &Path) -> CliCapabilities {
                 .find(|s| !s.trim().is_empty())
                 .map(|s| s.trim().chars().take(200).collect())
         });
-    if caps.verified && key.is_some() && key == probe_key(exe) {
-        *cache = Some(CachedProbe {
-            key: key.unwrap(),
-            at: Instant::now(),
-            capabilities: caps.clone(),
-        });
+    // 用 `if let` 取代 `key.is_some() && key.unwrap()`（clippy
+    // unnecessary_unwrap）：判空与取用之间不再有第二次解包，同时保留
+    // 「两次 metadata 一致才缓存」的防护——探测结果继续返回给本次调用。
+    if let (true, Some(key)) = (caps.verified, key) {
+        if probe_key(exe).as_ref() == Some(&key) {
+            let mut guard = cache.lock().await;
+            guard.insert(
+                key.path.clone(),
+                CachedProbe {
+                    key,
+                    at: Instant::now(),
+                    capabilities: caps.clone(),
+                },
+            );
+        }
     }
     caps
 }

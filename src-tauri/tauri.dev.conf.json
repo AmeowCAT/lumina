@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "流光 Lumina",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 640,
+        "minHeight": 560,
+        "theme": "Dark",
+        "backgroundColor": "#0d0b09",
+        "decorations": false,
+        "shadow": true,
+        "devtools": true
+      }
+    ]
+  }
+}

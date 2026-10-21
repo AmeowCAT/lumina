@@ -8,6 +8,38 @@ fn has_any(s: &str, patterns: &[&str]) -> bool {
     patterns.iter().any(|p| s.contains(p))
 }
 
+/// 词首匹配：`pat` 出现处的前一个字符不是字母/数字，且其后不是小写字母。
+///
+/// 裸 `contains` 会把 `anima` 命中 `animation.safetensors`、`wan` 命中
+/// `taiwan-...`，选错家族 → 默认步数/CFG/启动参数全跟着错（审查
+/// 40-cli-families §2.6）。允许 `anima_pony`、`wan2.1-t2v` 这类紧随分隔符或
+/// 数字的写法。
+fn has_word(s: &str, patterns: &[&str]) -> bool {
+    patterns.iter().any(|p| {
+        if p.is_empty() {
+            return false;
+        }
+        let mut from = 0;
+        while let Some(idx) = s[from..].find(p) {
+            let start = from + idx;
+            let before_ok = start == 0
+                || !s[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric());
+            let after_ok = match s[start + p.len()..].chars().next() {
+                None => true,
+                Some(c) => !c.is_ascii_lowercase(),
+            };
+            if before_ok && after_ok {
+                return true;
+            }
+            from = start + p.len();
+        }
+        false
+    })
+}
+
 fn is_z_image_l2p(path: &str) -> bool {
     let mut parts = path.rsplit(['/', '\\']).filter(|part| !part.is_empty());
     let name = parts.next().unwrap_or("");
@@ -27,9 +59,7 @@ fn is_z_image_l2p(path: &str) -> bool {
                 | "diffusion_pytorch_model.safetensors"
         );
     opaque_name
-        && parts.any(|part| {
-            matches!(part, "l2p" | "z_image_l2p" | "z-image-l2p" | "zimage-l2p")
-        })
+        && parts.any(|part| matches!(part, "l2p" | "z_image_l2p" | "z-image-l2p" | "zimage-l2p"))
 }
 
 /// Iris-3B（上游 #2117）：像素空间 DiT，文件名只有 `iris-3b.safetensors` 这类
@@ -164,7 +194,18 @@ pub fn detect_family(path: &str) -> &'static str {
     if has_any(&t, &["flux2", "flux.2-dev", "flux-2-dev"]) {
         return "flux2";
     }
-    if has_any(&t, &["flux1-", "flux.1-", "flux1_"]) {
+    if has_any(
+        &t,
+        &[
+            "flux1-",
+            "flux.1-",
+            "flux1_",
+            "flux-1-",
+            "flux-1_",
+            "flux-1-dev",
+            "flux-1-schnell",
+        ],
+    ) {
         return "flux";
     }
     if has_any(&t, &["chroma1-radiance", "chroma-radiance"]) {
@@ -311,7 +352,7 @@ pub fn detect_family(path: &str) -> &'static str {
         }
         return "sefi";
     }
-    if has_any(&t, &["anima"]) {
+    if has_word(&t, &["anima"]) {
         return "anima";
     }
     if has_any(&t, &["longcat"]) {
@@ -335,7 +376,7 @@ pub fn detect_family(path: &str) -> &'static str {
     if has_any(&t, &["sd3.5", "sd_3", "stable-diffusion-3", "sd3"]) {
         return "sd3";
     }
-    if has_any(&t, &["wan"]) {
+    if has_word(&t, &["wan"]) {
         if has_any(&t, &["a14b"]) {
             return "wan-a14b";
         }
@@ -362,7 +403,8 @@ pub fn detect_family(path: &str) -> &'static str {
 fn is_llm_encoder(test: &str, name_test: &str) -> bool {
     // LLaDA-Image 的扩散模型本体与文本编码器共用 "llada-image" 前缀
     // （llada-image-text_encoder-q8_0.gguf），必须靠 text_encoder 标记区分。
-    if has_any(name_test, &["llada"]) && has_any(name_test, &["text_encoder", "text-encoder", "text encoder"])
+    if has_any(name_test, &["llada"])
+        && has_any(name_test, &["text_encoder", "text-encoder", "text encoder"])
     {
         return true;
     }
@@ -386,7 +428,14 @@ fn is_llm_encoder(test: &str, name_test: &str) -> bool {
     if has_any(name_test, &["ming_image", "ming-image", "mingimage"]) {
         return has_any(
             name_test,
-            &["ling", "text_enc", "text-enc", "text encoder", "mllm", "connector"],
+            &[
+                "ling",
+                "text_enc",
+                "text-enc",
+                "text encoder",
+                "mllm",
+                "connector",
+            ],
         ) && !has_any(name_test, &["lingbot", "ling-bot", "ling_bot"]);
     }
     if has_any(name_test, &["llada-image", "llada_image", "lladaimage"]) {
@@ -712,8 +761,7 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
         return "llm";
     }
     // Diffusion model by name — high-noise variant first
-    if is_diffusion_model_name(&test)
-        || is_z_image_l2p(&format!("{}/{}", dir, name.to_lowercase()))
+    if is_diffusion_model_name(&test) || is_z_image_l2p(&format!("{}/{}", dir, name.to_lowercase()))
     {
         if has_any(&test, &["highnoise", "high-noise", "high_noise"]) {
             return "high_noise_model";
@@ -730,6 +778,38 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 审查 40-cli-families §2.6：短名字用裸子串会误判到别的家族，默认值与
+    /// 启动参数随之全错。这组用例锁住"词首匹配"的边界。
+    #[test]
+    fn short_family_names_do_not_match_inside_other_words() {
+        // `anima` ⊂ `animation`：AnimateDiff 的权重不能被当成 Anima。
+        assert_ne!(
+            detect_family("/models/animation-motion.safetensors"),
+            "anima"
+        );
+        // `wan` ⊂ `taiwan`：地名/作者名里出现的 wan 不是 Wan 家族。
+        assert_ne!(
+            detect_family("/models/taiwan-style-v1.safetensors"),
+            "wan-t2v"
+        );
+        // 正例不能被一起误杀。
+        assert_eq!(detect_family("/models/anima_pony_v1.safetensors"), "anima");
+        assert_eq!(
+            detect_family("/models/wan2.1-t2v-14b.safetensors"),
+            "wan-t2v"
+        );
+        assert_eq!(detect_family("/models/wan-ti2v-5b.safetensors"), "wan-ti2v");
+    }
+
+    /// FLUX.1 的官方文件名是 `flux-1-dev` / `flux-1-schnell`（连字符），旧规则只认
+    /// `flux1-` / `flux.1-` / `flux1_`，会落到 `custom`。
+    #[test]
+    fn detects_hyphenated_flux1_names() {
+        assert_eq!(detect_family("/models/flux-1-dev.safetensors"), "flux");
+        assert_eq!(detect_family("/models/flux-1-schnell.safetensors"), "flux");
+        assert_eq!(detect_family("/models/flux1-dev.safetensors"), "flux");
+    }
 
     #[test]
     fn detects_sensenova_packages_and_classifies_the_index() {
@@ -879,7 +959,11 @@ mod tests {
             "model"
         );
         // 父目录名不得参与编码器判定：Ming-Image-sampling 含 "ling"。
-        for dir in ["Ming-Image-sampling", "Ming-Image-scaling", "Ming-Image-tiling"] {
+        for dir in [
+            "Ming-Image-sampling",
+            "Ming-Image-scaling",
+            "Ming-Image-tiling",
+        ] {
             assert_eq!(
                 classify_file(
                     "ming_image_0.1_design_bf16.safetensors",
@@ -1367,14 +1451,20 @@ mod tests {
     /// 否则 z_image_l2p 会被子串命中误判成 zimage。
     #[test]
     fn detects_z_image_l2p_before_generic_z_image() {
-        assert_eq!(detect_family("/models/L2P/model-1k-merge.safetensors"), "zimage-l2p");
+        assert_eq!(
+            detect_family("/models/L2P/model-1k-merge.safetensors"),
+            "zimage-l2p"
+        );
         assert_eq!(
             detect_family("/models/z_image_l2p_f16.safetensors"),
             "zimage-l2p"
         );
         assert_eq!(detect_family("Z-Image-L2P-Q8_0.gguf"), "zimage-l2p");
         // 普通 Z-Image / Turbo 不受影响。
-        assert_eq!(detect_family("/models/z_image_turbo.safetensors"), "zimage-turbo");
+        assert_eq!(
+            detect_family("/models/z_image_turbo.safetensors"),
+            "zimage-turbo"
+        );
         assert_eq!(detect_family("/models/z-image-base.safetensors"), "zimage");
     }
 
@@ -1403,8 +1493,14 @@ mod tests {
             detect_family("/models/L2P/transformer/model.safetensors"),
             "zimage-l2p"
         );
-        assert_eq!(classify_file("helper.gguf", "helper", "l2p-backups", 12.0), "other");
-        assert_eq!(classify_file("scal2per.gguf", "scal2per", "", 12.0), "other");
+        assert_eq!(
+            classify_file("helper.gguf", "helper", "l2p-backups", 12.0),
+            "other"
+        );
+        assert_eq!(
+            classify_file("scal2per.gguf", "scal2per", "", 12.0),
+            "other"
+        );
         assert_eq!(classify_file("l2p-q8.gguf", "l2p-q8", "", 220.0), "model");
     }
 
