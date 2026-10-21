@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// @ts-check
+// 类型检查：tsconfig.node.json 的 allowJs + checkJs 覆盖 scripts/*.mjs，
+// 随 `npm run check:types` 一起跑（审查 60-build-test §2.14）。
+//
 // 上游漂移检测（审查 99-final-report §5.2）。
 //
 // Lumina 的维护成本几乎全部来自「跟随上游」：CLI 参数、`/sdcpp/v1` 请求体字段、
@@ -24,11 +28,21 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+/** 脚本参数（已去掉 node 与脚本路径本身） @type {string[]} */
 const argv = process.argv.slice(2);
+/**
+ * 取 `--name value` 形式选项的值。
+ * @param {string} name
+ * @returns {string | undefined}
+ */
 const flag = (name) => {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
 };
+/**
+ * @param {string} name
+ * @returns {boolean}
+ */
 const has = (name) => argv.includes(name);
 const ref = flag("--ref") || "master";
 const upstreamDir = flag("--upstream");
@@ -41,11 +55,20 @@ const FILES = {
   cli: "examples/cli/main.cpp",
 };
 
+/**
+ * 去重 + 排序（输出稳定，便于 diff 两次运行结果）。
+ * @template T
+ * @param {T[]} xs
+ * @returns {T[]}
+ */
 const uniq = (xs) => [...new Set(xs)].sort();
 
 /**
  * 已确认「上游接受但本界面故意不接」的请求体字段：覆盖模式把它们当作信息输出，
  * 不算缺口。新增条目必须写清理由，否则下一个人无法判断是漏了还是有意为之。
+ * 类型显式写成 Record：脚本里以动态字段名 `k` 索引（`KNOWN_UNSUPPORTED[k]`），
+ * 没有索引签名会被 TS 判为隐式 any。
+ * @type {Record<string, string>}
  */
 const KNOWN_UNSUPPORTED = {
   ad_model: "ADetailer 只在 sd-cli 的 -M adetailer 通道可用，/sdcpp/v1 不消费（README 已知限制）",
@@ -54,12 +77,25 @@ const KNOWN_UNSUPPORTED = {
   extra_ad_args: "同上",
   upscale_repeats: "img_gen 的二次放大重复次数，界面未暴露；内核默认 1",
 };
+/**
+ * @param {string} text
+ * @returns {string[]}
+ */
 const extractArgs = (text) =>
   uniq([...text.matchAll(/"(--[a-z0-9][a-z0-9-]*)"/g)].map((m) => m[1]));
+/**
+ * @param {string} text
+ * @returns {string[]}
+ */
 const extractJsonKeys = (text) =>
   uniq([...text.matchAll(/load_if_exists\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1]));
 
-/** 读上游某个提交上的文件：本地克隆用 git show，否则走 raw.githubusercontent。 */
+/**
+ * 读上游某个提交上的文件：本地克隆用 git show，否则走 raw.githubusercontent。
+ * @param {string} path 上游仓库内的相对路径
+ * @param {string} revision 提交/分支
+ * @returns {Promise<string>}
+ */
 async function upstreamFile(path, revision) {
   if (upstreamDir) {
     return execFileSync("git", ["show", `${revision}:${path}`], {
@@ -74,15 +110,23 @@ async function upstreamFile(path, revision) {
   return res.text();
 }
 
-/** README 里声明的「当前对齐上游」提交。 */
+/**
+ * README 里声明的「当前对齐上游」提交。
+ * @returns {string | undefined}
+ */
 function syncedRef() {
   const readme = readFileSync(join(ROOT, "README.md"), "utf8");
   return /当前对齐上游 `master` @ \[`([0-9a-f]{7,40})`\]/.exec(readme)?.[1];
 }
 
-/** 本仓库前端 + Rust 源码的合并文本，用于覆盖模式判断。 */
+/**
+ * 本仓库前端 + Rust 源码的合并文本，用于覆盖模式判断。
+ * @returns {string}
+ */
 function repoTokens() {
+  /** @type {string[]} */
   const out = [];
+  /** @param {string} dir */
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name === "__tests__" || name.startsWith(".")) continue;
@@ -97,6 +141,12 @@ function repoTokens() {
   return out.join("\n");
 }
 
+/**
+ * @param {string} title
+ * @param {string[]} items
+ * @param {string} [hint]
+ * @returns {boolean} 是否发现条目
+ */
 function report(title, items, hint) {
   if (!items.length) return false;
   console.log(`\n⚠ ${title}（${items.length}）`);
@@ -105,6 +155,7 @@ function report(title, items, hint) {
   return true;
 }
 
+/** @returns {Promise<number>} 进程退出码 */
 async function drift() {
   const since = flag("--since") || syncedRef();
   if (!since) {
@@ -148,6 +199,7 @@ async function drift() {
   return any ? (strict ? 1 : 0) : 0;
 }
 
+/** @returns {Promise<number>} 进程退出码 */
 async function coverage() {
   const common = await upstreamFile(FILES.common, ref);
   const keys = extractJsonKeys(common);
@@ -169,10 +221,18 @@ async function coverage() {
   return any ? (strict ? 1 : 0) : 0;
 }
 
+// 退出码只写 process.exitCode，不调 process.exit()：Windows + Node 24 上
+// `process.exit()` 与 undici(fetch) 的收尾竞态会触发 libuv 断言
+// `!(handle->flags & UV_HANDLE_CLOSING)`（src/win/async.c:76），进程以
+// 0xC0000409 崩溃——输出已经打完了，退出码却是垃圾值，挂 --strict 的 CI 判读
+// 会失真。写 exitCode 让事件循环自然收敛即可（代价是 keep-alive 连接最多多等
+// 几秒）。审查 60-build-test §2.14。
 (coverageOnly ? coverage() : drift())
-  .then((code) => process.exit(code))
+  .then((code) => {
+    process.exitCode = code;
+  })
   .catch((e) => {
     console.error(String(e?.message || e));
     console.error("提示：离线环境用 --upstream <本地 stable-diffusion.cpp 克隆路径>；漂移模式需要该克隆有 --since 对应的提交。");
-    process.exit(2);
+    process.exitCode = 2;
   });

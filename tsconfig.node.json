@@ -1,5 +1,5 @@
 {
-  "// 说明": "构建/测试配置的类型检查（审查 60-build-test §2.11）：根 tsconfig 只 include src，vite.config.ts / vitest.config.ts 此前不在任何 project 里，改配置写错类型不会有任何提示。",
+  "// 说明": "构建/测试配置与仓库脚本的类型检查（审查 60-build-test §2.11、§2.14）：根 tsconfig 只 include src，vite.config.ts / vitest.config.ts / scripts/*.mjs 此前不在任何 project 里，改配置或写错脚本属性名不会有任何提示。脚本是 ESM/JS，因此开 allowJs + checkJs 并用 include 精确限定到 scripts/ 与两份配置文件——不扫 node_modules、上游克隆或构建产物。",
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
@@ -9,7 +9,10 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "scripts/**/*.mjs"],
+  "exclude": ["node_modules", "dist", "src-tauri/target"]
 }

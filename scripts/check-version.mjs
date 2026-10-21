@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// @ts-check
+// 类型检查：tsconfig.node.json 开了 allowJs + checkJs，本文件随
+// `npm run check:types` 一起检查（审查 60-build-test §2.14）。
+//
 // 版本号一致性检查（审查 60-build-test §2.1/§2.2）。
 //
 // 版本号以 package.json 为唯一来源，`npm version` 的 version 钩子会通过
@@ -16,14 +20,35 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * package.json 里本脚本真正读取的字段。JSON.parse 返回 any，这里用 JSDoc
+ * 收窄：属性名写错（`packageJson.devDependencys`）会变成类型错误而不是
+ * 运行时静默 `undefined`。
+ * @typedef {object} PackageJson
+ * @property {string} version
+ * @property {Record<string, string>} [dependencies]
+ * @property {Record<string, string>} [devDependencies]
+ */
+
+/** @typedef {{ version: string }} TauriConf */
+
+/** package-lock.json 只需根级 version（npm 与清单同步）。 @typedef {{ version: string }} NpmLock */
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+/**
+ * @param {string} rel 相对仓库根的路径
+ * @returns {string}
+ */
 const read = (rel) => readFileSync(join(root, rel), "utf8");
 
+/** @type {PackageJson} */
 const packageJson = JSON.parse(read("package.json"));
 const expected = packageJson.version;
 
+/** @type {Array<[file: string, version: string | undefined]>} */
 const found = [];
 
+/** @type {TauriConf} */
 const tauriConf = JSON.parse(read("src-tauri/tauri.conf.json"));
 found.push(["src-tauri/tauri.conf.json", tauriConf.version]);
 
@@ -38,6 +63,13 @@ const lockVersion = lockBlock
   : undefined;
 found.push(["src-tauri/Cargo.lock", lockVersion]);
 
+// package-lock.json 也带项目版本。npm 自己会同步，但手改 package.json 后容易
+// 忘：这里一并校验，避免 lockfile 与清单漂移（root 与 packages[""] 两处由 npm
+// 保持一致，只查一处即可）。
+/** @type {NpmLock} */
+const npmLock = JSON.parse(read("package-lock.json"));
+found.push(["package-lock.json", npmLock.version]);
+
 let failed = false;
 for (const [file, version] of found) {
   if (version === expected) continue;
@@ -50,6 +82,11 @@ for (const [file, version] of found) {
 // Tauri 的 npm 包与 Rust crate 必须 major.minor 对齐，否则 `tauri build` 直接
 // abort（实测：`npm update` 把 @tauri-apps/api 升到 2.12 而 crate 停在 2.11）。
 // 这是一条纯字符串检查，放在这里比等打包时才发现便宜得多。
+/**
+ * 从 Cargo.lock 取某个 crate 的版本。
+ * @param {string} name crate 名
+ * @returns {string | undefined}
+ */
 const crateVersion = (name) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const block = new RegExp(`^name\\s*=\\s*"${escaped}"\\s*$`, "m").exec(cargoLock);
@@ -57,7 +94,12 @@ const crateVersion = (name) => {
     ? /^version\s*=\s*"([^"]+)"/m.exec(cargoLock.slice(block.index))?.[1]
     : undefined;
 };
+/**
+ * @param {string | undefined} v
+ * @returns {string | undefined}
+ */
 const minor = (v) => (v ? v.split(".").slice(0, 2).join(".") : undefined);
+/** @type {Array<[npmName: string, crateName: string]>} */
 const tauriPairs = [
   ["@tauri-apps/api", "tauri"],
   ["@tauri-apps/cli", "tauri"],
@@ -77,8 +119,10 @@ for (const [npmName, crateName] of tauriPairs) {
 }
 
 if (!failed) {
+  // 处数由实际检查清单推导，避免"写死 5 处、只列 4 个文件"这类文案漂移。
+  const checked = ["package.json", ...found.map(([file]) => file)];
   console.log(
-    `✓ 版本号一致：${expected}（5 处：package.json / tauri.conf.json / Cargo.toml / Cargo.lock）；Tauri npm/crate 主次版本匹配`
+    `✓ 版本号一致：${expected}（${checked.length} 处：${checked.join(" / ")}）；Tauri npm/crate 主次版本匹配`
   );
 }
 
