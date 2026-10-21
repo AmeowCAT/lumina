@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+（下一轮的改动写这里。发版时把本节改成 `## <版本号> — <日期>`，并在上方新开一个空的
+`[Unreleased]`。）
+
+## 0.9.0 — 2026-10-22
+
 ### 修复（来自 2026-10 全面审查，见 `docs/audit/`）
 
 - **安全**：`--listen-ip` 的短别名 `-l` 不再能绕过监听守卫被写进「附加启动参数」，
@@ -94,6 +99,32 @@
   随请求体发送，但界面此前没有入口（Flow 类模型微调时间步的第二个旋钮）。
 - **体验（第七轮）**：独立放大在同步执行期间显示已耗时秒数（该接口无进度事件），
   用户能判断是不是卡死。
+- **引擎控件（第二十二轮）**：控制台「运行后端」补上 `--threads`（0 = 由内核按 CPU
+  物理核数决定）、`--params-backend`（权重驻留后端，`disk`/`cpu`/`te=cpu,vae=cpu`）、
+  `--rpc-servers`（多机拆卡的 `host:port` 列表）三个控件——此前只能手写进「附加启动
+  参数」，而代码里早就处理了 `--params-backend` 与 auto-fit 的冲突却不给入口。三者是
+  **本机硬件配置**，只存全局设置、不随模型快照漂移；`--params-backend` 的 `&` 设备列表
+  与 `--rpc-servers` 的端口形状在 GO/NO-GO 阶段就拦下（上游对连不上的 RPC 端点只打日志，
+  写错端口的表现是「多机显卡没出现」）。
+- **缓存与跳层（第二十二轮）**：`cache_option` 从「只能手写 key=value 串」改为按当前
+  `cache_mode` 渲染结构化子控件（固定键序、切模式裁剪，`threshold`/`warmup` 按实际写入
+  的上游字段判断是否丢弃）；`scm_mask` 加硬校验且**非法值永不下发**——上游
+  `parse_scm_mask` 的 `std::stoi` 没有 try/catch 且跑在工作线程，坏掩码会让 sd-server
+  整个进程 terminate，这个场景等不到 400；SLG 补 `layers` / `layer_start` /
+  `layer_end`，`layers` 未设置时**省略该键**以沿用服务端 `--skip-layers`（此前硬塞
+  `[7,8,9]` 会把它顶掉），高噪段不再恒发 `{scale:0}`。
+- **测试（第二十二轮）**：`Dashboard.test.tsx`（712 行 / 20 例）按 describe 拆成 kit +
+  三个文件，该目录耗时 16.8s → 10.9s；补生命周期/订阅层测试——blob URL 的撤销时机
+  （卸载、剪枝、替换）、快捷键（CapsLock/非美式布局、`isComposing`、`blockBackgroundShortcuts`
+  与 `escapeActive` 分离）、App 阶段机（骨架/就绪/失联、控制台里切模型不弹假错误）。
+- **工程（第二十二轮）**：`scripts/*.mjs` 并入类型门禁（`allowJs`+`checkJs` 随
+  `npm run check:types` 跑，首轮暴露 20 条类型错误，其中 18 条是隐式 any）；接入
+  Prettier 作为唯一格式来源
+  （`npm run format:check` 进 CI，ESLint 继续只管缺陷）；修正 `.gitattributes` 里
+  `*.{ts,tsx}` 花括号模式不生效导致的行尾漂移，索引里 8 个 CRLF 文件归一为 LF；
+  `upstream-diff.mjs` 改用 `process.exitCode`，不再在 Windows + Node 24 上以
+  `0xC0000409` 崩溃；`check-version.mjs` 补查 `package-lock.json`，成功文案的处数改为
+  由检查清单推导。
 - **依赖**：`package-lock.json` 重新生成并删掉手工补的 `@emnapi` 条目（`npm ci` 现在能
   干净安装），`npm audit` 归零；`@tauri-apps/{api,cli,plugin-notification}` 改为精确版本，
   使其与 Rust crate 的 major.minor 对齐（否则 `tauri build` 会直接失败）。
