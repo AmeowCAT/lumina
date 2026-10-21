@@ -1,24 +1,12 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+// 注意：本 import 必须排在 `../Dashboard` 之前——`vi.mock` 的工厂要读 kit 里的
+// `mocks`，而 Vite SSR 按 import 源码顺序求值，kit 必须先完成初始化。
+import { mocks, pickOption, resetDashboard, scanFor, settings } from "./dashboardTestKit";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useStore } from "../../../store";
-import type { Capabilities, ScanResult, Settings } from "../../../types";
 import { Dashboard } from "../Dashboard";
 
-const mocks = vi.hoisted(() => ({
-  loadSettings: vi.fn(),
-  saveSettings: vi.fn(),
-  scanModels: vi.fn(),
-  pickFolder: vi.fn(),
-  pickFile: vi.fn(),
-  startServer: vi.fn(),
-  stopServer: vi.fn(),
-  switchModel: vi.fn(),
-  // 附加启动参数的 datalist 靠它取内核选项名（审查 40-cli §2.5）。
-  inspectServer: vi.fn(),
-}));
-
+// 提升到文件顶层的 vi.mock 不能进共享 kit，否则 mock 不生效。
 vi.mock("../../../api", () => ({ api: mocks }));
 vi.mock("../../../hooks/useModelSwitch", () => ({
   useModelSwitch: () => ({
@@ -28,100 +16,8 @@ vi.mock("../../../hooks/useModelSwitch", () => ({
   }),
 }));
 
-const settings: Settings = {
-  exeDir: "",
-  modelDir: "/models",
-  outputDir: "",
-  backend: "",
-  refImagePreset: "",
-  vaeFormat: "",
-  extraArgs: "",
-  offloadCpu: false,
-  quantType: "",
-  maxQueueSize: 4,
-  sdPort: 1234,
-  modelSnapshots: {},
-};
-
-function scanFor(family: string): ScanResult {
-  return {
-    baseDir: "/models",
-    count: 1,
-    families: { "/models/main.safetensors": family },
-    files: [
-      {
-        name: "main.safetensors",
-        stem: "main",
-        path: "/models/main.safetensors",
-        relPath: "main.safetensors",
-        sizeMb: 1024,
-        dir: "/models",
-        ext: "safetensors",
-        category: "model",
-      },
-    ],
-    warnings: [],
-    truncated: false,
-    partial: false,
-  };
-}
-
-// Radix Select 是组合控件而非表单元素：点击触发器展开，再点击目标选项。
-//
-// 共享一个 `userEvent` 实例（`delay: null` 去掉每个动作之间的等待）：这个文件
-// 有 19 个用例、每个至少调一次本函数，之前每次 `setup()` 都重建一次指针/键盘
-// 状态机，单次约 150ms，累计就是这个文件 17s 耗时的主要来源（审查 60-build §2.13）。
-const user = userEvent.setup({ delay: null });
-
-async function pickOption(label: string, optionName: string | RegExp) {
-  await user.click(await screen.findByLabelText(label));
-  await user.click(await screen.findByRole("option", { name: optionName }));
-}
-
-describe("Dashboard onboarding validation", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.loadSettings.mockResolvedValue(settings);
-    mocks.saveSettings.mockResolvedValue(undefined);
-    mocks.inspectServer.mockResolvedValue({
-      options: ["--threads", "--mmap"],
-    } as unknown as Capabilities);
-    useStore.setState({
-      settings,
-      scanResult: null,
-      mainModel: "",
-      familyOverride: "",
-      components: {},
-      serverStatus: null,
-      dashboardOpen: true,
-    });
-  });
-
-  it("blocks startup and lists missing required split-model components", async () => {
-    mocks.scanModels.mockResolvedValue(scanFor("flux"));
-    render(<Dashboard />);
-
-    await pickOption("主模型", "main.safetensors (1.0 GB)");
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("还缺");
-    expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
-  });
-
-  // 审查 50-ux F-14：只滚到面板不够——目标面板常是折叠态。点「去填写」必须
-  // 把面板展开并把焦点送到第一个可填控件，否则用户仍然"知道缺什么但不知点哪"。
-  it("opens the components panel and focuses a field from the missing-config notice", async () => {
-    mocks.scanModels.mockResolvedValue(scanFor("flux"));
-    render(<Dashboard />);
-
-    await pickOption("主模型", "main.safetensors (1.0 GB)");
-    await screen.findByRole("alert");
-
-    fireEvent.click(screen.getByRole("button", { name: "去填写" }));
-
-    // 面板标题的可访问状态翻转即"已展开"；焦点随后落到面板里的控件上。
-    const heads = screen.getAllByRole("button", { expanded: true });
-    expect(heads.length).toBeGreaterThan(0);
-  });
+describe("Dashboard launch arguments", () => {
+  beforeEach(resetDashboard);
 
   // 审查 40-cli §2.5：附加启动参数原本是纯自由文本，拼错要到启动失败才发现。
   // 内核 `--help` 里的选项名现在进 datalist，输入框因此可以补全。
@@ -141,209 +37,20 @@ describe("Dashboard onboarding validation", () => {
     );
   });
 
-  it("allows PATH-based startup for a self-contained model", async () => {
-    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
-    render(<Dashboard />);
-
-    await pickOption("主模型", "main.safetensors (1.0 GB)");
-
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
-    );
-  });
-
-  it("half-supports MiniMax-H3 Ref2VA without an unsupported banner", async () => {
-    mocks.scanModels.mockResolvedValue(scanFor("minimax-h3-ref2va"));
-    render(<Dashboard />);
-
-    await pickOption("主模型", "main.safetensors (1.0 GB)");
-
-    // 半支持：不再显示"暂不支持"横幅，家族下拉也没有"（暂不支持）"后缀。
-    expect(screen.queryByText(/暂不支持/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("识别类型")).not.toHaveTextContent("暂不支持");
-    // 检查单退回常规组件缺口把关（Ref2VA 需要视频 VAE + LLM，此处只给了主模型）。
-    expect(await screen.findByRole("alert")).toHaveTextContent("还缺");
-    expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled();
-    expect(mocks.startServer).not.toHaveBeenCalled();
-  });
-
-  it("restores the latest snapshot when a configured model is selected", async () => {
-    const configured = {
-      ...settings,
-      modelSnapshots: {
-        "/models/main.safetensors": {
-          familyOverride: "hidream",
-          components: {},
-          backend: "cuda0",
-          refImagePreset: "krea2_edit",
-          extraArgs: "--threads 8",
-          offloadCpu: true,
-          quantType: "q8_0",
-          maxQueueSize: 7,
-        },
-      },
-    };
-    mocks.loadSettings.mockResolvedValue(configured);
-    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
-    render(<Dashboard />);
-
-    await pickOption("主模型", "main.safetensors (1.0 GB)");
-
-    await waitFor(() =>
-      expect(screen.getByLabelText("自定义 --backend")).toHaveValue("cuda0")
-    );
-    expect(screen.getByLabelText("CPU 卸载（--offload-to-cpu）")).toBeChecked();
-    expect(screen.getByLabelText("加载时量化（--type）")).toHaveTextContent("Q8_0");
-    expect(screen.getByLabelText("处理预设")).toHaveTextContent("Krea2 Edit 768");
-    expect(screen.getByLabelText("附加启动参数")).toHaveValue("--threads 8");
-    expect(screen.getByLabelText("最大队列数量")).toHaveValue(7);
-  });
-
-  it("persists diagnostic edits before launch and clears absent fields in a legacy snapshot", async () => {
-    const base = scanFor("hidream").files[0];
+  it("echoes a custom --backend value in the preset select", async () => {
     mocks.loadSettings.mockResolvedValue({
       ...settings,
-      modelSnapshots: { "/models/b.safetensors": {
-        familyOverride: "hidream", components: {}, backend: "", refImagePreset: "",
-        extraArgs: "", offloadCpu: false, quantType: "", maxQueueSize: 4,
-      } },
+      backend: "clip=cpu,diffusion=cuda0",
     });
-    mocks.scanModels.mockResolvedValue({
-      ...scanFor("hidream"), count: 2,
-      families: { "/models/a.safetensors": "hidream", "/models/b.safetensors": "hidream" },
-      files: [
-        { ...base, name: "a.safetensors", path: "/models/a.safetensors" },
-        { ...base, name: "b.safetensors", path: "/models/b.safetensors" },
-      ],
-    });
-    render(<Dashboard />);
-    await pickOption("主模型", "a.safetensors (1.0 GB)");
-    fireEvent.click(screen.getByRole("button", { name: /诊断与数值稳定性/ }));
-    fireEvent.change(screen.getByLabelText("Linear 输入缩放（--linear-scale）"), { target: { value: "0.0078125" } });
-    await pickOption("日志等级（--log-level）", "debug · 最详细");
-    await waitFor(() => expect(useStore.getState().settings.modelSnapshots["/models/a.safetensors"]).toMatchObject({ linearScale: "0.0078125", logLevel: "debug" }));
-    expect(mocks.startServer).not.toHaveBeenCalled();
-    await pickOption("主模型", "b.safetensors (1.0 GB)");
-    expect(screen.getByLabelText("Linear 输入缩放（--linear-scale）")).toHaveValue("");
-    expect(screen.getByLabelText("日志等级（--log-level）")).toHaveTextContent("内核默认");
-    await pickOption("主模型", "a.safetensors (1.0 GB)");
-    expect(screen.getByLabelText("Linear 输入缩放（--linear-scale）")).toHaveValue("0.0078125");
-    expect(screen.getByLabelText("日志等级（--log-level）")).toHaveTextContent("debug");
-  });
-
-  it("records component config on change and restores it after switching away and back", async () => {
-    // 回归：快照曾只在启动成功后保存，且切换路径的防抖保存会随 Dashboard
-    // 卸载被丢弃——"选中后组件配置没有记录并沿用"的根因。这里验证：
-    // 组件变更即记录快照；切到别的模型再切回时组件配置被恢复。
-    const baseFile = scanFor("flux").files[0];
-    const twoModels: ScanResult = {
-      ...scanFor("flux"),
-      count: 4,
-      families: {
-        "/models/a.safetensors": "flux",
-        "/models/b.safetensors": "flux",
-      },
-      files: [
-        { ...baseFile, name: "a.safetensors", stem: "a", path: "/models/a.safetensors" },
-        { ...baseFile, name: "b.safetensors", stem: "b", path: "/models/b.safetensors" },
-        { ...baseFile, name: "ae1.sft", stem: "ae1", path: "/models/ae1.sft", category: "vae" },
-        { ...baseFile, name: "ae2.sft", stem: "ae2", path: "/models/ae2.sft", category: "vae" },
-      ],
-    };
-    mocks.scanModels.mockResolvedValue(twoModels);
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
     render(<Dashboard />);
 
-    await pickOption("主模型", "a.safetensors (1.0 GB)");
-    // 两个 VAE 候选：自动补选不生效，组件初始为空。
-    expect(useStore.getState().components).toEqual({});
-
-    // 用户在组件面板选择 VAE → 快照立即记录当前模型配置。
-    act(() =>
-      useStore.getState().setComponents(() => ({ vae: "/models/ae1.sft" }))
-    );
-    await waitFor(() => {
-      const snap =
-        useStore.getState().settings.modelSnapshots["/models/a.safetensors"];
-      expect(snap?.components).toEqual({ vae: "/models/ae1.sft" });
-    });
-
-    // 切到 b（无快照、组件清空）再切回 a：配置被恢复。
-    await pickOption("主模型", "b.safetensors (1.0 GB)");
-    expect(useStore.getState().components).toEqual({});
-    await pickOption("主模型", "a.safetensors (1.0 GB)");
-    await waitFor(() =>
-      expect(useStore.getState().components).toEqual({ vae: "/models/ae1.sft" })
+    expect(await screen.findByLabelText("后端预设")).toHaveTextContent(
+      "自定义（clip=cpu,diffusion=cuda0）",
     );
   });
 
-	it("echoes a custom --backend value in the preset select", async () => {
-		mocks.loadSettings.mockResolvedValue({
-			...settings,
-			backend: "clip=cpu,diffusion=cuda0",
-		});
-		mocks.scanModels.mockResolvedValue(scanFor("hidream"));
-		render(<Dashboard />);
-
-		expect(await screen.findByLabelText("后端预设")).toHaveTextContent(
-			"自定义（clip=cpu,diffusion=cuda0）",
-		);
-	});
-
-	it("confirms a model switch inline when results are unsaved", async () => {
-		mocks.switchModel.mockResolvedValue(true);
-		mocks.scanModels.mockResolvedValue(scanFor("hidream"));
-		useStore.setState({
-			serverStatus: {
-				running: true,
-				reachable: true,
-				external: false,
-				pid: 42,
-				model: "/models/old.safetensors",
-				sdPort: 7860,
-				phase: "ready",
-			},
-			caps: {
-				model: {
-					name: "old.safetensors",
-					stem: "old",
-					path: "/models/old.safetensors",
-				},
-			} as Capabilities,
-			results: [
-				{
-					jobId: "j1",
-					mode: "img_gen",
-					result: {
-						output_format: "png",
-						images: [{ index: 0, b64_json: "eA==" }],
-					},
-					saves: { "0": { status: "failed", error: "disk full" } },
-				},
-			],
-			jobs: [],
-		});
-		render(<Dashboard />);
-
-		await pickOption("主模型", "main.safetensors (1.0 GB)");
-		fireEvent.click(
-			await screen.findByRole("button", { name: /切换到此模型/ }),
-		);
-
-		// 不直接切换,先在启动坞弹出影响确认条
-		expect(mocks.switchModel).not.toHaveBeenCalled();
-		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"尚未安全保存",
-		);
-
-		fireEvent.click(screen.getByRole("button", { name: "确认切换" }));
-		await waitFor(() =>
-			expect(mocks.switchModel).toHaveBeenCalledWith(
-				"/models/main.safetensors",
-			),
-		);
-	});
-
-	it("passes AnimateDiff and reference-image presets to sd-server", async () => {
+  it("passes AnimateDiff and reference-image presets to sd-server", async () => {
     const scan = scanFor("sd");
     scan.files.push({
       name: "mm_sd15_v3.safetensors",
@@ -704,6 +411,114 @@ describe("Dashboard onboarding validation", () => {
           llm: "/models/qwen_2.5_vl_7b.safetensors",
           t5xxl: "/models/byt5_small_glyphxl_fp16.safetensors",
           "flash-attn": "off,diffusion=on",
+        }),
+        1234
+      )
+    );
+  });
+
+  // 审查 §2.9：--threads / --params-backend / --rpc-servers 三个参数此前只能手写
+  // 在「附加启动参数」里（且拼错要到启动瞬间才发现）。语义见上游 common.cpp：
+  // --threads 在 threads <= 0 时由内核取 CPU 物理核数，所以 0 就是「不传」。
+  it("passes --threads only for a positive core count", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+
+    const threads = screen.getByLabelText("计算线程数");
+    await userEvent.clear(threads);
+    await userEvent.type(threads, "8");
+    fireEvent.blur(threads);
+
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "HiDream-O1",
+        null,
+        expect.objectContaining({ threads: 8 }),
+        1234
+      )
+    );
+  });
+
+  it("omits --threads by default so the kernel picks physical cores", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() => expect(mocks.startServer).toHaveBeenCalled());
+    const args = mocks.startServer.mock.calls[0][3] as Record<string, unknown>;
+    expect(args).not.toHaveProperty("threads");
+  });
+
+  it("passes --params-backend and blocks device lists before launch", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+
+    const paramsBackend = screen.getByLabelText("参数驻留后端（--params-backend）");
+    // 上游 --params-backend 明确不接受 `&` 设备列表（docs/backend.md），
+    // 拦在 GO/NO-GO 而不是让 sd-server 启动即退。
+    fireEvent.change(paramsBackend, { target: { value: "te=cpu&cuda0" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled()
+    );
+
+    fireEvent.change(paramsBackend, { target: { value: "te=cpu,vae=cpu" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "HiDream-O1",
+        null,
+        expect.objectContaining({ "params-backend": "te=cpu,vae=cpu" }),
+        1234
+      )
+    );
+  });
+
+  it("passes --rpc-servers endpoints and rejects a malformed port", async () => {
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    mocks.startServer.mockResolvedValue({ pid: 123 });
+    render(<Dashboard />);
+
+    await pickOption("主模型", "main.safetensors (1.0 GB)");
+
+    const rpcServers = screen.getByLabelText("RPC 服务器（--rpc-servers）");
+    // 上游对连不上的端点只打日志、不中止启动，写错端口表现为"多机显卡没出现"。
+    fireEvent.change(rpcServers, { target: { value: "127.0.0.1" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled()
+    );
+
+    fireEvent.change(rpcServers, {
+      target: { value: "127.0.0.1:50052,192.168.1.10:50052" },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
+
+    await waitFor(() =>
+      expect(mocks.startServer).toHaveBeenCalledWith(
+        "sd-server",
+        "HiDream-O1",
+        null,
+        expect.objectContaining({
+          "rpc-servers": "127.0.0.1:50052,192.168.1.10:50052",
         }),
         1234
       )

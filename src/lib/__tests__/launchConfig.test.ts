@@ -23,6 +23,8 @@ import {
   missingRequiredInputs,
   persistFamilyDefaults,
   validateMaxVramSpec,
+  validateParamsBackendSpec,
+  validateRpcServersSpec,
   validateTokenizerSpec,
 } from "../launchConfig";
 
@@ -1104,5 +1106,108 @@ describe("flash attention launch flag", () => {
     expect(mossWithTokenizer.args.tokenizer).toBe(
       "/models/tokenizer_qwen3.5.json"
     );
+  });
+});
+
+// 审查 §2.9：--threads / --params-backend / --rpc-servers 三个结构化控件。
+// 语义按上游 common.cpp（options 表）与 docs/backend.md / docs/rpc.md：
+// threads <= 0 由内核取物理核数；params-backend 不接受 & 设备列表但接受 disk；
+// rpc-servers 是 host:port 列表，写错端口只打日志不中止。
+describe("engine knobs (threads / params-backend / rpc-servers)", () => {
+  const launch = (overrides: Partial<LaunchRuntime>) =>
+    buildLaunchConfig({
+      family: "hidream",
+      modelPath: "/models/hidream.safetensors",
+      components: {},
+      runtime: { ...runtime, ...overrides },
+    });
+
+  it("passes --threads only for positive integers", () => {
+    expect(launch({ threads: 8 }).args.threads).toBe(8);
+    expect(launch({ threads: 1 }).args.threads).toBe(1);
+    // 小数按整数截断：上游 int_options 只收整数，传 7.5 会被内核报错。
+    expect(launch({ threads: 7.5 }).args.threads).toBe(7);
+  });
+
+  it("omits --threads when unset, zero or negative", () => {
+    // 0 / 缺省 = 让内核按 CPU 物理核数决定（上游 help：threads <= 0 时取核数）。
+    for (const threads of [0, undefined, -4, Number.NaN]) {
+      expect(launch({ threads }).args).not.toHaveProperty("threads");
+    }
+  });
+
+  it("passes valid --params-backend specs through verbatim", () => {
+    for (const paramsBackend of [
+      "cpu",
+      "disk",
+      "te=cpu,vae=cpu",
+      "diffusion=disk,clip=cpu",
+    ]) {
+      const result = launch({ paramsBackend });
+      expect(result.args["params-backend"]).toBe(paramsBackend);
+      expect(result.missing).toEqual([]);
+    }
+  });
+
+  it("blocks a --params-backend with a device list instead of silently dropping it", () => {
+    const result = launch({ paramsBackend: "te=cpu&cuda0" });
+    expect(result.args).not.toHaveProperty("params-backend");
+    expect(result.missing.join("；")).toContain("--params-backend");
+    expect(result.missing.join("；")).toContain("设备列表");
+  });
+
+  it("rejects --params-backend entries with an empty module or backend", () => {
+    expect(validateParamsBackendSpec("=cpu")).not.toBeNull();
+    expect(validateParamsBackendSpec("te=")).not.toBeNull();
+    // 空段与未知模块名放行：上游跳过空段，模块名由上游启动时报错
+    // （与 --backend 同口径，避免内核新增模块时 GUI 误杀）。
+    expect(validateParamsBackendSpec("te=cpu,,vae=disk")).toBeNull();
+    expect(validateParamsBackendSpec("some-new-module=cpu")).toBeNull();
+  });
+
+  it("passes --rpc-servers through for host:port lists", () => {
+    for (const rpcServers of [
+      "localhost:50052",
+      "127.0.0.1:50052,192.168.1.10:50053",
+      "[::1]:50052",
+    ]) {
+      const result = launch({ rpcServers });
+      expect(result.args["rpc-servers"]).toBe(rpcServers);
+      expect(result.missing).toEqual([]);
+    }
+  });
+
+  it("blocks a --rpc-servers entry with a missing or out-of-range port", () => {
+    // 端口边界：1 与 65535 合法，0/65536 越界。
+    expect(validateRpcServersSpec("host:1")).toBeNull();
+    expect(validateRpcServersSpec("host:65535")).toBeNull();
+    expect(validateRpcServersSpec("host:65536")).not.toBeNull();
+    expect(validateRpcServersSpec("host:0")).not.toBeNull();
+    for (const rpcServers of [
+      "localhost",
+      "localhost:0",
+      "localhost:70000",
+      "localhost:port",
+      ":50052",
+      "::1:50052",
+      "ok:50052,bad",
+    ]) {
+      const result = launch({ rpcServers });
+      expect(result.args).not.toHaveProperty("rpc-servers");
+      expect(result.missing.join("；")).toContain("--rpc-servers");
+    }
+  });
+
+  it("keeps all three knobs out of the argument map when blank", () => {
+    for (const blank of ["", "   "]) {
+      const args = launch({
+        threads: 0,
+        paramsBackend: blank,
+        rpcServers: blank,
+      }).args;
+      expect(args).not.toHaveProperty("threads");
+      expect(args).not.toHaveProperty("params-backend");
+      expect(args).not.toHaveProperty("rpc-servers");
+    }
   });
 });

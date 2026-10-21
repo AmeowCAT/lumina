@@ -1,13 +1,16 @@
 import { describe, it, expect } from "vitest";
 import {
   b64ToBlobUrl,
+  buildCacheOption,
   buildRequestBody,
+  cacheOptionFields,
   clearLegacyLatentTiling,
   deepClone,
   deepMerge,
   extractApiError,
   fmtSize,
   formatError,
+  formatLayerList,
   hasLegacyLatentTiling,
   hasPixelTiling,
   jobElapsed,
@@ -16,18 +19,31 @@ import {
   LINGBOT_PROMPT_TEMPLATE,
   matchAvailableLora,
   modelFileOptionLabel,  normalizeSizeStep,
+  normalizeScmMask,
+  parseCacheOption,
+  parseLayerList,
   pixelTilingDroppedOnLatent,
   previewModesFromCapabilities,
+  resolveCacheOption,
   resolvePreviewMode,
   resolveVaeTilingForProtocol,
+  sanitizeCacheOptionsForMode,
   sdcppMetadataToGenParams,
   setTilingArgValue,
   tilingArgValue,
   trimJobsToBudget,
   vaeTilingProtocolFromCapabilities,
   validateLingbotPrompt,
+  validateScmMask,
+  validateSlgWindow,
 } from "../utils";
-import type { Capabilities, GenImages, GenParams, Job } from "../../types";
+import type {
+  Capabilities,
+  GenImages,
+  GenParams,
+  Job,
+  SlgGuidance,
+} from "../../types";
 
 describe("normalizeSizeStep", () => {
   it("defaults to 1 and keeps positive integers", () => {
@@ -391,9 +407,10 @@ describe("buildRequestBody", () => {
     expect(hn.scheduler).toBeUndefined();
   });
 
-  it("explicitly disables high-noise SLG when scale is not positive", () => {
-    // 与主采样 SLG 对等:scale<=0/缺省时显式发 {scale:0},防止服务端
-    // 默认开启时省略字段无法关闭(审查 L3 对称缺口)。
+  it("omits high-noise SLG entirely when it is not enabled", () => {
+    // 审查 F-18：此前恒发 {scale:0}，会把服务端启动参数
+    // --high-noise-slg-scale 每条请求都打回关闭（docs/audit/95-f18-semantics.md §5.3）。
+    // 「要关掉服务端默认」只能靠启动参数表达，不能靠恒发 0 去猜。
     const p: GenParams = {
       ...baseParams,
       high_noise_sample_params: {
@@ -407,7 +424,7 @@ describe("buildRequestBody", () => {
     const hn = body.high_noise_sample_params as {
       guidance: Record<string, unknown>;
     };
-    expect(hn.guidance.slg).toEqual({ scale: 0 });
+    expect("slg" in hn.guidance).toBe(false);
   });
 
   it("includes Qwen Image Layered layer count for img_gen", () => {
@@ -1023,6 +1040,267 @@ describe("buildRequestBody", () => {
         buildRequestBody("vid_gen", negative, {} as GenImages).preview_interval
       ).toBe(1);
     });
+  });
+});
+
+// 审查 F-18 / docs/audit/95-f18-semantics.md：cache_option 是 key=value 串，
+// 同名键跨模式含义不同；scm_mask 非法会让内核 terminate。这里守住
+// 「拼串确定」「按模式裁剪」「非法不下发」三条。
+describe("F-18 缓存微调与 SCM 掩码", () => {
+  const baseParams: GenParams = {
+    width: 512,
+    height: 512,
+    seed: 42,
+    sample_params: { sample_steps: 20, guidance: { txt_cfg: 7 } },
+  };
+
+  it("按 spec 固定键序拼 cache_option", () => {
+    expect(
+      buildCacheOption("easycache", { threshold: 0.3, start: 0.1, reset: false })
+    ).toBe("threshold=0.3,start=0.1,reset=0");
+  });
+
+  it("拼串与草稿的对象键序无关", () => {
+    const a = buildCacheOption("spectrum", { stop: 0.8, w: 0.5, m: 4 });
+    const b = buildCacheOption("spectrum", { m: 4, w: 0.5, stop: 0.8 });
+    expect(a).toBe(b);
+    expect(a).toBe("w=0.5,m=4,stop=0.8");
+  });
+
+  it("只拼当前模式合法的键", () => {
+    // Fn 只在 dbcache 系生效：easycache 下留着会「设置了但内核不读」。
+    expect(buildCacheOption("easycache", { Fn: 8, threshold: 0.2 })).toBe(
+      "threshold=0.2"
+    );
+    expect(buildCacheOption("dbcache", { Fn: 8, threshold: 0.2 })).toBe(
+      "Fn=8,threshold=0.2"
+    );
+  });
+
+  it("关闭/未知模式不产生 cache_option", () => {
+    expect(buildCacheOption("disabled", { threshold: 0.2 })).toBeUndefined();
+    expect(buildCacheOption(undefined, { threshold: 0.2 })).toBeUndefined();
+    expect(buildCacheOption("easycache", {})).toBeUndefined();
+  });
+
+  it("数值按 spec 夹取、整数截断、浮点尾数收窄", () => {
+    expect(buildCacheOption("dbcache", { Fn: 4.7 })).toBe("Fn=4");
+    expect(buildCacheOption("easycache", { threshold: 0.1 + 0.2 })).toBe(
+      "threshold=0.3"
+    );
+    expect(buildCacheOption("easycache", { threshold: -5 })).toBe("threshold=0");
+  });
+
+  it("保留原始串里界面不认识的键（元数据往返不丢参数）", () => {
+    expect(
+      buildCacheOption("easycache", { threshold: 0.2 }, "threshold=0.1,gamma=3")
+    ).toBe("threshold=0.2,gamma=3");
+  });
+
+  it("原始串可解析回草稿，未知键单独列出", () => {
+    const { draft, unknownPairs } = parseCacheOption(
+      "threshold=1.5,reset=0,gamma=3"
+    );
+    expect(draft).toEqual({ threshold: 1.5, reset: false });
+    expect(unknownPairs).toEqual([{ key: "gamma", value: "3" }]);
+  });
+
+  it("切换缓存模式时丢弃新模式不认的键与跨模式语义漂移的键", () => {
+    const draft = { threshold: 0.2, Fn: 8, start: 0.15 };
+    // easycache → dbcache：Fn 合法、start 不合法、threshold 跨分组必须丢。
+    expect(sanitizeCacheOptionsForMode("dbcache", draft, "easycache")).toEqual({
+      Fn: 8,
+    });
+    // easycache → ucache：同分组，threshold 保留。
+    expect(sanitizeCacheOptionsForMode("ucache", draft, "easycache")).toEqual({
+      threshold: 0.2,
+      start: 0.15,
+    });
+  });
+
+  it("三种模式的控件集合与上游键集合一致", () => {
+    const keys = (mode: string) => cacheOptionFields(mode).map((f) => f.key);
+    expect(keys("easycache")).toEqual([
+      "threshold",
+      "start",
+      "end",
+      "decay",
+      "relative",
+      "reset",
+    ]);
+    expect(keys("dbcache")).toEqual(["Fn", "Bn", "threshold", "warmup"]);
+    expect(keys("spectrum")).toEqual([
+      "w",
+      "m",
+      "lam",
+      "window",
+      "flex",
+      "warmup",
+      "stop",
+    ]);
+    expect(keys("disabled")).toEqual([]);
+  });
+
+  it("resolveCacheOption 优先草稿，否则沿用原始串", () => {
+    expect(
+      resolveCacheOption({ cache_mode: "easycache", cache_option: "threshold=0.1" })
+    ).toBe("threshold=0.1");
+    expect(
+      resolveCacheOption({
+        cache_mode: "easycache",
+        cache_option: "threshold=0.1",
+        cache_options: { threshold: 0.3 },
+      })
+    ).toBe("threshold=0.3");
+    expect(resolveCacheOption({ cache_mode: "easycache" })).toBeUndefined();
+  });
+
+  it("请求体只带合法 scm_mask", () => {
+    const ok: GenParams = {
+      ...baseParams,
+      cache_mode: "dbcache",
+      scm_mask: "1,1,0,0",
+    };
+    expect(buildRequestBody("img_gen", ok, {} as GenImages).scm_mask).toBe(
+      "1,1,0,0"
+    );
+    // 非法掩码绝不下发：上游 parse_scm_mask 无 try/catch 且在 worker 线程，
+    // 坏值会让 sd-server terminate（宁可少一个键）。
+    for (const bad of ["1,x,0", "1,,0", "01", "1 1", "abc", "1,2"]) {
+      const p: GenParams = {
+        ...baseParams,
+        cache_mode: "dbcache",
+        scm_mask: bad,
+      };
+      expect(buildRequestBody("img_gen", p, {} as GenImages).scm_mask).toBeUndefined();
+    }
+  });
+
+  it("cache_mode 关闭时既不发 cache_option 也不发 scm_mask", () => {
+    const p: GenParams = {
+      ...baseParams,
+      cache_mode: "disabled",
+      cache_option: "threshold=0.2",
+      scm_mask: "1,0",
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(body.cache_mode).toBe("disabled");
+    expect(body.cache_option).toBeUndefined();
+    expect(body.scm_mask).toBeUndefined();
+  });
+
+  it("validateScmMask / normalizeScmMask 给出可读原因并拦截", () => {
+    expect(validateScmMask("")).toBeNull();
+    expect(validateScmMask("1,0,1")).toBeNull();
+    expect(validateScmMask("1,,0")).toContain("0/1");
+    expect(normalizeScmMask("1,,0")).toBeUndefined();
+    expect(normalizeScmMask(" 1,0 ")).toBe("1,0");
+    expect(normalizeScmMask("")).toBeUndefined();
+  });
+});
+
+// 审查 F-18：SLG 的 layers / layer_start / layer_end 此前没有入口，
+// 请求体还会把 [7,8,9]/0.01/0.2 硬塞进去覆盖服务端 --skip-layers。
+describe("F-18 SLG 三参数", () => {
+  const baseParams: GenParams = {
+    width: 512,
+    height: 512,
+    seed: 42,
+    sample_params: { sample_steps: 20, guidance: { txt_cfg: 7 } },
+  };
+  const withSlg = (slg: SlgGuidance): GenParams => ({
+    ...baseParams,
+    sample_params: {
+      ...baseParams.sample_params,
+      guidance: { txt_cfg: 7, slg },
+    },
+  });
+  const slgOf = (body: Record<string, unknown>) =>
+    (
+      body.sample_params as {
+        guidance: { slg?: Record<string, unknown> };
+      }
+    ).guidance.slg;
+
+  it("开启时只发设置过的子项", () => {
+    expect(slgOf(buildRequestBody("img_gen", withSlg({ scale: 2.5 }), {} as GenImages))).toEqual(
+      { scale: 2.5 }
+    );
+  });
+
+  it("layers 缺省时省略该键（不覆盖内核 --skip-layers）", () => {
+    const slg = slgOf(
+      buildRequestBody(
+        "img_gen",
+        withSlg({ scale: 2.5, layer_start: 0.05 }),
+        {} as GenImages
+      )
+    );
+    expect(slg).toBeDefined();
+    expect("layers" in (slg as object)).toBe(false);
+    expect(slg?.layer_start).toBe(0.05);
+    expect("layer_end" in (slg as object)).toBe(false);
+  });
+
+  it("空数组的 layers 视为未设置（空数组在上游等于关闭 SLG）", () => {
+    expect(
+      slgOf(buildRequestBody("img_gen", withSlg({ scale: 1, layers: [] }), {} as GenImages))
+    ).toEqual({ scale: 1 });
+  });
+
+  it("关闭时仍显式发 scale:0（服务端可能默认开启）", () => {
+    expect(
+      slgOf(
+        buildRequestBody("img_gen", withSlg({ scale: 0, layers: [4] }), {} as GenImages)
+      )
+    ).toEqual({ scale: 0 });
+  });
+
+  it("跳层索引解析：空串是未设置，非法输入不产生数组", () => {
+    expect(parseLayerList("")).toEqual({ ok: true });
+    expect(parseLayerList("7,8,9")).toEqual({ ok: true, layers: [7, 8, 9] });
+    expect(parseLayerList("7, 7, 8")).toEqual({ ok: true, layers: [7, 8] });
+    expect(parseLayerList("7,,9").ok).toBe(false);
+    expect(parseLayerList("7,a").ok).toBe(false);
+    expect(parseLayerList("-1").ok).toBe(false);
+    expect(parseLayerList("256").ok).toBe(false);
+    expect(formatLayerList([7, 8, 9])).toBe("7,8,9");
+    expect(formatLayerList([])).toBe("");
+    expect(formatLayerList(undefined)).toBe("");
+  });
+
+  it("SLG 生效窗口校验（start >= end 会静默不生效）", () => {
+    expect(validateSlgWindow(0.01, 0.2)).toBeNull();
+    expect(validateSlgWindow(0.2, 0.2)).toContain("小于");
+    expect(validateSlgWindow(0.3, 0.2)).toContain("小于");
+    expect(validateSlgWindow(-0.1, 0.2)).toContain("0–1");
+    expect(validateSlgWindow(undefined, 0.2)).toBeNull();
+  });
+
+  it("高噪 SLG 只在开启时发送，且同样省略缺省子项", () => {
+    const off: GenParams = {
+      ...baseParams,
+      high_noise_sample_params: {
+        sample_steps: 8,
+        guidance: { txt_cfg: 3.5 },
+      },
+    };
+    const hnOff = buildRequestBody("vid_gen", off, {} as GenImages)
+      .high_noise_sample_params as { guidance: Record<string, unknown> };
+    expect("slg" in hnOff.guidance).toBe(false);
+
+    const on: GenParams = {
+      ...baseParams,
+      high_noise_sample_params: {
+        sample_steps: 8,
+        guidance: { txt_cfg: 3.5, slg: { scale: 2, layer_start: 0.1 } },
+      },
+    };
+    const hnOn = buildRequestBody("vid_gen", on, {} as GenImages)
+      .high_noise_sample_params as {
+      guidance: { slg?: Record<string, unknown> };
+    };
+    expect(hnOn.guidance.slg).toEqual({ scale: 2, layer_start: 0.1 });
   });
 });
 
