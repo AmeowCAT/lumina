@@ -10,7 +10,7 @@ const FOCUSABLE =
  */
 export function useFocusTrap<T extends HTMLElement>(
   active: boolean,
-  opts: { restoreFocus?: boolean } = {}
+  opts: { restoreFocus?: boolean } = {},
 ) {
   const { restoreFocus = true } = opts;
   const ref = useRef<T | null>(null);

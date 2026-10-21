@@ -44,8 +44,6 @@ describe("TitleBar 自绘标题栏", () => {
   it("最大化后按钮切换为还原", async () => {
     winMocks.isMaximized.mockResolvedValue(true);
     render(<TitleBar />);
-    expect(
-      await screen.findByRole("button", { name: "还原" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "还原" })).toBeInTheDocument();
   });
 });

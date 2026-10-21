@@ -7,7 +7,7 @@ function renderPanel(props: { collapsed?: boolean; forceOpen?: boolean }) {
   return render(
     <Panel title="尺寸与种子" {...props}>
       <span>面板内容</span>
-    </Panel>
+    </Panel>,
   );
 }
 
@@ -19,7 +19,11 @@ describe("Panel", () => {
     const head = screen.getByRole("button", { name: "尺寸与种子" });
     expect(head).toHaveAttribute("aria-expanded", "false");
 
-    rerender(<Panel title="尺寸与种子" forceOpen>{<span>面板内容</span>}</Panel>);
+    rerender(
+      <Panel title="尺寸与种子" forceOpen>
+        {<span>面板内容</span>}
+      </Panel>,
+    );
     expect(head).toHaveAttribute("aria-expanded", "true");
 
     // 用户点标题收起：forceOpen 仍为 true，但必须生效。
@@ -47,7 +51,11 @@ describe("Panel", () => {
     // 关掉 Sheet（forceOpen 回落 false）再点另一个 chip（重新变 true），
     // 面板应再次被展开。
     rerender(<Panel title="尺寸与种子">{<span>面板内容</span>}</Panel>);
-    rerender(<Panel title="尺寸与种子" forceOpen>{<span>面板内容</span>}</Panel>);
+    rerender(
+      <Panel title="尺寸与种子" forceOpen>
+        {<span>面板内容</span>}
+      </Panel>,
+    );
     expect(head).toHaveAttribute("aria-expanded", "true");
   });
 });

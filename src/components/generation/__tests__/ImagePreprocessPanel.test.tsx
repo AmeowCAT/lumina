@@ -35,15 +35,28 @@ describe("ImagePreprocessPanel", () => {
     [{ invalid: true }, ""],
     ["not-an-array", ""],
     [[42, null, {}, "  target=ref,mode=none ", ""], "  target=ref,mode=none \n"],
-  ])("handles malformed persisted rules %# without changing valid draft whitespace", (value, expected) => {
-    render(<ImagePreprocessPanel rules={value as string[]} hasRefImages onUpdate={() => {}} />);
-    expect(screen.getByLabelText("预处理规则")).toHaveValue(expected);
-  });
+  ])(
+    "handles malformed persisted rules %# without changing valid draft whitespace",
+    (value, expected) => {
+      render(<ImagePreprocessPanel rules={value as string[]} hasRefImages onUpdate={() => {}} />);
+      expect(screen.getByLabelText("预处理规则")).toHaveValue(expected);
+    },
+  );
 
   it("reflects externally restored rules", () => {
     const onUpdate = () => {};
-    const { rerender } = render(<ImagePreprocessPanel rules={["target=init,mode=none"]} hasRefImages onUpdate={onUpdate} />);
-    rerender(<ImagePreprocessPanel rules={["target=ref,mode=none", "target=mask,filter=nearest"]} hasRefImages onUpdate={onUpdate} />);
-    expect(screen.getByLabelText("预处理规则")).toHaveValue("target=ref,mode=none\ntarget=mask,filter=nearest");
+    const { rerender } = render(
+      <ImagePreprocessPanel rules={["target=init,mode=none"]} hasRefImages onUpdate={onUpdate} />,
+    );
+    rerender(
+      <ImagePreprocessPanel
+        rules={["target=ref,mode=none", "target=mask,filter=nearest"]}
+        hasRefImages
+        onUpdate={onUpdate}
+      />,
+    );
+    expect(screen.getByLabelText("预处理规则")).toHaveValue(
+      "target=ref,mode=none\ntarget=mask,filter=nearest",
+    );
   });
 });

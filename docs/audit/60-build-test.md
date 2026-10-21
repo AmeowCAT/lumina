@@ -41,6 +41,7 @@
   # 需要自动提交时可用 `npm version patch --git-tag-version` 覆盖。
   git-tag-version=false
   ```
+
   ```json
   // package.json:15
   "version": "node scripts/sync-version.mjs",
@@ -103,7 +104,9 @@
   +-- @napi-rs/wasm-runtime@1.1.6 extraneous
   | +-- UNMET DEPENDENCY @emnapi/runtime@^1.7.1
   ```
+
   而 lockfile 里这 5 个包都登记着：`@emnapi/runtime v1.11.3 (optional=true, dev=true)`、`@emnapi/core`、`@napi-rs/wasm-runtime`、`@tybys/wasm-util`；但 `node_modules/@emnapi/runtime` **实际不存在**（`Test-Path` 为 false），另 4 个存在。
+
 - 问题：这些是 `@rolldown/binding-wasm32-wasi` / `@tailwindcss/oxide-wasm32-wasi` 的 wasm32-wasi 可选回退，在 win32-x64 上本应**整组都不安装**；现在是「装了 4 个、缺 1 个」，只能说明 `node_modules` 不是由当前 lockfile `npm ci` 出来的。根因有直接证据：`ab2d5ea chore: 补齐 package-lock.json 缺失的 @emnapi/runtime` 是一个**只改 `package-lock.json` 的提交**（`package-lock.json | 103 ++++…`，+92/−11），即 lockfile 被手工编辑过——手写条目无法由 npm 再生，下次 `npm install` 可能又改回去或报 `EUSAGE`。再加上没有 CI（2.4），「干净机器能否装上」这件事从未被验证。
 - 上游/对照依据：npm 官方要求 lockfile 只由 npm 生成、并用 `npm ci` 在 CI 中校验；`npm ci` 会在 lock 与 `package.json` 不一致时直接失败，正是为防这类漂移。
 - 建议：删除 `node_modules/` 与 `package-lock.json`，重新 `npm install` 并提交生成结果（预期这 5 个包在 win32-x64 上只剩 lock 里的 optional 记录、`node_modules` 里一个都不装）；随后加 CI 跑 `npm ci`（见 2.4）作为长期护栏。
@@ -119,7 +122,7 @@
   - 2.9 的 4 个已知漏洞（`npm audit` 从未跑过）；
   - 2.10 的 19 个依赖落后；
   - `npx tsc --noEmit` 与 363 个测试在任何提交上都没有记录可查。
-  另一层：项目分发 AGPL 二进制并从 Releases 发布，没有可复现的构建记录（谁在哪台机器上用哪个 Node 版本出的包，无从查证）。
+    另一层：项目分发 AGPL 二进制并从 Releases 发布，没有可复现的构建记录（谁在哪台机器上用哪个 Node 版本出的包，无从查证）。
 - 上游/对照依据：同类 Tauri 客户端（如各类 sd.cpp / ComfyUI 包装器）普遍用 `tauri-apps/tauri-action` + `ubuntu-latest` 跑 `npm ci && npx tsc --noEmit && npm test`，成本约 3 分钟。
 - 建议（最小可用 CI，3 个 job 合成一个）：
   ```yaml
@@ -151,12 +154,14 @@
       exePath, modelName, mode, args, port,
     }),
   ```
+
   ```
   src/hooks/__tests__/useModelSwitch.test.ts:11     vi.mock("../../api", () => ({ api: mocks }));
   src/components/dashboard/__tests__/Dashboard.test.tsx:20   vi.mock("../../../api", () => ({ api: mocks }));
   src/hooks/__tests__/useJobPolling.test.ts:7        vi.mock("../../api", () => ({ api: mocks }));
   src/components/dashboard/__tests__/CliCompatibility.test.tsx:7、GenerationUpscale.test.tsx:13、HistoryGallery.test.tsx:23、GenerationUI.test.tsx:11
   ```
+
 - 问题：`invoke("start_server", { exePath, ... })` 的两个要素——命令名与参数键名——都是普通字符串，`tsc` 看不见；7 个交互测试全部把 `api` 换成 `vi.fn()`，所以命令名写错、Rust 侧 `#[tauri::command]` 改名、参数键改名（Tauri 的 camelCase↔snake_case 自动转换依赖名字本身）、返回结构变化，**tsc 绿、363 个测试全绿**，只有真正启动应用点一次才发现。这正是简报 §3.2 说的「同一事实两处手写」的典型，而且是本项目**唯一**没有任何自动化保护的一处接缝（家族识别已收敛到 `family.rs`，但命令面没有）。
 - 上游/对照依据：`src/api.ts:16-19` 的注释自己承认这层是「Typed wrappers around Tauri commands」，类型只在 TS 侧自洽；`Cargo.toml:15-31` 没有 `tauri-specta` 之类的绑定生成器，因此不存在单一事实源。
 - 建议（两档，都不大）：
@@ -174,7 +179,9 @@
   "bundle": { "active": true, "targets": "all",
               "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"] }
   ```
+
   `Cargo.toml:16-19` 的插件只有 `tauri-plugin-window-state` / `single-instance` / `notification`，**没有** `tauri-plugin-updater`；`tauri.conf.json` 里没有 `plugins.updater`、没有 `bundle.windows.certificateThumbprint`/`signCommand`、没有 `publisher`/`copyright`。`dist/` 实测 26 个文件（12 个 woff2 + 12 个 `assets/*.js|css` + `favicon.svg` + `index.html`）里**没有任何** `LICENSE`/`NOTICE`/`OFL` 文件。
+
 - 问题（三件事，都影响「从 Releases 下载安装包」这个唯一分发路径）：
   1. **无签名**：Windows 上 SmartScreen 会显示「未知发布者」，用户需要点「仍要运行」；`publisher`/`copyright` 缺失进一步让控制面板与 MSI 属性里的发布者信息为空。
   2. **无 updater / 无更新提示**：`build-release.log:47-53` 证明实际产出过 `Lumina_0.8.0_x64_en-US.msi` 与 `Lumina_0.8.0_x64-setup.exe`，而 0.8.0→0.8.6 已经过六轮迭代；用户装的是哪个版本只能自己回 GitHub 看。`README.md:124` 只说了「发布包是本地构建的」，没有把「无自动更新」列为已知限制，所以这是缺口而非取舍。
@@ -220,14 +227,15 @@
 - 位置：`package-lock.json`（`undici`、`source-map-js`、`vitest`、`@vitest/mocker` 条目）
 - 现状（实测 `npm audit --json`）：
 
-  | 包 | 级别 | 范围 | 引入者 | 说明 |
-  |---|---|---|---|---|
-  | `undici` 7.29.0 | **high** | 7.0.0–7.29.0 | `node_modules/jsdom [dependencies] ^7.25.0` → `dev: true` | 10 条 GHSA（WebSocket 解压 DoS、retry 拦截器响应拆分、`Set-Cookie` 跨用户泄露、TLS 校验被丢弃等） |
-  | `source-map-js` 1.2.1 | **high** | 1.0.0–1.2.1 | `postcss` / `@tailwindcss/node` / `css-tree` → `dev: true` | GHSA-68fv-2mgg-jv7q 事件循环 DoS |
-  | `vitest` 4.1.10 | moderate | 2.1.0-beta.1–4.1.10 | 直接 devDependency | GHSA-82fw-gwwq-j7x9 `@vitest/mocker` 重定向 mock 路径穿越 |
-  | `@vitest/mocker` | moderate | 2.1.0–4.1.10 | `vitest` 传递 | 同上 |
+  | 包                    | 级别     | 范围                | 引入者                                                     | 说明                                                                                              |
+  | --------------------- | -------- | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+  | `undici` 7.29.0       | **high** | 7.0.0–7.29.0        | `node_modules/jsdom [dependencies] ^7.25.0` → `dev: true`  | 10 条 GHSA（WebSocket 解压 DoS、retry 拦截器响应拆分、`Set-Cookie` 跨用户泄露、TLS 校验被丢弃等） |
+  | `source-map-js` 1.2.1 | **high** | 1.0.0–1.2.1         | `postcss` / `@tailwindcss/node` / `css-tree` → `dev: true` | GHSA-68fv-2mgg-jv7q 事件循环 DoS                                                                  |
+  | `vitest` 4.1.10       | moderate | 2.1.0-beta.1–4.1.10 | 直接 devDependency                                         | GHSA-82fw-gwwq-j7x9 `@vitest/mocker` 重定向 mock 路径穿越                                         |
+  | `@vitest/mocker`      | moderate | 2.1.0–4.1.10        | `vitest` 传递                                              | 同上                                                                                              |
 
   `npm audit --omit=dev --json` → `{"vulnerabilities":{},"metadata":{"vulnerabilities":{"total":0}}}`，**生产依赖 96 个包零漏洞**。
+
 - 问题：不影响最终用户（这些代码不进 `dist`，`dist` 里只有 14 个本地文件），影响的是「开发机跑测试/构建」这条链：`jsdom` 在测试里执行被测代码、`undici.retry`/`WebSocket` 场景全部是本地 mock 数据，实际可利用性低；但它们是可直接消除的噪音，留着会让将来的 `npm audit` 检查失去信号价值。
 - 建议：`npm update vitest source-map-js undici`（三者都在已声明的 caret 范围内，`wanted` 分别是 4.1.12 / 1.2.2 / ≥7.29.1，不需要跨大版本），然后重跑 `npm audit` 确认归零；长期靠 2.10 的 dependabot。
 
@@ -249,6 +257,7 @@
   typescript 5.9.3 (latest 7.0.2)   vite 8.1.4 → 8.3.4
   vitest 4.1.10 → 4.1.12 (latest 5.0.5)   zustand 5.0.14 → 5.0.15
   ```
+
 - 问题：`react`/`react-dom`/`@types/react` 停在 18 是有意选择（`package.json:28-29` 是 `^18.3.1`），不算缺陷；但 `"Wanted"` 列的差距说明 lockfile 已经有一段时间没刷新（`vite 8.1.4 → 8.3.4`、`vitest 4.1.10 → 4.1.12` 都在 caret 范围内却未升级）。真正的风险是「大版本跳跃在无人预警的情况下同时到来」：`vitest 5`、`typescript 7`、`motion 14`、`@testing-library/jest-dom 7` 四个同时落后一个大版本，将来一次性升级的代价远高于分批。
 - 建议：开 dependabot（`.github/dependabot.yml`，`versioning-strategy: increase`，`npm` 每周一次，把 major 单独分组），或每次发版前手动跑一次 `npm update` + `npm test`。
 
@@ -270,7 +279,9 @@
   ```ts
   test: { environment: "jsdom", globals: true, setupFiles: ["./src/test/setup.ts"] }
   ```
+
   没有 `coverage` 段；`devDependencies` 里没有 `@vitest/coverage-v8` 或 `-istanbul`；`package.json:16-17` 只有 `test` / `test:watch`，没有 `test:coverage`。
+
 - 问题：
   1. **没有覆盖率数字**：363 个用例听起来很多，但没人知道 `src-tauri/src/*.rs` 之外的 TS 覆盖率是多少；`src/lib/utils.ts`（92 个用例）与 `src/components/generation/*` 的覆盖分布差异不可见。
   2. **`globals: true` 是陷阱**：见 2.7 第三条。
@@ -286,15 +297,15 @@
 - 位置：`src/components/dashboard/__tests__/Dashboard.test.tsx:68-72`
 - 现状（实测逐文件耗时，Top 5）：
 
-  | 文件 | 用例 | 耗时 |
-  |---|---|---|
-  | `dashboard/__tests__/Dashboard.test.tsx` | 18 | **17004 ms** |
-  | `generation/__tests__/GenerationUI.test.tsx` | 14 | 1606 ms |
-  | `generation/__tests__/GenerationUpscale.test.tsx` | 7 | 1065 ms |
-  | `generation/__tests__/PromptDock.test.tsx` | 8 | 952 ms |
-  | `generation/__tests__/ImagePreprocessPanel.test.tsx` | 7 | 686 ms |
-  （其余 29 个文件合计 ≈ 4.8s；单用例 700–1500ms，见 `blocks startup and lists missing…` 968ms 等 18 条）
-  原因可见：
+  | 文件                                                                                                    | 用例 | 耗时         |
+  | ------------------------------------------------------------------------------------------------------- | ---- | ------------ |
+  | `dashboard/__tests__/Dashboard.test.tsx`                                                                | 18   | **17004 ms** |
+  | `generation/__tests__/GenerationUI.test.tsx`                                                            | 14   | 1606 ms      |
+  | `generation/__tests__/GenerationUpscale.test.tsx`                                                       | 7    | 1065 ms      |
+  | `generation/__tests__/PromptDock.test.tsx`                                                              | 8    | 952 ms       |
+  | `generation/__tests__/ImagePreprocessPanel.test.tsx`                                                    | 7    | 686 ms       |
+  | （其余 29 个文件合计 ≈ 4.8s；单用例 700–1500ms，见 `blocks startup and lists missing…` 968ms 等 18 条） |
+  | 原因可见：                                                                                              |
 
   ```ts
   // Dashboard.test.tsx:68-72 —— 每次调用 pickOption 都新建一个 userEvent 实例
@@ -304,7 +315,9 @@
     await user.click(await screen.findByRole("option", { name: optionName }));
   }
   ```
+
   每个用例还要完整挂载 `Dashboard`（大量 Radix Select / 折叠面板）。
+
 - 问题：22s 的测试时长本身可接受，但它意味着「改一行 Dashboard 要等 20 秒」，且这个文件会随用例增长线性变慢（18 个用例已占 17s，50 个用例就是 45s+）。在没有 CI 的现状下，它是「本地不愿跑全量测试」的诱因。
 - 建议：把 `userEvent.setup()` 提到 `describe` 之外复用（或 `userEvent.setup({ delay: null })` 去掉事件间隔）；`pickOption` 里的 `findBy*` 换成同步 `getBy*`（Radix 的 Select 在 `fireEvent.click` 后同步挂载菜单）；对 `Dashboard` 的重复挂载考虑 `beforeEach(render)` 复用容器。
 
@@ -322,18 +335,18 @@
 - 级别：**P3**
 - 方法：每条 README 论断在代码里找唯一事实源，逐条比对。
 
-| # | README 论断（行号） | 代码证据 | 结论 |
-|---|---|---|---|
-| 1 | 默认端口 `127.0.0.1:1234`，可改 1024–65535（`:86`） | `server.rs:14 DEFAULT_SD_PORT: u16 = 1234`；`server.rs:20-21` `if port < 1024 { bail!("端口 {} 不可用，请使用 1024–65535 之间的端口") }`；前端 `utils.ts:16-17 MIN_SD_PORT=1024 / MAX_SD_PORT=65535` | **一致** |
-| 2 | 目录最多向下三层、单次最多 5000 个文件（`:90`） | `scanner.rs:9 const MAX_DEPTH: usize = 3`；`scanner.rs:14 const MAX_SCAN_FILES: usize = 5000`；`scanner.rs:310 if depth > MAX_DEPTH` | **一致** |
-| 3 | 只认 `.safetensors/.sft/.gguf/.ckpt/.pt/.pth`（`:90`） | `scanner.rs:105 matches!(ext, "safetensors" \| "sft" \| "gguf" \| "ckpt" \| "pt" \| "pth")` | **一致** |
-| 4 | 6 条快捷键（`:75-80`） | `Ctrl+Enter` → `useKeyboardShortcuts.ts:19`；`Ctrl+R` → `:23`；`Esc` → `:27`；`Ctrl+,` → `GenerationUI.tsx:963`；`←/→/+/-/0` → `Lightbox.tsx:86-102` | **一致** |
-| 5 | 生成参数缓存在 `sdcpp:params:*`，不进 settings.json（`:85`） | `launchConfig.ts:235 getItem(\`sdcpp:params:${mode}\`)`、`:243`；`GenerationUI.tsx:294/306/781` | **一致**（但未提及另外三个键：`store.ts:398 "sdcpp:seedRandom"`、`store.ts:417 "sdcpp:sizeStep"`、`theme.ts:43 "lumina:theme"`） |
-| 6 | 已适配 58 个家族，外加「自定义」（`:105`） | 求值 `src/config/families.ts` 得到 `FAMILY_CONFIG` **61 个键 = 60 个真实家族 + custom**（见 §5 探针输出） | **不一致**（少报 2 个） |
-| 7 | PNG / WebP 元数据解析（`:156`） | `png_info.rs:51 parse_png_metadata`、`:97 parse_webp_metadata`、`:227 else if ext == "webp"` | **一致** |
-| 8 | Windows 产出 msi + nsis + 免安装 exe，文件名形态（`:37-39`） | `build-release.log:47-53`：`bundle\msi\Lumina_0.8.0_x64_en-US.msi`、`bundle\nsis\Lumina_0.8.0_x64-setup.exe`、`target\release\lumina.exe` | **一致** |
-| 9 | 前置 Node.js 20.19+（`:23`） | `.nvmrc:1 20.19.0`；`package.json:7 "node": ">=20.19.0"`；`vite@8.1.4` engines `^20.19.0 \|\| >=22.12.0` | **一致**（`engines` 范围偏宽，见 2.16） |
-| 10 | `npm run dev` 端口 1420（`:129`） | `vite.config.ts:11-13 port: 1420, strictPort: true`；`tauri.conf.json:8 devUrl: "http://127.0.0.1:1420"` | **一致** |
+| #   | README 论断（行号）                                          | 代码证据                                                                                                                                                                                             | 结论                                                                                                                             |
+| --- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 默认端口 `127.0.0.1:1234`，可改 1024–65535（`:86`）          | `server.rs:14 DEFAULT_SD_PORT: u16 = 1234`；`server.rs:20-21` `if port < 1024 { bail!("端口 {} 不可用，请使用 1024–65535 之间的端口") }`；前端 `utils.ts:16-17 MIN_SD_PORT=1024 / MAX_SD_PORT=65535` | **一致**                                                                                                                         |
+| 2   | 目录最多向下三层、单次最多 5000 个文件（`:90`）              | `scanner.rs:9 const MAX_DEPTH: usize = 3`；`scanner.rs:14 const MAX_SCAN_FILES: usize = 5000`；`scanner.rs:310 if depth > MAX_DEPTH`                                                                 | **一致**                                                                                                                         |
+| 3   | 只认 `.safetensors/.sft/.gguf/.ckpt/.pt/.pth`（`:90`）       | `scanner.rs:105 matches!(ext, "safetensors" \| "sft" \| "gguf" \| "ckpt" \| "pt" \| "pth")`                                                                                                          | **一致**                                                                                                                         |
+| 4   | 6 条快捷键（`:75-80`）                                       | `Ctrl+Enter` → `useKeyboardShortcuts.ts:19`；`Ctrl+R` → `:23`；`Esc` → `:27`；`Ctrl+,` → `GenerationUI.tsx:963`；`←/→/+/-/0` → `Lightbox.tsx:86-102`                                                 | **一致**                                                                                                                         |
+| 5   | 生成参数缓存在 `sdcpp:params:*`，不进 settings.json（`:85`） | `launchConfig.ts:235 getItem(\`sdcpp:params:${mode}\`)`、`:243`；`GenerationUI.tsx:294/306/781`                                                                                                      | **一致**（但未提及另外三个键：`store.ts:398 "sdcpp:seedRandom"`、`store.ts:417 "sdcpp:sizeStep"`、`theme.ts:43 "lumina:theme"`） |
+| 6   | 已适配 58 个家族，外加「自定义」（`:105`）                   | 求值 `src/config/families.ts` 得到 `FAMILY_CONFIG` **61 个键 = 60 个真实家族 + custom**（见 §5 探针输出）                                                                                            | **不一致**（少报 2 个）                                                                                                          |
+| 7   | PNG / WebP 元数据解析（`:156`）                              | `png_info.rs:51 parse_png_metadata`、`:97 parse_webp_metadata`、`:227 else if ext == "webp"`                                                                                                         | **一致**                                                                                                                         |
+| 8   | Windows 产出 msi + nsis + 免安装 exe，文件名形态（`:37-39`） | `build-release.log:47-53`：`bundle\msi\Lumina_0.8.0_x64_en-US.msi`、`bundle\nsis\Lumina_0.8.0_x64-setup.exe`、`target\release\lumina.exe`                                                            | **一致**                                                                                                                         |
+| 9   | 前置 Node.js 20.19+（`:23`）                                 | `.nvmrc:1 20.19.0`；`package.json:7 "node": ">=20.19.0"`；`vite@8.1.4` engines `^20.19.0 \|\| >=22.12.0`                                                                                             | **一致**（`engines` 范围偏宽，见 2.16）                                                                                          |
+| 10  | `npm run dev` 端口 1420（`:129`）                            | `vite.config.ts:11-13 port: 1420, strictPort: true`；`tauri.conf.json:8 devUrl: "http://127.0.0.1:1420"`                                                                                             | **一致**                                                                                                                         |
 
 - 第 6 条的具体差异：`README.md:107` 的枚举（39 个顿号分隔项）里**完全没有** `LLaDA-Image` / `LLaDA-Image Turbo` / `SenseNova U1.5`——这三者在代码里是三个独立 id（`family.rs` 的 detect 返回值与 `families.ts:1198`、`families.ts:401` 都有完整配置，`src/lib/__tests__/sensenova.test.ts` 还专门测了它的参数映射），却不在 README 的「已适配」清单里。同时 README 把 `MOSS-Image（Base / SFT）` 并列（代码里是同一个 id `moss-image`，`family.rs:152-153`）把 `PiD / PiD 1.5` 并列（同一个 id `pid`），所以「58」这个数字既不是枚举项数、也不是代码 id 数。
   顺带一个**正向**发现：`family.rs detect_family` 返回的 60 个 id 与 `FAMILY_CONFIG` 的 60 个键**双向零差集**（§5 探针），说明「Rust 检测 / TS 配置」这两处没有漂移，`README.md:135`「家族识别只有 family.rs 一份实现」属实。
@@ -345,13 +358,13 @@
 - 位置：`package.json:6-8`、`.nvmrc:1`
 - 现状：`"node": ">=20.19.0"`；`.nvmrc` 是 `20.19.0`；本机实测 `v24.13.0`。但真实约束更严：
 
-  | 包 | engines |
-  |---|---|
-  | `vite@8.1.4` | `^20.19.0 \|\| >=22.12.0` |
-  | `vitest@4.1.10` | `^20.0.0 \|\| ^22.0.0 \|\| >=24.0.0` |
-  | `jsdom@29.1.1` | `^20.19.0 \|\| ^22.13.0 \|\| >=24.0.0` |
-  | `@vitejs/plugin-react@6.0.3` | `^20.19.0 \|\| >=22.12.0` |
-  | `rolldown@1.1.5` | `^20.19.0 \|\| >=22.12.0` |
+  | 包                           | engines                                |
+  | ---------------------------- | -------------------------------------- |
+  | `vite@8.1.4`                 | `^20.19.0 \|\| >=22.12.0`              |
+  | `vitest@4.1.10`              | `^20.0.0 \|\| ^22.0.0 \|\| >=24.0.0`   |
+  | `jsdom@29.1.1`               | `^20.19.0 \|\| ^22.13.0 \|\| >=24.0.0` |
+  | `@vitejs/plugin-react@6.0.3` | `^20.19.0 \|\| >=22.12.0`              |
+  | `rolldown@1.1.5`             | `^20.19.0 \|\| >=22.12.0`              |
 
 - 问题：`>=20.19.0` 允许 Node **21.x / 23.x**，但 `vitest` 与 `jsdom` 明确不支持奇数版本——在这些版本上 npm 只会打 `EBADENGINE` 警告（`.npmrc` 没有 `engine-strict=true`，所以不阻断），随后 `npm test` 会以难以理解的方式失败。另一侧：没有任何 npm 版本约束，而本项目明显敏感（`package-lock.json` 是 `lockfileVersion: 3`，npm 6 生成的是 v2）。
 - 建议：
@@ -381,15 +394,15 @@
 
 ## 4. 与其它组可能重叠的点（Lead 合并用）
 
-| 事项 | 本组视角 | 建议归属 |
-|---|---|---|
-| 无 ErrorBoundary / 无 `window.onerror` / 白窗 | 与 `sourcemap: false` 联动：即使开 devtools 也只能看到压缩栈（2.17） | 主记 frontend-arch，本组只保留「构建侧不产 sourcemap」这一半 |
-| `Cargo.toml` 依赖版本双份（`dirs` 5/6、`windows-sys` 6 个版本）、`devtools` feature 进 release | 依赖健康度（2.17） | 主记 backend-rust |
-| `capabilities/default.json` 权限面、CSP | 已读但未评估（`tauri.conf.json:28` CSP 与 `README.md:135` 一致，无矛盾） | backend-rust |
-| `index.html:13` 与 `src/lib/theme.ts:43` 双写 `lumina:theme` 键名 | 一致性风险：两处手写字面量，靠注释「保持一致」（`index.html:12`） | 主记 frontend-arch |
-| `hooks/useKeyboardShortcuts.ts:14-15` 重复赋值 | 作为「无 lint 会漏掉什么」的实例（2.7） | 主记 frontend-arch（无功能影响，纯冗余） |
-| `src/api.ts` 23 个命令名 vs Rust `generate_handler!` | TS↔Rust 接缝零覆盖（2.5） | 可与 api-alignment 合并；本组提供测试缺口视角 |
-| 33 处 README 论断中的上游对齐细节（`:99` 那段 PR 清单） | 未评估 | cli-families / api-alignment |
+| 事项                                                                                           | 本组视角                                                                 | 建议归属                                                     |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| 无 ErrorBoundary / 无 `window.onerror` / 白窗                                                  | 与 `sourcemap: false` 联动：即使开 devtools 也只能看到压缩栈（2.17）     | 主记 frontend-arch，本组只保留「构建侧不产 sourcemap」这一半 |
+| `Cargo.toml` 依赖版本双份（`dirs` 5/6、`windows-sys` 6 个版本）、`devtools` feature 进 release | 依赖健康度（2.17）                                                       | 主记 backend-rust                                            |
+| `capabilities/default.json` 权限面、CSP                                                        | 已读但未评估（`tauri.conf.json:28` CSP 与 `README.md:135` 一致，无矛盾） | backend-rust                                                 |
+| `index.html:13` 与 `src/lib/theme.ts:43` 双写 `lumina:theme` 键名                              | 一致性风险：两处手写字面量，靠注释「保持一致」（`index.html:12`）        | 主记 frontend-arch                                           |
+| `hooks/useKeyboardShortcuts.ts:14-15` 重复赋值                                                 | 作为「无 lint 会漏掉什么」的实例（2.7）                                  | 主记 frontend-arch（无功能影响，纯冗余）                     |
+| `src/api.ts` 23 个命令名 vs Rust `generate_handler!`                                           | TS↔Rust 接缝零覆盖（2.5）                                                | 可与 api-alignment 合并；本组提供测试缺口视角                |
+| 33 处 README 论断中的上游对齐细节（`:99` 那段 PR 清单）                                        | 未评估                                                                   | cli-families / api-alignment                                 |
 
 ## 5. 实测记录
 
@@ -401,6 +414,7 @@
 EXIT=0
 输出行数 = 0
 ```
+
 `tsconfig.json` 下 `strict: true` + `noUnusedLocals` + `noUnusedParameters` + `noFallthroughCasesInSwitch`（`:14-17`），`include: ["src"]`（`:20`），95 个 ts/tsx 文件。全库 `@ts-ignore`/`@ts-expect-error` 各 0 处、`any` 0 处、`as unknown as` 11 处（`store.ts:263`、`setup.ts:6/20/33`、`store.test.ts:45`）。**类型面干净，且不是靠 suppress 换来的。**
 
 ### 5.2 `npm test`（Vitest 4.1.10）
@@ -412,6 +426,7 @@ Test Files  34 passed (34)
   Duration  21.98s (transform 9.30s, setup 7.41s, import 27.85s, tests 27.63s, environment 84.40s)
 EXIT=0
 ```
+
 - 慢文件 Top 5：`Dashboard.test.tsx` 17004ms(18)、`GenerationUI.test.tsx` 1606ms(14)、`GenerationUpscale.test.tsx` 1065ms(7)、`PromptDock.test.tsx` 952ms(8)、`ImagePreprocessPanel.test.tsx` 686ms(7)。
 - 快文件（纯逻辑）：`utils.test.ts` 24ms(92)、`launchConfig.test.ts` 29ms(54)、`store.test.ts` 54ms(10)、`diagnostics.test.ts` 8ms(22)。
 - stderr 相关行共 14 条命中：`act(...)` 警告 5 处（`GenerationUI.test.tsx`：`An update to GenerationUI inside a test was not wrapped in act(...)`，栈指向 `GenerationUI.tsx:73`）、`Not implemented: Window's scrollTo() method` 2 处（`Dashboard.test.tsx`）、`stderr | <文件>` 块头 6 行，其余为同一警告的续行。
@@ -423,22 +438,23 @@ EXIT=0
 ✓ built in 1.23s
 EXIT=0
 ```
+
 chunk 列表（Vite 的 kB = 1000 B）：
 
-| chunk | raw | gzip |
-|---|---|---|
-| `index-DMVPcQti.js`（入口） | **145.72 kB** | 42.25 kB |
-| `react-vendor-CGZnkPnf.js` | 139.88 kB | 45.35 kB |
-| `ui-vendor-B_Rq68Ng.js` | 133.90 kB | 44.43 kB |
-| `motion-vendor-BAQjeKJd.js` | 125.24 kB | 40.79 kB |
-| `Dashboard-DXA0bGl6.js` | 35.59 kB | 12.01 kB |
-| `GenerationParamsSheet-CoCKwEWY.js` | 32.23 kB | 10.32 kB |
-| `Select-CH5SMzhI.js` | 20.55 kB | 7.38 kB |
-| `HistoryGallery-W9EYc7kd.js` | 11.25 kB | 4.48 kB |
-| `Panel-BrprmwLN.js` | 1.08 kB | 0.61 kB |
-| `Toggle-ClJs1DEi.js` | 0.50 kB | 0.31 kB |
-| `rolldown-runtime-CNC7AqOf.js` | 0.87 kB | 0.50 kB |
-| `index-BGL1fDii.css` | 97.75 kB | 20.41 kB |
+| chunk                               | raw           | gzip     |
+| ----------------------------------- | ------------- | -------- |
+| `index-DMVPcQti.js`（入口）         | **145.72 kB** | 42.25 kB |
+| `react-vendor-CGZnkPnf.js`          | 139.88 kB     | 45.35 kB |
+| `ui-vendor-B_Rq68Ng.js`             | 133.90 kB     | 44.43 kB |
+| `motion-vendor-BAQjeKJd.js`         | 125.24 kB     | 40.79 kB |
+| `Dashboard-DXA0bGl6.js`             | 35.59 kB      | 12.01 kB |
+| `GenerationParamsSheet-CoCKwEWY.js` | 32.23 kB      | 10.32 kB |
+| `Select-CH5SMzhI.js`                | 20.55 kB      | 7.38 kB  |
+| `HistoryGallery-W9EYc7kd.js`        | 11.25 kB      | 4.48 kB  |
+| `Panel-BrprmwLN.js`                 | 1.08 kB       | 0.61 kB  |
+| `Toggle-ClJs1DEi.js`                | 0.50 kB       | 0.31 kB  |
+| `rolldown-runtime-CNC7AqOf.js`      | 0.87 kB       | 0.50 kB  |
+| `index-BGL1fDii.css`                | 97.75 kB      | 20.41 kB |
 
 - **`codeSplitting.groups` 确认生效**：`vite.config.ts:26-39` 配的三个 `name` 原样出现在产物里（`react-vendor` / `motion-vendor` / `ui-vendor`），并且 `dist/index.html` 用 `<link rel="modulepreload">` 预加载它们 → 配置被 Vite 8 的 `rolldownOptions.output.codeSplitting` 正确消费（不是被静默忽略）。
 - **没有 >500KB 的 chunk**：最大 145.72 kB，Vite 未打 `(!) Some chunks are larger than 500 kB` 警告。
@@ -460,6 +476,7 @@ $ npm ls --all      # 920 行
   +-- UNMET DEPENDENCY @emnapi/runtime@^1.7.1
 其余均为 win32-x64 上正常缺席的 optional（darwin/linux 二进制、babel 插件、canvas 等）
 ```
+
 lock 侧：277 个包；根 `package.json` 的 25 条声明与 `package-lock.json` 根 `dependencies`/`devDependencies` 逐条一致；锁定版本均满足 caret 范围（`react`/`react-dom` 都是 `18.3.1`，同版；`@tauri-apps/cli@2.11.2` 与 `Cargo.lock` 的 `tauri 2.11.2` 同版）。
 
 ### 5.5 `npm outdated` / `npm audit`
@@ -483,7 +500,9 @@ src-tauri/tauri.conf.json:4     0.8.6
 src-tauri/Cargo.toml:3          0.8.6
 src-tauri/Cargo.lock:2257       0.8.6  (name = "lumina" @ :2256)
 ```
+
 `$ node scripts/sync-version.mjs` 输出（运行前后对 5 个文件做 SHA256 比对，全部 `UNCHANGED`，即脚本在当前状态是幂等的、四个锚点都能命中）：
+
 ```
 sync-version: package-lock.json 已是 0.8.6
 sync-version: src-tauri/tauri.conf.json 已是 0.8.6
@@ -491,6 +510,7 @@ sync-version: src-tauri/Cargo.toml 已是 0.8.6
 sync-version: src-tauri/Cargo.lock 已是 0.8.6
 EXIT=0
 ```
+
 **五处版本号当前完全一致。** 但同步机制的脆弱性见 2.1（`npm version` 的 git 集成只 add 两个文件，实测 npm 内部实现 `libnpmversion/lib/version.js:110-117`）。
 
 ### 5.7 家族数量探针（精确计数，替代人工数 key）
@@ -505,6 +525,7 @@ rust detect_family ids: 60
 rust ids missing in FAMILY_CONFIG: (none)
 FAMILY_CONFIG keys not produced by detect_family: (none)
 ```
+
 → 60 个真实家族 + `custom`；Rust 与 TS 两侧家族 id **双向零差集**（这是正向结论）；README 声称的「58 个」偏少 2（2.15 第 6 条），且清单漏 3 个 id。
 
 ### 5.8 许可统计（扫描 `node_modules` 全部 `package.json`）
@@ -518,7 +539,9 @@ BSD-3-Clause                  2      MIT-0                         2
 OFL-1.1                       2      0BSD                          1
 CC0-1.0                       1      MIT OR Apache-2.0             1
 ```
+
 非宽松项（逐条评估）：
+
 - `OFL-1.1` × 2：`@fontsource-variable/inter@5.3.0`、`@fontsource-variable/jetbrains-mono@5.3.0` — **打进安装包**（`src/styles.css:7-8` → `dist/assets/*.woff2`），需要随包附 OFL 文本 → 2.6 第 3 点。
 - `MPL-2.0` × 3：`lightningcss@1.32.0` 及两个平台绑定 — 仅构建期（Tailwind 4 的 CSS 编译），不随包分发；MPL-2.0 §3.3 允许并入 GPL/AGPL 作品，**与 AGPL-3.0-or-later 兼容**。
 - `MIT-0` × 2（`@csstools/*`）、`CC0-1.0`、`0BSD`：公共领域等价，无义务。
@@ -532,6 +555,7 @@ $ git describe --tags --always → v0.8.5-3-gd442371
 $ git ls-files | 匹配 Cargo.lock|package-lock  → package-lock.json、src-tauri/Cargo.lock（均已入库，181 个受控文件）
 $ 哈希前后比对 sync-version 的 5 个目标文件 → 全部 UNCHANGED
 ```
+
 - 依赖使用核对（对 25 个直接依赖逐个 grep `from "pkg"` / `@import`）：**12 个 `dependencies` 与 13 个 `devDependencies` 全部命中真实 import**，无未使用项。代表性证据：
   - `clsx`+`tailwind-merge` → 同一个文件 `src/components/ui/cn.ts:1-2`，各司其职（条件拼装 / 冲突消解），非重复依赖；
   - `radix-ui`（统一包）→ `Toggle.tsx:2`、`Slider.tsx:2`、`Select.tsx:2`、`PromptDock.tsx:2`、`LoraPanel.tsx:2`；全库 **0** 处直接 `from "@radix-ui/..."`，无混用；

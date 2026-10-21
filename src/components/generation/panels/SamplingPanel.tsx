@@ -78,8 +78,7 @@ export const SamplingPanel = memo(function SamplingPanel({
       .filter((s) => s !== "default")
       .map((s) => ({ value: s, label: SCHEDULER_NAMES[s] || s })),
   ];
-  const staleScheduler =
-    !!scheduler && scheduler !== "default" && !schedulers.includes(scheduler);
+  const staleScheduler = !!scheduler && scheduler !== "default" && !schedulers.includes(scheduler);
   if (staleScheduler) {
     schedulerOptions.push({
       value: scheduler,
@@ -216,9 +215,7 @@ export const SamplingPanel = memo(function SamplingPanel({
           <div className="form-row">
             <label className="form-label" htmlFor="preview-mode">
               生成预览
-              <span className="form-sublabel">
-                显示生成中的中间结果，可能增加耗时
-              </span>
+              <span className="form-sublabel">显示生成中的中间结果，可能增加耗时</span>
             </label>
             <Select
               id="preview-mode"
@@ -231,9 +228,7 @@ export const SamplingPanel = memo(function SamplingPanel({
             <div className="form-row">
               <label className="form-label" htmlFor="preview-interval">
                 预览间隔
-                <span className="form-sublabel">
-                  每 N 步更新一次
-                </span>
+                <span className="form-sublabel">每 N 步更新一次</span>
               </label>
               <NumberInput
                 id="preview-interval"

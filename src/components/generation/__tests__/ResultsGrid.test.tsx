@@ -43,7 +43,7 @@ function renderGrid(overrides: Record<string, unknown> = {}) {
       getVideoUrl={() => "blob:video"}
       getImageUrl={() => "blob:image"}
       {...overrides}
-    />
+    />,
   );
   return { onRemove, onSaveImage };
 }
@@ -53,9 +53,7 @@ describe("ResultsGrid", () => {
     const { onRemove } = renderGrid({ results: [unsavedEntry("job-1")] });
     fireEvent.click(screen.getByRole("button", { name: "删除此图片" }));
     expect(onRemove).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "确认删除（尚未保存）" })
-    );
+    fireEvent.click(screen.getByRole("button", { name: "确认删除（尚未保存）" }));
     expect(onRemove).toHaveBeenCalledWith("job-1", 3);
   });
 
@@ -160,23 +158,52 @@ const baseProps = {
 };
 
 describe("ResultsGrid live previews", () => {
-  afterEach(() => { cleanup(); setTheme("lumina"); });
+  afterEach(() => {
+    cleanup();
+    setTheme("lumina");
+  });
 
   it.each([
-    ["lumina", false], ["lumina", true], ["vostok", false], ["vostok", true],
+    ["lumina", false],
+    ["lumina", true],
+    ["vostok", false],
+    ["vostok", true],
   ] as const)("replaces and clears frames in %s (existing results: %s)", (theme, withResults) => {
     setTheme(theme);
     const results = withResults ? [imageEntry("existing")] : [];
     const { rerender } = render(<ResultsGrid {...baseProps} results={results} generating />);
     expect(screen.queryByAltText("生成预览")).toBeNull();
-    rerender(<ResultsGrid {...baseProps} results={results} generating previewSrc="data:image/png;base64,first" previewLabel="生成预览 · 1/20 步" />);
+    rerender(
+      <ResultsGrid
+        {...baseProps}
+        results={results}
+        generating
+        previewSrc="data:image/png;base64,first"
+        previewLabel="生成预览 · 1/20 步"
+      />,
+    );
     expect(screen.getByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,first");
     expect(screen.getByText("生成预览 · 1/20 步")).toBeTruthy();
-    rerender(<ResultsGrid {...baseProps} results={results} generating previewSrc="data:image/png;base64,second" previewLabel="生成预览 · 第 2 段 · 1/10 步" />);
+    rerender(
+      <ResultsGrid
+        {...baseProps}
+        results={results}
+        generating
+        previewSrc="data:image/png;base64,second"
+        previewLabel="生成预览 · 第 2 段 · 1/10 步"
+      />,
+    );
     expect(screen.getAllByAltText("生成预览")).toHaveLength(1);
     expect(screen.getByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,second");
     // 即使调用方保留旧 URL，终态也不能继续展示旧帧。
-    rerender(<ResultsGrid {...baseProps} results={results} generating={false} previewSrc="data:image/png;base64,second" />);
+    rerender(
+      <ResultsGrid
+        {...baseProps}
+        results={results}
+        generating={false}
+        previewSrc="data:image/png;base64,second"
+      />,
+    );
     expect(screen.queryByAltText("生成预览")).toBeNull();
   });
 });
@@ -193,15 +220,19 @@ describe("ResultsGrid 聚焦区 + 瀑布流", () => {
   });
 
   it("hides image-edit shortcuts in both result sections when unsupported", () => {
-    render(<ResultsGrid results={[imageEntry("new"), imageEntry("old")]} {...baseProps} onUseAsInit={undefined} />);
+    render(
+      <ResultsGrid
+        results={[imageEntry("new"), imageEntry("old")]}
+        {...baseProps}
+        onUseAsInit={undefined}
+      />,
+    );
     expect(screen.queryByRole("button", { name: "用作初始图片" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "保存到输出目录" })).toHaveLength(2);
   });
 
   it("两条结果时第一条聚焦、第二条进瀑布流", () => {
-    render(
-      <ResultsGrid results={[imageEntry("new"), imageEntry("old")]} {...baseProps} />
-    );
+    render(<ResultsGrid results={[imageEntry("new"), imageEntry("old")]} {...baseProps} />);
     expect(screen.getByRole("button", { name: /查看本次生成/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /查看生成结果，种子 42/ })).toBeTruthy();
   });
@@ -213,9 +244,7 @@ describe("ResultsGrid 聚焦区 + 瀑布流", () => {
 
   it("点击聚焦图打开 lightbox", () => {
     const onLightbox = vi.fn();
-    render(
-      <ResultsGrid results={[imageEntry("c")]} {...baseProps} onLightbox={onLightbox} />
-    );
+    render(<ResultsGrid results={[imageEntry("c")]} {...baseProps} onLightbox={onLightbox} />);
     fireEvent.click(screen.getByRole("button", { name: /查看本次生成/ }));
     expect(onLightbox).toHaveBeenCalledWith(
       [
@@ -225,15 +254,13 @@ describe("ResultsGrid 聚焦区 + 瀑布流", () => {
           title: "种子 42 · 512×512",
         },
       ],
-      0
+      0,
     );
   });
 
   it("两段式删除聚焦图片透传 jobId 与索引", () => {
     const onRemove = vi.fn();
-    render(
-      <ResultsGrid results={[imageEntry("d", 2)]} {...baseProps} onRemove={onRemove} />
-    );
+    render(<ResultsGrid results={[imageEntry("d", 2)]} {...baseProps} onRemove={onRemove} />);
     const del = screen.getAllByRole("button", { name: "删除此图片" })[1];
     fireEvent.click(del);
     fireEvent.click(del);
@@ -286,39 +313,31 @@ describe("ResultsGrid 容器 MIME 分支（审查 §2.2）", () => {
 
   it("animated WebP 走 <img>，不再创建注定黑屏的 <video>", () => {
     const getVideoUrl = vi.fn(() => "blob:should-not-be-used");
-    const getImageUrl = vi.fn(
-      (b64: string, fmt: string) => `data:image/${fmt};base64,${b64}`
-    );
+    const getImageUrl = vi.fn((b64: string, fmt: string) => `data:image/${fmt};base64,${b64}`);
     render(
       <ResultsGrid
         results={[animatedWebpEntry("anim")]}
         {...baseProps}
         getVideoUrl={getVideoUrl}
         getImageUrl={getImageUrl}
-      />
+      />,
     );
     expect(document.querySelector(".featured-item video")).toBeNull();
     expect(document.querySelector(".featured-item img")).toHaveAttribute(
       "src",
-      "data:image/webp;base64,d2VicC0anim"
+      "data:image/webp;base64,d2VicC0anim",
     );
     expect(getVideoUrl).not.toHaveBeenCalled();
   });
 
   it("video/webm 结果仍然渲染 <video>，且使用视频 URL", () => {
     const getVideoUrl = vi.fn(
-      (jobId: string, _b64: string, mime: string) => `blob:${jobId}/${mime}`
+      (jobId: string, _b64: string, mime: string) => `blob:${jobId}/${mime}`,
     );
-    render(
-      <ResultsGrid
-        results={[videoEntry("clip")]}
-        {...baseProps}
-        getVideoUrl={getVideoUrl}
-      />
-    );
+    render(<ResultsGrid results={[videoEntry("clip")]} {...baseProps} getVideoUrl={getVideoUrl} />);
     expect(document.querySelector(".featured-item video")).toHaveAttribute(
       "src",
-      "blob:clip/video/webm"
+      "blob:clip/video/webm",
     );
     expect(document.querySelector(".featured-item img")).toBeNull();
   });
@@ -340,7 +359,7 @@ describe("ResultsGrid 容器 MIME 分支（审查 §2.2）", () => {
         {...baseProps}
         onLightbox={onLightbox}
         getImageUrl={getImageUrl}
-      />
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: "全屏预览动图" }));
     expect(onLightbox).toHaveBeenCalledWith(
@@ -352,7 +371,7 @@ describe("ResultsGrid 容器 MIME 分支（审查 §2.2）", () => {
           title: "24 FPS · 33 帧",
         },
       ],
-      0
+      0,
     );
   });
 
@@ -367,7 +386,7 @@ describe("ResultsGrid 容器 MIME 分支（审查 §2.2）", () => {
         {...baseProps}
         getImageUrl={getImageUrl}
         getVideoUrl={getVideoUrl}
-      />
+      />,
     );
     expect(document.querySelector(".featured-item img")).toBeTruthy();
     expect(getVideoUrl).not.toHaveBeenCalled();
@@ -394,30 +413,19 @@ describe("ResultsGrid 新结果自动回顶（审查 §2.17 #5）", () => {
   it("结果数不再增长时（已到上限）仍会为新结果回顶", () => {
     const scrollTo = stubScrollTo();
     const { rerender } = render(
-      <ResultsGrid
-        results={[imageEntry("a"), imageEntry("b")]}
-        {...baseProps}
-      />
+      <ResultsGrid results={[imageEntry("a"), imageEntry("b")]} {...baseProps} />,
     );
     expect(scrollTo).not.toHaveBeenCalled(); // 首次挂载不打断阅读位置
 
     // 长度不变（模拟 MAX_RESULTS 淘汰最旧一条），但最新一条换了 → 回顶
-    rerender(
-      <ResultsGrid
-        results={[imageEntry("c"), imageEntry("b")]}
-        {...baseProps}
-      />
-    );
+    rerender(<ResultsGrid results={[imageEntry("c"), imageEntry("b")]} {...baseProps} />);
     expect(scrollTo).toHaveBeenCalledTimes(1);
   });
 
   it("删除结果不会把用户拽回顶部", () => {
     const scrollTo = stubScrollTo();
     const { rerender } = render(
-      <ResultsGrid
-        results={[imageEntry("a"), imageEntry("b")]}
-        {...baseProps}
-      />
+      <ResultsGrid results={[imageEntry("a"), imageEntry("b")]} {...baseProps} />,
     );
     rerender(<ResultsGrid results={[imageEntry("b")]} {...baseProps} />);
     expect(scrollTo).not.toHaveBeenCalled();

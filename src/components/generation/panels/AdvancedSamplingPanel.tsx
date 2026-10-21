@@ -87,22 +87,15 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   // 视频时间维分块（审查 30-api §2.9）：上游把它放在 extra_tiling_args 里，
   // 是长视频解码 OOM 的主要缓解手段，界面此前完全没有入口。
   const temporalOn = !!vaeTilingParams?.temporal_tiling;
-  const temporalFrames = tilingArgValue(
-    vaeTilingParams?.extra_tiling_args,
-    "temporal_tile_frames"
-  );
+  const temporalFrames = tilingArgValue(vaeTilingParams?.extra_tiling_args, "temporal_tile_frames");
   const temporalOverlap = tilingArgValue(
     vaeTilingParams?.extra_tiling_args,
-    "temporal_tile_overlap"
+    "temporal_tile_overlap",
   );
   const setTemporalArg = (key: string, value: number | null) =>
     onUpdate("vae_tiling_params", {
       ...vaeTilingParams,
-      extra_tiling_args: setTilingArgValue(
-        vaeTilingParams?.extra_tiling_args,
-        key,
-        value
-      ),
+      extra_tiling_args: setTilingArgValue(vaeTilingParams?.extra_tiling_args, key, value),
     });
 
   // ── F-18：缓存微调 / SCM 掩码 / SLG 子项 ────────────────────────────
@@ -112,18 +105,13 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   const cacheFields = cacheOptionFields(cacheMode);
   const cacheDraft = cacheOptions || {};
   const unknownCachePairs = parseCacheOption(cacheOption).unknownPairs;
-  const writeCacheOption = (
-    key: keyof CacheOptionDraft,
-    value: number | boolean
-  ) => onUpdate("cache_options", { ...cacheDraft, [key]: value });
+  const writeCacheOption = (key: keyof CacheOptionDraft, value: number | boolean) =>
+    onUpdate("cache_options", { ...cacheDraft, [key]: value });
   const changeCacheMode = (nextMode: string) => {
     onUpdate("cache_mode", nextMode);
     // 新模式不认的键必须丢掉：留着只会「界面上有值、内核根本不读」；
     // threshold/warmup 还会跨分组改语义（EasyCache 0.2 ≠ dbcache 残差阈值）。
-    onUpdate(
-      "cache_options",
-      sanitizeCacheOptionsForMode(nextMode, cacheDraft, cacheMode)
-    );
+    onUpdate("cache_options", sanitizeCacheOptionsForMode(nextMode, cacheDraft, cacheMode));
   };
   const scmVisible = scmMaskAppliesToMode(cacheMode);
   const scmError = validateScmMask(scmMask);
@@ -248,11 +236,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
         />
       </div>
       {layersError && (
-        <div
-          id="slg-layers-error"
-          className="field-hint field-hint-flush"
-          role="alert"
-        >
+        <div id="slg-layers-error" className="field-hint field-hint-flush" role="alert">
           {layersError}
         </div>
       )}
@@ -261,9 +245,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           <Toggle
             label="VAE 分块"
             checked={tilingEnabled}
-            onChange={(v) =>
-              onUpdate("vae_tiling_params", { ...vaeTilingParams, enabled: v })
-            }
+            onChange={(v) => onUpdate("vae_tiling_params", { ...vaeTilingParams, enabled: v })}
           />
           {tilingEnabled && isPixels && (
             <>
@@ -313,9 +295,8 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
               {relativeOverrides.length > 0 && (
                 <div className="field-hint field-hint-flush">
                   相对尺寸正在覆盖分块{relativeOverrides.join(" / ")}
-                  （rel_size_w={vaeTilingParams?.rel_size_w ?? 0}、
-                  rel_size_h={vaeTilingParams?.rel_size_h ?? 0}）：上游优先用相对值，
-                  绝对尺寸不会生效。
+                  （rel_size_w={vaeTilingParams?.rel_size_w ?? 0}、 rel_size_h=
+                  {vaeTilingParams?.rel_size_h ?? 0}）：上游优先用相对值， 绝对尺寸不会生效。
                   <button
                     type="button"
                     className="btn btn-sm"
@@ -344,8 +325,8 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                     }
                   />
                   <div className="field-hint field-hint-flush">
-                    长视频解码显存不足时开启：按帧把时间轴切块，块间保留因果状态
-                    （Wan / LTX）或用重叠混合（Hunyuan / TAE）。
+                    长视频解码显存不足时开启：按帧把时间轴切块，块间保留因果状态 （Wan /
+                    LTX）或用重叠混合（Hunyuan / TAE）。
                   </div>
                   {temporalOn && (
                     <>
@@ -359,9 +340,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                         <NumberInput
                           id="vae-temporal-frames"
                           value={temporalFrames ?? 0}
-                          onChange={(v) =>
-                            setTemporalArg("temporal_tile_frames", v > 0 ? v : null)
-                          }
+                          onChange={(v) => setTemporalArg("temporal_tile_frames", v > 0 ? v : null)}
                           min={0}
                           max={256}
                           step={1}
@@ -370,9 +349,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                       <div className="form-row">
                         <label className="form-label" htmlFor="vae-temporal-overlap">
                           时间分块重叠
-                          <span className="form-sublabel">
-                            temporal_tile_overlap，内核默认 1
-                          </span>
+                          <span className="form-sublabel">temporal_tile_overlap，内核默认 1</span>
                         </label>
                         <NumberInput
                           id="vae-temporal-overlap"
@@ -389,7 +366,8 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                   )}
                 </>
               )}
-              {droppedLegacyTiling && (                <div className="field-hint field-hint-flush" role="alert">
+              {droppedLegacyTiling && (
+                <div className="field-hint field-hint-flush" role="alert">
                   旧内核的 latent 单位尺寸仍在设置里：
                   {[
                     legacyAxes.tileX != null ? `tile_size_x=${legacyAxes.tileX}` : null,
@@ -399,16 +377,13 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                   ]
                     .filter(Boolean)
                     .join("、")}
-                  。新版内核按图像像素解释，这些值不会下发；请按上面的像素尺寸重新设置
-                  （8× VAE 的旧 32 大致对应 256 像素），确认后清除它们。
+                  。新版内核按图像像素解释，这些值不会下发；请按上面的像素尺寸重新设置 （8× VAE 的旧
+                  32 大致对应 256 像素），确认后清除它们。
                   <button
                     type="button"
                     className="btn btn-sm"
                     onClick={() =>
-                      onUpdate(
-                        "vae_tiling_params",
-                        clearLegacyLatentTiling(vaeTilingParams)
-                      )
+                      onUpdate("vae_tiling_params", clearLegacyLatentTiling(vaeTilingParams))
                     }
                   >
                     清除旧值
@@ -426,8 +401,8 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
             </div>
           )}
           <div className="field-hint field-hint-flush">
-            设置空间分块（编码与解码共用，默认 256 图像像素）；时间分块独立开关，
-            不受 auto-fit 限制。新版内核只在主 VAE **解码分配失败**时自动缩小分块重试，
+            设置空间分块（编码与解码共用，默认 256 图像像素）；时间分块独立开关， 不受 auto-fit
+            限制。新版内核只在主 VAE **解码分配失败**时自动缩小分块重试，
             执行失败不重试，编码也没有自动重试。
           </div>
         </>
@@ -455,8 +430,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           {cacheFields.map((spec) => {
             const raw = cacheDraft[spec.key];
             if (spec.kind === "toggle") {
-              const checked =
-                typeof raw === "boolean" ? raw : spec.defaultValue === true;
+              const checked = typeof raw === "boolean" ? raw : spec.defaultValue === true;
               return (
                 <Toggle
                   key={spec.key}
@@ -521,11 +495,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
             />
           </div>
           {scmError && (
-            <div
-              id="scm-mask-error"
-              className="field-hint field-hint-flush"
-              role="alert"
-            >
+            <div id="scm-mask-error" className="field-hint field-hint-flush" role="alert">
               {scmError}
             </div>
           )}
@@ -560,17 +530,14 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           placeholder="例如 gamma=3,apg_eta=0.8,slg_uncond=true"
         />
         <div className="field-hint field-hint-flush mt-0.5">
-          上游 extra_sample_args 的 key=value 列表（逗号分隔），兜底界面未暴露的
-          采样器 / 调度器 / 引导参数：flux 的 base_shift·max_shift、lcm 的
-          noise_clip_std、euler_ge 的 gamma、APG 的 apg_*、slg_uncond、
-          guidance_schedule（分段写法 1x5+6x15，段间用 + 而不是逗号）、
+          上游 extra_sample_args 的 key=value 列表（逗号分隔），兜底界面未暴露的 采样器 / 调度器 /
+          引导参数：flux 的 base_shift·max_shift、lcm 的 noise_clip_std、euler_ge 的 gamma、APG 的
+          apg_*、slg_uncond、 guidance_schedule（分段写法 1x5+6x15，段间用 + 而不是逗号）、
           llada_image 的 uniform=1，以及注入噪声的采样器的
           noise_sampler=iid|brownian_tree（brownian_tree 可再配
-          brownian_tree_rng=cpu|cuda|std_default|sampler_rng）等；同名键会覆盖
-          上面的滑杆值
+          brownian_tree_rng=cpu|cuda|std_default|sampler_rng）等；同名键会覆盖 上面的滑杆值
         </div>
       </div>
     </Panel>
   );
 });
-

@@ -28,5 +28,5 @@ export const MEMORY_BUDGET = {
 /** 五层份额之和：渲染进程的可预期占用上限。 */
 export const MEMORY_BUDGET_TOTAL = Object.values(MEMORY_BUDGET).reduce(
   (sum, bytes) => sum + bytes,
-  0
+  0,
 );

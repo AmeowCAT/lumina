@@ -79,9 +79,7 @@ export function Lightbox({
     zoomStart: 1,
   });
   // 滚轮等异步路径经 ref 调用最新版 zoomAt(避免闭包过期)
-  const zoomAtRef = useRef<
-    ((factor: number, x?: number, y?: number) => void) | null
-  >(null);
+  const zoomAtRef = useRef<((factor: number, x?: number, y?: number) => void) | null>(null);
   const trapRef = useFocusTrap<HTMLDivElement>(!!item);
 
   // 键盘等异步路径经 ref 读最新视图状态,避免闭包过期
@@ -103,10 +101,7 @@ export function Lightbox({
       if (onNavigate && items.length > 1) {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
           event.preventDefault();
-          onNavigate(
-            (index + (event.key === "ArrowRight" ? 1 : items.length - 1)) %
-              items.length
-          );
+          onNavigate((index + (event.key === "ArrowRight" ? 1 : items.length - 1)) % items.length);
           return;
         }
       }
@@ -159,10 +154,8 @@ export function Lightbox({
   /** 以光标为锚点缩放:光标下的图像点保持不动 */
   const zoomAt = (factor: number, clientX?: number, clientY?: number) => {
     const rect = stageRef.current?.getBoundingClientRect();
-    const cx =
-      clientX != null && rect ? clientX - rect.left - rect.width / 2 : 0;
-    const cy =
-      clientY != null && rect ? clientY - rect.top - rect.height / 2 : 0;
+    const cx = clientX != null && rect ? clientX - rect.left - rect.width / 2 : 0;
+    const cy = clientY != null && rect ? clientY - rect.top - rect.height / 2 : 0;
     const nz = clampZoom(zoom * factor);
     if (nz === zoom) return;
     setPan({
@@ -264,8 +257,7 @@ export function Lightbox({
     touch.current.mode = "none";
   };
   const canNav = !!onNavigate && items.length > 1;
-  const go = (step: number) =>
-    onNavigate!((index + step + items.length) % items.length);
+  const go = (step: number) => onNavigate!((index + step + items.length) % items.length);
 
   return createPortal(
     <motion.div
@@ -276,9 +268,7 @@ export function Lightbox({
       className={renderFooter ? "lightbox has-footer" : "lightbox"}
       role="dialog"
       aria-modal="true"
-      aria-label={
-        item.title || (item.type === "image" ? "图片预览" : "视频预览")
-      }
+      aria-label={item.title || (item.type === "image" ? "图片预览" : "视频预览")}
       tabIndex={-1}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -420,9 +410,7 @@ export function Lightbox({
         {item.title && <span className="lightbox-meta">{item.title}</span>}
       </div>
 
-      {renderFooter && (
-        <div className="lightbox-footer">{renderFooter(index)}</div>
-      )}
+      {renderFooter && <div className="lightbox-footer">{renderFooter(index)}</div>}
 
       <button
         type="button"
@@ -435,6 +423,6 @@ export function Lightbox({
         ✕
       </button>
     </motion.div>,
-    document.body
+    document.body,
   );
 }

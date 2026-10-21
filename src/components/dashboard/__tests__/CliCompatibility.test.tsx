@@ -6,9 +6,13 @@ import { CliCompatibility } from "../CliCompatibility";
 const mocks = vi.hoisted(() => ({ inspectServer: vi.fn(), preflightServer: vi.fn() }));
 vi.mock("../../../api", () => ({ api: mocks }));
 const modern: CliCapabilities = {
-  executable: "/bin/sd-server", version: "7f410a3", verified: true,
+  executable: "/bin/sd-server",
+  version: "7f410a3",
+  verified: true,
   options: ["--auto-fit", "--disable-segmented-compute"],
-  autoFit: "on-off", memoryMode: "automatic", warnings: [],
+  autoFit: "on-off",
+  memoryMode: "automatic",
+  warnings: [],
 };
 
 beforeEach(() => {
@@ -47,7 +51,11 @@ describe("CLI compatibility inspection", () => {
 
   it("ignores a stale result after the executable changes", async () => {
     let resolve!: (value: CliCapabilities) => void;
-    mocks.inspectServer.mockReturnValue(new Promise<CliCapabilities>((r) => { resolve = r; }));
+    mocks.inspectServer.mockReturnValue(
+      new Promise<CliCapabilities>((r) => {
+        resolve = r;
+      }),
+    );
     const { rerender } = render(<CliCompatibility exePath="/old/sd-server" port={1234} />);
     fireEvent.click(screen.getByRole("button", { name: "检测内核兼容性" }));
     rerender(<CliCompatibility exePath="/new/sd-server" port={1234} />);

@@ -491,13 +491,7 @@ export interface JobResult {
   images?: JobImage[];
 }
 
-export type JobStatus =
-  | "queued"
-  | "generating"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "unknown";
+export type JobStatus = "queued" | "generating" | "completed" | "failed" | "cancelled" | "unknown";
 
 /**
  * sd-server 的 **HTTP 层**错误响应体。注意 `error` 是字符串

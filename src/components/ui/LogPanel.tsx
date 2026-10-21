@@ -20,9 +20,8 @@ export function LogPanel() {
   const activeCount = useStore(
     (s) =>
       s.jobs.filter(
-        (j) =>
-          j.status === "queued" || j.status === "generating" || j.status === "unknown"
-      ).length
+        (j) => j.status === "queued" || j.status === "generating" || j.status === "unknown",
+      ).length,
   );
   const [open, setOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -97,11 +96,7 @@ export function LogPanel() {
         </button>
         {open && (
           <>
-            <button
-              className="log-clear"
-              aria-label="清空服务器日志"
-              onClick={clearLogs}
-            >
+            <button className="log-clear" aria-label="清空服务器日志" onClick={clearLogs}>
               清空
             </button>
             <button
@@ -156,11 +151,7 @@ export function LogPanel() {
                   key={l.id}
                   className={
                     "log-line" +
-                    (severity === "error"
-                      ? " log-err"
-                      : severity === "warn"
-                        ? " log-warn"
-                        : "")
+                    (severity === "error" ? " log-err" : severity === "warn" ? " log-warn" : "")
                   }
                 >
                   {l.text}

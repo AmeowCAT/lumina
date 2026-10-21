@@ -42,9 +42,17 @@ describe("store", () => {
     });
 
     it("handles paths with null intermediates", () => {
-      useStore.setState({ params: { width: 64, height: 64, seed: 0, sample_params: { guidance: { txt_cfg: 1 } } as unknown as GenParams["sample_params"] } });
+      useStore.setState({
+        params: {
+          width: 64,
+          height: 64,
+          seed: 0,
+          sample_params: { guidance: { txt_cfg: 1 } } as unknown as GenParams["sample_params"],
+        },
+      });
       useStore.getState().updateParam("sample_params.guidance.img_cfg", 5);
-      const sp = useStore.getState().params?.sample_params as { guidance?: { img_cfg?: number } } | undefined;
+      const sp = useStore.getState().params?.sample_params as
+        { guidance?: { img_cfg?: number } } | undefined;
       expect(sp?.guidance?.img_cfg).toBe(5);
     });
   });

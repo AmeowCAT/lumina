@@ -1,9 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  useKeyboardShortcuts,
-  type KeyboardShortcutHandlers,
-} from "../useKeyboardShortcuts";
+import { useKeyboardShortcuts, type KeyboardShortcutHandlers } from "../useKeyboardShortcuts";
 
 /**
  * 快捷键的四个真实回归点（对应审查 F-01 / F-02 / F-03）：
@@ -20,9 +17,7 @@ function Harness({ handlers }: { handlers: KeyboardShortcutHandlers }) {
   return <input aria-label="提示词" />;
 }
 
-const makeHandlers = (
-  over: Partial<KeyboardShortcutHandlers> = {}
-): KeyboardShortcutHandlers => ({
+const makeHandlers = (over: Partial<KeyboardShortcutHandlers> = {}): KeyboardShortcutHandlers => ({
   onGenerate: vi.fn(),
   onRandomSeed: vi.fn(),
   onEscape: vi.fn(),
@@ -78,7 +73,7 @@ describe("useKeyboardShortcuts", () => {
     expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
   });
 
-  it("只认 e.code：CapsLock 打开时 key 是 \"R\" 也照样换种子（F-01 回归）", () => {
+  it('只认 e.code：CapsLock 打开时 key 是 "R" 也照样换种子（F-01 回归）', () => {
     const { handlers } = mount();
 
     const event = pressOnWindow({ key: "R", code: "KeyR", ctrlKey: true });
@@ -88,7 +83,7 @@ describe("useKeyboardShortcuts", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("只认 e.code：非美式布局下 key 不是 \"r\" 也能换种子", () => {
+  it('只认 e.code：非美式布局下 key 不是 "r" 也能换种子', () => {
     const { handlers } = mount();
 
     // 俄语布局上 Ctrl+R 的 key 是 "к"，code 仍是 KeyR。

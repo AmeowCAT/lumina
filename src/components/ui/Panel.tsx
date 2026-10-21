@@ -46,11 +46,7 @@ export function Panel({
       >
         <span className="panel-title">
           {title}
-          {badge ? (
-            <span className="tag ml-1.5">
-              {badge}
-            </span>
-          ) : null}
+          {badge ? <span className="tag ml-1.5">{badge}</span> : null}
         </span>
         <span className="panel-chevron" aria-hidden="true">
           {IC.chev}

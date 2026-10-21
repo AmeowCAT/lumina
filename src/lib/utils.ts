@@ -44,8 +44,7 @@ export function normalizeSizeStep(value: unknown): number {
 export const LINGBOT_PROMPT_TEMPLATE = JSON.stringify(
   {
     caption: {
-      comprehensive_description:
-        "描述主体、环境、动作、镜头运动、构图、光线和整体氛围",
+      comprehensive_description: "描述主体、环境、动作、镜头运动、构图、光线和整体氛围",
       camera_info: {
         color: "自然色彩",
         frame_size: "中景",
@@ -60,7 +59,7 @@ export const LINGBOT_PROMPT_TEMPLATE = JSON.stringify(
     },
   },
   null,
-  2
+  2,
 );
 
 export function validateLingbotPrompt(prompt: string): string | null {
@@ -213,9 +212,7 @@ export function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /** 读取 dataURL 图片的真实像素尺寸（用于按初始图片自动填充生成尺寸）。 */
-export function getImageSize(
-  dataUrl: string
-): Promise<{ width: number; height: number }> {
+export function getImageSize(dataUrl: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
@@ -362,9 +359,7 @@ function metaBool(v: unknown): boolean | undefined {
 }
 
 function metaNumArr(v: unknown): number[] | undefined {
-  return Array.isArray(v) && v.every((x) => typeof x === "number")
-    ? (v as number[])
-    : undefined;
+  return Array.isArray(v) && v.every((x) => typeof x === "number") ? (v as number[]) : undefined;
 }
 
 /** Read persisted draft lines defensively without stripping editing whitespace. */
@@ -376,7 +371,11 @@ export function imagePreprocessDraftLines(value: unknown): string[] {
 
 /** 元数据 `image_preprocess` 可能是规则串（分号分隔）或字符串数组。 */
 function metaRuleList(v: unknown): string[] | undefined {
-  const split = (s: string) => s.split(";").map((x) => x.trim()).filter(Boolean);
+  const split = (s: string) =>
+    s
+      .split(";")
+      .map((x) => x.trim())
+      .filter(Boolean);
   if (typeof v === "string") {
     const rules = split(v);
     return rules.length ? rules : undefined;
@@ -409,7 +408,7 @@ export function refResizeFromRefImageArgs(value?: string): boolean | undefined {
  * 返回空串表示「保持启动期默认」。 */
 export function buildRefImageArgs(
   params: Pick<GenParams, "ref_image_args" | "auto_resize_ref_image">,
-  launchPreset?: string
+  launchPreset?: string,
 ): string {
   const explicit = (params.ref_image_args || "").trim();
   const autoResize = params.auto_resize_ref_image !== false;
@@ -435,11 +434,7 @@ export function jobElapsed(job: Job, terminal: boolean): string {
   if (job.status === "queued") return "";
   const beginSec = job.started ?? job.created;
   if (!beginSec) return "";
-  const endedAt = job.completed
-    ? job.completed * 1000
-    : terminal
-      ? job.lastPollSuccess
-      : undefined;
+  const endedAt = job.completed ? job.completed * 1000 : terminal ? job.lastPollSuccess : undefined;
   if (terminal && !endedAt) return "";
   const ms = (endedAt ?? Date.now()) - beginSec * 1000;
   if (ms < 1000) return "";
@@ -480,10 +475,7 @@ function jobImagesBytes(job: Job): number {
  * 剥离后「应用此配置」只能恢复参数（图片输入丢失），UI 会在 toast 里说明。
  * 最新的任务永远保留图片，避免刚提交就丢。
  */
-export function trimJobsToBudget(
-  jobs: Job[],
-  maxBytes: number = MAX_JOB_CONFIG_BYTES
-): Job[] {
+export function trimJobsToBudget(jobs: Job[], maxBytes: number = MAX_JOB_CONFIG_BYTES): Job[] {
   let total = 0;
   for (const job of jobs) total += jobImagesBytes(job);
   if (total <= maxBytes) return jobs;
@@ -505,10 +497,7 @@ export function trimJobsToBudget(
  * 而它是长视频解码 OOM 的主要缓解手段。这里只做「定位一个键、就地改值、保留
  * 其余键与原顺序」的最小操作。
  */
-export function tilingArgValue(
-  extra: string | undefined,
-  key: string
-): number | null {
+export function tilingArgValue(extra: string | undefined, key: string): number | null {
   if (!extra) return null;
   for (const part of extra.split(",")) {
     const eq = part.indexOf("=");
@@ -523,7 +512,7 @@ export function tilingArgValue(
 export function setTilingArgValue(
   extra: string | undefined,
   key: string,
-  value: number | null
+  value: number | null,
 ): string {
   const parts = (extra || "")
     .split(",")
@@ -778,9 +767,7 @@ export function cacheModeGroup(mode: string | undefined): CacheModeGroup | null 
 }
 
 /** 当前模式可调的缓存键（顺序即拼串顺序）；关闭/未知模式返回空数组。 */
-export function cacheOptionFields(
-  mode: string | undefined
-): CacheOptionFieldSpec[] {
+export function cacheOptionFields(mode: string | undefined): CacheOptionFieldSpec[] {
   switch (cacheModeGroup(mode)) {
     case "easy":
       return EASY_FIELDS;
@@ -827,7 +814,7 @@ function formatOptionNumber(value: number): string {
 export function buildCacheOption(
   mode: string | undefined,
   draft: CacheOptionDraft | undefined,
-  raw?: string
+  raw?: string,
 ): string | undefined {
   const parts: string[] = [];
   for (const spec of cacheOptionFields(mode)) {
@@ -841,7 +828,7 @@ export function buildCacheOption(
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
     const clamped = Math.min(
       spec.max,
-      Math.max(spec.min, spec.kind === "int" ? Math.trunc(value) : value)
+      Math.max(spec.min, spec.kind === "int" ? Math.trunc(value) : value),
     );
     parts.push(`${spec.key}=${formatOptionNumber(clamped)}`);
   }
@@ -899,7 +886,7 @@ export function parseCacheOption(raw?: string): {
 export function sanitizeCacheOptionsForMode(
   nextMode: string | undefined,
   draft: CacheOptionDraft | undefined,
-  prevMode?: string | undefined
+  prevMode?: string | undefined,
 ): CacheOptionDraft {
   if (!draft) return {};
   const allowed = new Set(cacheOptionFields(nextMode).map((f) => f.key as string));
@@ -921,14 +908,9 @@ export function sanitizeCacheOptionsForMode(
 }
 
 /** 同名缓存键在各模式下真正写入的上游字段（语义漂移的判据）。 */
-function cacheOptionTarget(
-  key: "threshold" | "warmup",
-  group: CacheModeGroup | null
-): string {
+function cacheOptionTarget(key: "threshold" | "warmup", group: CacheModeGroup | null): string {
   if (key === "threshold") {
-    return group === "easy" || group === "ucache"
-      ? "reuse_threshold"
-      : "residual_diff_threshold";
+    return group === "easy" || group === "ucache" ? "reuse_threshold" : "residual_diff_threshold";
   }
   return group === "spectrum" ? "spectrum_warmup_steps" : "max_warmup_steps";
 }
@@ -940,17 +922,13 @@ function cacheOptionTarget(
  * PNG 元数据恢复）。两者都没有则不发送，让内核用启动参数/默认值。
  */
 export function resolveCacheOption(
-  params: Pick<GenParams, "cache_mode" | "cache_option" | "cache_options">
+  params: Pick<GenParams, "cache_mode" | "cache_option" | "cache_options">,
 ): string | undefined {
   if (!params.cache_options) {
     const raw = (params.cache_option || "").trim();
     return raw || undefined;
   }
-  return buildCacheOption(
-    params.cache_mode,
-    params.cache_options,
-    params.cache_option
-  );
+  return buildCacheOption(params.cache_mode, params.cache_options, params.cache_option);
 }
 
 /** SCM 步掩码只在块级缓存（dbcache/taylorseer/cache-dit）下有意义。 */
@@ -996,14 +974,10 @@ const MAX_SKIP_LAYER = 255;
 /** 跳层索引数组 → 输入框文本（空数组/未设置 → 空串）。 */
 export function formatLayerList(layers: number[] | undefined): string {
   if (!layers?.length) return "";
-  return layers
-    .filter((n) => Number.isInteger(n) && n >= 0 && n <= MAX_SKIP_LAYER)
-    .join(",");
+  return layers.filter((n) => Number.isInteger(n) && n >= 0 && n <= MAX_SKIP_LAYER).join(",");
 }
 
-export type LayerListParseResult =
-  | { ok: true; layers?: number[] }
-  | { ok: false; error: string };
+export type LayerListParseResult = { ok: true; layers?: number[] } | { ok: false; error: string };
 
 /**
  * 输入框文本 → 跳层索引数组。
@@ -1034,10 +1008,7 @@ export function parseLayerList(text: string): LayerListParseResult {
  * 上游按 `int(start*N) < step < int(end*N)` 判断（src/runtime/guidance.cpp:313-315），
  * `start >= end` 时窗口为空、SLG 永远不生效且**没有任何报错**——必须在界面上说清。
  */
-export function validateSlgWindow(
-  start?: number,
-  end?: number
-): string | null {
+export function validateSlgWindow(start?: number, end?: number): string | null {
   if (start == null || end == null) return null;
   if (!(start >= 0 && start <= 1) || !(end >= 0 && end <= 1)) {
     return "SLG 起止比例需要在 0–1 之间（总步数的分数）";
@@ -1063,7 +1034,7 @@ export function validateSlgWindow(
 export function featureEnabled(
   features: Features | undefined,
   key: keyof Features,
-  fallback = false
+  fallback = false,
 ): boolean {
   const value = features?.[key];
   return typeof value === "boolean" ? value : fallback;
@@ -1086,7 +1057,7 @@ export function reconcileOutputFormat(
       }
     | null
     | undefined,
-  mode: GenMode
+  mode: GenMode,
 ): GenParams {
   const perMode = caps?.output_formats_by_mode?.[mode];
   const formats = perMode?.length ? perMode : caps?.output_formats;
@@ -1105,10 +1076,8 @@ export function reconcileOutputFormat(
  */
 export function vaeTilingProtocolFromCapabilities(
   caps?: {
-    defaults_by_mode?: Partial<
-      Record<GenMode, { vae_tiling_params?: VaeTilingParams }>
-    >;
-  } | null
+    defaults_by_mode?: Partial<Record<GenMode, { vae_tiling_params?: VaeTilingParams }>>;
+  } | null,
 ): VaeTilingProtocol {
   for (const mode of ["img_gen", "vid_gen"] as GenMode[]) {
     const tiling = caps?.defaults_by_mode?.[mode]?.vae_tiling_params;
@@ -1124,23 +1093,17 @@ export function vaeTilingProtocolFromCapabilities(
 /** 该分块设置是否带旧内核的 latent 单位字段（x/y 命名）。 */
 export function hasLegacyLatentTiling(params?: VaeTilingParams): boolean {
   if (!params) return false;
-  return [
-    params.tile_size_x,
-    params.tile_size_y,
-    params.rel_size_x,
-    params.rel_size_y,
-  ].some((v) => typeof v === "number" && Number.isFinite(v));
+  return [params.tile_size_x, params.tile_size_y, params.rel_size_x, params.rel_size_y].some(
+    (v) => typeof v === "number" && Number.isFinite(v),
+  );
 }
 
 /** 该分块设置是否带新内核的像素单位字段（w/h 命名）。 */
 export function hasPixelTiling(params?: VaeTilingParams): boolean {
   if (!params) return false;
-  return [
-    params.tile_size_w,
-    params.tile_size_h,
-    params.rel_size_w,
-    params.rel_size_h,
-  ].some((v) => typeof v === "number" && Number.isFinite(v));
+  return [params.tile_size_w, params.tile_size_h, params.rel_size_w, params.rel_size_h].some(
+    (v) => typeof v === "number" && Number.isFinite(v),
+  );
 }
 
 /** 该分块设置里遗留的旧内核 latent 尺寸字段（按轴），用于逐轴提示与清除。 */
@@ -1151,8 +1114,7 @@ export function legacyLatentTilingAxes(params?: VaeTilingParams): {
   relY?: number;
 } {
   if (!params) return {};
-  const num = (v: unknown) =>
-    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   return {
     tileX: num(params.tile_size_x),
     tileY: num(params.tile_size_y),
@@ -1192,8 +1154,9 @@ export function legacyTilingDroppedOnPixels(params?: VaeTilingParams): boolean {
  */
 export function pixelTilingDroppedOnLatent(params?: VaeTilingParams): boolean {
   if (!params?.enabled || !hasPixelTiling(params)) return false;
-  return ![params.tile_size_x, params.tile_size_y, params.rel_size_x, params.rel_size_y]
-    .some((v) => typeof v === "number" && Number.isFinite(v) && v > 0);
+  return ![params.tile_size_x, params.tile_size_y, params.rel_size_x, params.rel_size_y].some(
+    (v) => typeof v === "number" && Number.isFinite(v) && v > 0,
+  );
 }
 
 /**
@@ -1204,7 +1167,7 @@ export function pixelTilingDroppedOnLatent(params?: VaeTilingParams): boolean {
  */
 export function resolveVaeTilingForProtocol(
   params: VaeTilingParams | undefined,
-  protocol: VaeTilingProtocol
+  protocol: VaeTilingProtocol,
 ): Record<string, unknown> {
   if (!params?.enabled) return { enabled: false };
   const next: Record<string, unknown> = { ...params };
@@ -1246,7 +1209,9 @@ function mapSamplingMetadata(s: unknown): SampleParams | undefined {
   };
 }
 
-/** 取路径/文件名的 stem（去目录、去扩展名）；Windows 分隔符一并处理。 */function fileStem(name: string): string {
+/** 取路径/文件名的 stem（去目录、去扩展名）；Windows 分隔符一并处理。 */ function fileStem(
+  name: string,
+): string {
   const base = name.replace(/\\/g, "/").split("/").pop() || name;
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(0, dot) : base;
@@ -1263,7 +1228,7 @@ function mapSamplingMetadata(s: unknown): SampleParams | undefined {
  */
 export function matchAvailableLora(
   available: { name: string; path: string }[],
-  metaName: string
+  metaName: string,
 ): { name: string; path: string } | undefined {
   const target = fileStem(metaName);
   const basenameOf = (p: string) => p.replace(/\\/g, "/").split("/").pop() || p;
@@ -1283,7 +1248,7 @@ export function matchAvailableLora(
  * 匹配不到的 LoRA 跳过（无法恢复路径）。 */
 export function sdcppMetadataToGenParams(
   meta: Record<string, unknown>,
-  availableLoras?: { name: string; path: string }[]
+  availableLoras?: { name: string; path: string }[],
 ): Partial<GenParams> {
   const prompt = isMetaObj(meta.prompt) ? meta.prompt : {};
   const sampling = mapSamplingMetadata(meta.sampling);
@@ -1398,10 +1363,7 @@ export function sdcppMetadataToGenParams(
 }
 
 /** 预览枚举是协议级能力；模式本身也必须声明支持预览。 */
-export function previewModesFromCapabilities(
-  caps: Capabilities,
-  mode: GenMode
-): string[] {
+export function previewModesFromCapabilities(caps: Capabilities, mode: GenMode): string[] {
   if (caps.features_by_mode?.[mode]?.preview !== true) return [];
   if (!Array.isArray(caps.preview_modes)) return [];
   return [...new Set(caps.preview_modes.filter((value) => typeof value === "string"))];
@@ -1410,7 +1372,7 @@ export function previewModesFromCapabilities(
 /** 旧设置中不受当前内核支持的预览模式只关闭，不补成可选项。 */
 export function resolvePreviewMode(
   value: string | undefined,
-  modes: string[] = ["none", "proj", "tae", "vae"]
+  modes: string[] = ["none", "proj", "tae", "vae"],
 ): string {
   return typeof value === "string" && modes.includes(value) ? value : "none";
 }
@@ -1441,7 +1403,7 @@ export function buildRequestBody(
   mode: GenMode,
   params: GenParams,
   images: GenImages,
-  options: BuildRequestBodyOptions = {}
+  options: BuildRequestBodyOptions = {},
 ): Record<string, unknown> {
   const sp = params.sample_params;
   // capabilities 把"未设置"序列化为 "default"（routes_sdcpp.cpp
@@ -1460,8 +1422,7 @@ export function buildRequestBody(
   // 用 0 覆盖服务端默认值（持久化参数过期时可达）。
   const distilled = sp?.guidance?.distilled_guidance;
   if (distilled != null && Number.isFinite(distilled)) {
-    (sampleParams.guidance as Record<string, unknown>).distilled_guidance =
-      distilled;
+    (sampleParams.guidance as Record<string, unknown>).distilled_guidance = distilled;
   }
   const extraArgs = buildExtraSampleArgs(sp);
   if (extraArgs) sampleParams.extra_sample_args = extraArgs;
@@ -1476,8 +1437,7 @@ export function buildRequestBody(
     sample_params: sampleParams,
   };
 
-  if (params.clip_skip != null && params.clip_skip !== -1)
-    b.clip_skip = params.clip_skip;
+  if (params.clip_skip != null && params.clip_skip !== -1) b.clip_skip = params.clip_skip;
   if (params.strength != null) b.strength = params.strength;
   // 上游 #2028：img_gen 与 vid_gen 都接受 image_preprocess（规则串数组）。
   // 编辑态保留空行与空白，避免受控文本框吞掉 Enter；仅在请求边界清理。
@@ -1488,8 +1448,7 @@ export function buildRequestBody(
 
   if (mode === "img_gen") {
     b.batch_count = params.batch_count || 1;
-    if (params.qwen_image_layers != null)
-      b.qwen_image_layers = params.qwen_image_layers;
+    if (params.qwen_image_layers != null) b.qwen_image_layers = params.qwen_image_layers;
     // 缩放开关新旧双发：旧内核只认布尔键，新内核（#2028 起）只认
     // ref_image_args，未知键在两边都只被忽略、不会报错。
     b.auto_resize_ref_image = params.auto_resize_ref_image !== false;
@@ -1514,25 +1473,21 @@ export function buildRequestBody(
 
   if (images.initImage) b.init_image = images.initImage;
   if (mode === "img_gen" && images.maskImage) b.mask_image = images.maskImage;
-  if (mode === "img_gen" && images.controlImage)
-    b.control_image = images.controlImage;
-  if (mode === "img_gen" && images.ipAdapterImage)
-    b.ip_adapter_image = images.ipAdapterImage;
+  if (mode === "img_gen" && images.controlImage) b.control_image = images.controlImage;
+  if (mode === "img_gen" && images.ipAdapterImage) b.ip_adapter_image = images.ipAdapterImage;
   if (mode === "vid_gen" && images.endImage) b.end_image = images.endImage;
   // 参考图同时服务于 img_gen（Kontext/PiD 等）与声明支持的 vid 家族
   // （MiniMax-H3 Ref2VA）。调用方按家族能力裁剪后再传入，此处不按 mode 硬过滤。
   if (images.refImages?.length) b.ref_images = images.refImages;
   // VACE 条件帧：顺序即条件帧顺序，上游按请求顺序保留。
-  if (mode === "vid_gen" && images.controlFrames?.length)
-    b.control_frames = images.controlFrames;
+  if (mode === "vid_gen" && images.controlFrames?.length) b.control_frames = images.controlFrames;
 
   if (sp?.eta != null) sampleParams.eta = sp.eta;
   if (sp?.flow_shift != null) sampleParams.flow_shift = sp.flow_shift;
   if (sp?.shifted_timestep != null) sampleParams.shifted_timestep = sp.shifted_timestep;
   if (sp?.custom_sigmas?.length) sampleParams.custom_sigmas = sp.custom_sigmas;
   if (sp?.guidance?.img_cfg != null)
-    (sampleParams.guidance as Record<string, unknown>).img_cfg =
-      sp.guidance.img_cfg;
+    (sampleParams.guidance as Record<string, unknown>).img_cfg = sp.guidance.img_cfg;
   const slg = sp?.guidance?.slg;
   if (slg && slg.scale > 0) {
     // 只发用户真正设置过的子项：`layers` 缺省时**省略该键**，让服务端沿用
@@ -1573,8 +1528,7 @@ export function buildRequestBody(
     // 因此长度 <2 一律省略，避免提交失败与语义歧义。
     if (h.custom_sigmas && h.custom_sigmas.length < 2) delete h.custom_sigmas;
     // 兼容旧版已持久化的 0；上游要求该值为正，省略后沿用服务端默认值。
-    if (h.upscale_tile_size != null && h.upscale_tile_size <= 0)
-      delete h.upscale_tile_size;
+    if (h.upscale_tile_size != null && h.upscale_tile_size <= 0) delete h.upscale_tile_size;
     b.hires = h;
   } else {
     // 显式关闭：省略字段会沿用服务端默认（可能是开启）。
@@ -1583,7 +1537,7 @@ export function buildRequestBody(
   // 上游 #2059 改动字段名与单位（latent → 图像像素），按内核协议只发一套键。
   b.vae_tiling_params = resolveVaeTilingForProtocol(
     params.vae_tiling_params,
-    options.vaeTilingProtocol ?? "pixels"
+    options.vaeTilingProtocol ?? "pixels",
   );
 
   if (params.cache_mode && params.cache_mode !== "disabled") {

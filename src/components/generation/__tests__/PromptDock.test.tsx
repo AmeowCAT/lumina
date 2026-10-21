@@ -36,7 +36,7 @@ function renderDock(overrides: Record<string, unknown> = {}) {
       onInsertLingbot={vi.fn()}
       onOpenSheet={onOpenSheet}
       {...overrides}
-    />
+    />,
   );
   return { onUpdate, onOpenSheet };
 }
@@ -73,13 +73,11 @@ describe("PromptDock chip editors", () => {
 
     await user.click(screen.getByRole("button", { name: "512×768" }));
 
-    expect(
-      await screen.findByRole("slider", { name: "宽度" })
-    ).toHaveAttribute("aria-valuenow", "512");
-    expect(screen.getByRole("slider", { name: "高度" })).toHaveAttribute(
+    expect(await screen.findByRole("slider", { name: "宽度" })).toHaveAttribute(
       "aria-valuenow",
-      "768"
+      "512",
     );
+    expect(screen.getByRole("slider", { name: "高度" })).toHaveAttribute("aria-valuenow", "768");
   });
 
   it("steps width and height by the configured pixel step", async () => {
@@ -116,9 +114,7 @@ describe("PromptDock chip editors", () => {
     const { onOpenSheet } = renderDock();
 
     await user.click(screen.getByRole("button", { name: "512×768" }));
-    await user.click(
-      await screen.findByRole("button", { name: /尺寸与种子全部设置/ })
-    );
+    await user.click(await screen.findByRole("button", { name: /尺寸与种子全部设置/ }));
 
     expect(onOpenSheet).toHaveBeenCalledWith("size");
   });
@@ -134,14 +130,10 @@ describe("PromptDock LingBot insert", () => {
       onInsertLingbot,
     });
 
-    await user.click(
-      screen.getByRole("button", { name: "插入 LingBot JSON 模板" })
-    );
+    await user.click(screen.getByRole("button", { name: "插入 LingBot JSON 模板" }));
     expect(onInsertLingbot).not.toHaveBeenCalled();
 
-    await user.click(
-      screen.getByRole("button", { name: "确认替换当前提示词" })
-    );
+    await user.click(screen.getByRole("button", { name: "确认替换当前提示词" }));
     expect(onInsertLingbot).toHaveBeenCalledTimes(1);
   });
 
@@ -150,9 +142,7 @@ describe("PromptDock LingBot insert", () => {
     const onInsertLingbot = vi.fn();
     renderDock({ showLingbotTools: true, prompt: "", onInsertLingbot });
 
-    await user.click(
-      screen.getByRole("button", { name: "插入 LingBot JSON 模板" })
-    );
+    await user.click(screen.getByRole("button", { name: "插入 LingBot JSON 模板" }));
     expect(onInsertLingbot).toHaveBeenCalledTimes(1);
   });
 });
@@ -209,7 +199,7 @@ describe("PromptDock 提示词 token 计数", () => {
     expect(counter).toHaveClass("text-muted");
     expect(screen.getByLabelText("正向提示词")).toHaveAttribute(
       "aria-describedby",
-      "prompt-token-count"
+      "prompt-token-count",
     );
   });
 
@@ -223,8 +213,6 @@ describe("PromptDock 提示词 token 计数", () => {
     renderDock({ prompt: "" });
 
     expect(await screen.findByText("≈0 / 300 tokens")).toBeInTheDocument();
-    expect(apiMocks.detectFamily).toHaveBeenCalledWith(
-      "D:/models/unknown-model.safetensors"
-    );
+    expect(apiMocks.detectFamily).toHaveBeenCalledWith("D:/models/unknown-model.safetensors");
   });
 });

@@ -4,25 +4,25 @@ import { api } from "../../api";
 import { useStore } from "../../store";
 import type { Settings } from "../../types";
 import {
-	EXTERNAL_TOKENIZER_HINT,
-	FAMILY_CONFIG,
-	PID_VAE_FORMATS,
-	familyNeedsExternalTokenizer,
+  EXTERNAL_TOKENIZER_HINT,
+  FAMILY_CONFIG,
+  PID_VAE_FORMATS,
+  familyNeedsExternalTokenizer,
 } from "../../config/families";
 import {
-	DEFAULT_SD_PORT,
-	MAX_SD_PORT,
-	MIN_SD_PORT,
-	formatError,
-	modelFileOptionLabel,
-	normalizeSdPort,
+  DEFAULT_SD_PORT,
+  MAX_SD_PORT,
+  MIN_SD_PORT,
+  formatError,
+  modelFileOptionLabel,
+  normalizeSdPort,
 } from "../../lib/utils";
 import {
-	buildLaunchConfig,
-	findModelField,
-	inferPidVaeFormat,
-	persistFamilyDefaults,
-	validateMaxVramSpec,
+  buildLaunchConfig,
+  findModelField,
+  inferPidVaeFormat,
+  persistFamilyDefaults,
+  validateMaxVramSpec,
 } from "../../lib/launchConfig";
 import { Panel } from "../ui/Panel";
 import { IC } from "../ui/Icons";
@@ -40,1574 +40,1446 @@ import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { diagnosticsFor } from "../../lib/diagnostics";
 
 export function Dashboard() {
-	const settings = useStore((s) => s.settings);
-	const setSettings = useStore((s) => s.setSettings);
-	const serverStatus = useStore((s) => s.serverStatus);
-	const caps = useStore((s) => s.caps);
-	const scanResult = useStore((s) => s.scanResult);
-	const setScanResult = useStore((s) => s.setScanResult);
-	const mainModel = useStore((s) => s.mainModel);
-	const setMainModel = useStore((s) => s.setMainModel);
-	const familyOverride = useStore((s) => s.familyOverride);
-	const setFamilyOverride = useStore((s) => s.setFamilyOverride);
-	const components = useStore((s) => s.components);
-	const setComponents = useStore((s) => s.setComponents);
-	const toast = useStore((s) => s.toast);
-	const setDashboardOpen = useStore((s) => s.setDashboardOpen);
-	const theme = useTheme();
-	const [starting, setStarting] = useState(false);
-	// 切换模型将影响任务/结果时的待确认影响清单;非空即显示确认条
-	const [pendingSwitch, setPendingSwitch] = useState<string[] | null>(null);
-	const {
-		switchModel,
-		switching: switchingModel,
-		phase: switchPhase,
-	} = useModelSwitch();
-	const [scanning, setScanning] = useState(false);
-	const [scanError, setScanError] = useState("");
-	// 内核 `--help` 里出现的选项名（审查 40-cli §2.5）：附加启动参数输入框用
-	// datalist 提示，避免用户把 `--threads` 拼成 `-thread` 之后才发现启动失败。
-	const [cliOptions, setCliOptions] = useState<string[]>([]);
-	const [settingsState, setSettingsState] = useState<
-		"loading" | "saved" | "saving" | "error"
-	>("loading");
-	const scanRequest = useRef(0);
-	// 磁盘设置是否已加载完成：加载完成前禁止自动保存，否则挂载瞬间会把
-	// 初始空 settings 写盘，与 loadSettings 竞争，可能覆盖掉用户的配置文件。
-	const settingsLoaded = useRef(false);
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const serverStatus = useStore((s) => s.serverStatus);
+  const caps = useStore((s) => s.caps);
+  const scanResult = useStore((s) => s.scanResult);
+  const setScanResult = useStore((s) => s.setScanResult);
+  const mainModel = useStore((s) => s.mainModel);
+  const setMainModel = useStore((s) => s.setMainModel);
+  const familyOverride = useStore((s) => s.familyOverride);
+  const setFamilyOverride = useStore((s) => s.setFamilyOverride);
+  const components = useStore((s) => s.components);
+  const setComponents = useStore((s) => s.setComponents);
+  const toast = useStore((s) => s.toast);
+  const setDashboardOpen = useStore((s) => s.setDashboardOpen);
+  const theme = useTheme();
+  const [starting, setStarting] = useState(false);
+  // 切换模型将影响任务/结果时的待确认影响清单;非空即显示确认条
+  const [pendingSwitch, setPendingSwitch] = useState<string[] | null>(null);
+  const { switchModel, switching: switchingModel, phase: switchPhase } = useModelSwitch();
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState("");
+  // 内核 `--help` 里出现的选项名（审查 40-cli §2.5）：附加启动参数输入框用
+  // datalist 提示，避免用户把 `--threads` 拼成 `-thread` 之后才发现启动失败。
+  const [cliOptions, setCliOptions] = useState<string[]>([]);
+  const [settingsState, setSettingsState] = useState<"loading" | "saved" | "saving" | "error">(
+    "loading",
+  );
+  const scanRequest = useRef(0);
+  // 磁盘设置是否已加载完成：加载完成前禁止自动保存，否则挂载瞬间会把
+  // 初始空 settings 写盘，与 loadSettings 竞争，可能覆盖掉用户的配置文件。
+  const settingsLoaded = useRef(false);
 
-	useEffect(() => {
-		api
-			.loadSettings()
-			.then((s) => {
-				const { loadWarning, ...persisted } = s;
-				useStore.setState({ settings: persisted });
-				settingsLoaded.current = true;
-				if (loadWarning) {
-					setSettingsState("error");
-					toast(
-						`${loadWarning.message}${
-							loadWarning.backupPath
-								? `；原文件已备份到 ${loadWarning.backupPath}`
-								: ""
-						}`,
-						true,
-					);
-				} else {
-					setSettingsState("saved");
-				}
-			})
-			.catch((e) => {
-				settingsLoaded.current = true;
-				setSettingsState("error");
-				toast("设置加载失败: " + formatError(e), true);
-			});
-	}, [toast]);
+  useEffect(() => {
+    api
+      .loadSettings()
+      .then((s) => {
+        const { loadWarning, ...persisted } = s;
+        useStore.setState({ settings: persisted });
+        settingsLoaded.current = true;
+        if (loadWarning) {
+          setSettingsState("error");
+          toast(
+            `${loadWarning.message}${
+              loadWarning.backupPath ? `；原文件已备份到 ${loadWarning.backupPath}` : ""
+            }`,
+            true,
+          );
+        } else {
+          setSettingsState("saved");
+        }
+      })
+      .catch((e) => {
+        settingsLoaded.current = true;
+        setSettingsState("error");
+        toast("设置加载失败: " + formatError(e), true);
+      });
+  }, [toast]);
 
-	// 预检内核 `--help` 里的选项名，供「附加启动参数」做输入补全（审查
-	// 40-cli §2.5）。失败静默：内核路径无效/离线时，启动流程本身会给出更准确的
-	// 报错，这里不该抢先弹 toast。探测结果在后端有 30s 缓存，切目录也不会打爆。
-	useEffect(() => {
-		let alive = true;
-		api
-			.inspectServer(settings.exeDir || "sd-server")
-			.then((caps) => {
-				if (alive) setCliOptions(caps.options ?? []);
-			})
-			.catch(() => {});
-		return () => {
-			alive = false;
-		};
-	}, [settings.exeDir]);
+  // 预检内核 `--help` 里的选项名，供「附加启动参数」做输入补全（审查
+  // 40-cli §2.5）。失败静默：内核路径无效/离线时，启动流程本身会给出更准确的
+  // 报错，这里不该抢先弹 toast。探测结果在后端有 30s 缓存，切目录也不会打爆。
+  useEffect(() => {
+    let alive = true;
+    api
+      .inspectServer(settings.exeDir || "sd-server")
+      .then((caps) => {
+        if (alive) setCliOptions(caps.options ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [settings.exeDir]);
 
-	// 卸载时冲刷未落盘的设置。防抖（400ms）期间的变更——典型如切换模型
-	// 成功后写入的模型快照——会随 Dashboard 卸载（切回生成界面）被
-	// clearTimeout 丢弃：这正是"启动成功出图了、快照却没记录"的根因。
-	const pendingSettingsSave = useRef<Settings | null>(null);
-	// 端口被运行中服务器锁定时提示过一次的端口值：避免每次防抖保存都
-	// 重复弹同一提示（审查 P4b）。
-	const lastPortWarn = useRef<number | null>(null);
+  // 卸载时冲刷未落盘的设置。防抖（400ms）期间的变更——典型如切换模型
+  // 成功后写入的模型快照——会随 Dashboard 卸载（切回生成界面）被
+  // clearTimeout 丢弃：这正是"启动成功出图了、快照却没记录"的根因。
+  const pendingSettingsSave = useRef<Settings | null>(null);
+  // 端口被运行中服务器锁定时提示过一次的端口值：避免每次防抖保存都
+  // 重复弹同一提示（审查 P4b）。
+  const lastPortWarn = useRef<number | null>(null);
 
-	useEffect(() => {
-		if (!settingsLoaded.current) return;
-		// 防抖：路径输入框每敲一个字符都会触发本 effect，不能每次都写盘。
-		pendingSettingsSave.current = settings;
-		const t = setTimeout(() => {
-			pendingSettingsSave.current = null;
-			setSettingsState("saving");
-			api
-				.saveSettings(settings)
-				.then((res) => {
-					setSettingsState("saved");
-					// 运行中修改端口会被后端以内存中的实际端口覆盖（防抖快照
-					// 保护）：如实提示而不是让用户以为改动已生效（审查 P4b）。
-					if (
-						res?.portKept != null &&
-						settings.sdPort !== res.portKept &&
-						lastPortWarn.current !== res.portKept
-					) {
-						lastPortWarn.current = res.portKept;
-						toast(
-							`端口已被运行中的服务器锁定为 ${res.portKept}，停止服务器后修改才生效`,
-							true,
-						);
-					}
-				})
-				.catch((e) => {
-					setSettingsState("error");
-					toast("设置保存失败: " + formatError(e), true);
-				});
-		}, 400);
-		return () => clearTimeout(t);
-	}, [settings]);
+  useEffect(() => {
+    if (!settingsLoaded.current) return;
+    // 防抖：路径输入框每敲一个字符都会触发本 effect，不能每次都写盘。
+    pendingSettingsSave.current = settings;
+    const t = setTimeout(() => {
+      pendingSettingsSave.current = null;
+      setSettingsState("saving");
+      api
+        .saveSettings(settings)
+        .then((res) => {
+          setSettingsState("saved");
+          // 运行中修改端口会被后端以内存中的实际端口覆盖（防抖快照
+          // 保护）：如实提示而不是让用户以为改动已生效（审查 P4b）。
+          if (
+            res?.portKept != null &&
+            settings.sdPort !== res.portKept &&
+            lastPortWarn.current !== res.portKept
+          ) {
+            lastPortWarn.current = res.portKept;
+            toast(`端口已被运行中的服务器锁定为 ${res.portKept}，停止服务器后修改才生效`, true);
+          }
+        })
+        .catch((e) => {
+          setSettingsState("error");
+          toast("设置保存失败: " + formatError(e), true);
+        });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [settings]);
 
-	// 卸载时冲刷未落盘的设置（pendingSettingsSave 非空说明防抖定时器还没
-	// 触发过）。fire-and-forget：invoke 在组件卸载后仍会完成。
-	useEffect(() => {
-		return () => {
-			const pending = pendingSettingsSave.current;
-			pendingSettingsSave.current = null;
-			if (pending) void api.saveSettings(pending).catch(() => {});
-		};
-	}, []);
+  // 卸载时冲刷未落盘的设置（pendingSettingsSave 非空说明防抖定时器还没
+  // 触发过）。fire-and-forget：invoke 在组件卸载后仍会完成。
+  useEffect(() => {
+    return () => {
+      const pending = pendingSettingsSave.current;
+      pendingSettingsSave.current = null;
+      if (pending) void api.saveSettings(pending).catch(() => {});
+    };
+  }, []);
 
-	useEffect(() => {
-		const requestId = ++scanRequest.current;
-		setMainModel("");
-		setFamilyOverride("");
-		setComponents(() => ({}));
-		setScanResult(null);
-		setScanError("");
-		if (!settings.modelDir.trim()) {
-			setScanning(false);
-			return;
-		}
-		const dir = settings.modelDir.trim();
-		const timer = setTimeout(() => {
-			setScanning(true);
-			api
-				.scanModels(dir)
-				.then((result) => {
-					if (scanRequest.current !== requestId) return;
-					setScanResult(result);
-					setScanning(false);
-				})
-				.catch((e) => {
-					if (scanRequest.current !== requestId) return;
-					const message = formatError(e);
-					setScanError(message);
-					setScanning(false);
-					toast("扫描失败: " + message, true);
-				});
-		}, 450);
-		return () => {
-			clearTimeout(timer);
-			if (scanRequest.current === requestId) setScanning(false);
-		};
-	}, [
-		settings.modelDir,
-		setComponents,
-		setFamilyOverride,
-		setMainModel,
-		setScanResult,
-		toast,
-	]);
+  useEffect(() => {
+    const requestId = ++scanRequest.current;
+    setMainModel("");
+    setFamilyOverride("");
+    setComponents(() => ({}));
+    setScanResult(null);
+    setScanError("");
+    if (!settings.modelDir.trim()) {
+      setScanning(false);
+      return;
+    }
+    const dir = settings.modelDir.trim();
+    const timer = setTimeout(() => {
+      setScanning(true);
+      api
+        .scanModels(dir)
+        .then((result) => {
+          if (scanRequest.current !== requestId) return;
+          setScanResult(result);
+          setScanning(false);
+        })
+        .catch((e) => {
+          if (scanRequest.current !== requestId) return;
+          const message = formatError(e);
+          setScanError(message);
+          setScanning(false);
+          toast("扫描失败: " + message, true);
+        });
+    }, 450);
+    return () => {
+      clearTimeout(timer);
+      if (scanRequest.current === requestId) setScanning(false);
+    };
+  }, [settings.modelDir, setComponents, setFamilyOverride, setMainModel, setScanResult, toast]);
 
-	const files = scanResult?.files ?? [];
-	const scanFamilies = scanResult?.families ?? {};
-	// 主模型只能从扫描结果（category=model）中选出，scanFamilies（Rust 端
-	// detect_family 的结果）必有对应条目；不再保留前端正则回退。
-	const detectedFamily = mainModel
-		? familyOverride || scanFamilies[mainModel] || "custom"
-		: "";
-	const familyConfig = detectedFamily ? FAMILY_CONFIG[detectedFamily] : null;
-	// The "主模型" picker already selects the primary model file, so it doubles
-	// as the family's main model arg (--diffusion-model for split families, -m
-	// for single-file). The matching field is hidden from the component panel so
-	// users don't have to pick the same file twice.
-	const modelField = familyConfig ? findModelField(familyConfig) : null;
-	const modelCandidates = files.filter((f) => f.category === "model");
-	const mainModelDir = mainModel
-		? files.find((f) => f.path === mainModel)?.dir
-		: undefined;
+  const files = scanResult?.files ?? [];
+  const scanFamilies = scanResult?.families ?? {};
+  // 主模型只能从扫描结果（category=model）中选出，scanFamilies（Rust 端
+  // detect_family 的结果）必有对应条目；不再保留前端正则回退。
+  const detectedFamily = mainModel ? familyOverride || scanFamilies[mainModel] || "custom" : "";
+  const familyConfig = detectedFamily ? FAMILY_CONFIG[detectedFamily] : null;
+  // The "主模型" picker already selects the primary model file, so it doubles
+  // as the family's main model arg (--diffusion-model for split families, -m
+  // for single-file). The matching field is hidden from the component panel so
+  // users don't have to pick the same file twice.
+  const modelField = familyConfig ? findModelField(familyConfig) : null;
+  const modelCandidates = files.filter((f) => f.category === "model");
+  const mainModelDir = mainModel ? files.find((f) => f.path === mainModel)?.dir : undefined;
 
-	const getOptions = (cat: string) => files.filter((f) => f.category === cat);
+  const getOptions = (cat: string) => files.filter((f) => f.category === cat);
 
-	useEffect(() => {
-		if (!mainModel || !familyConfig) return;
-		setComponents((current) => {
-			const next: Record<string, string> = {};
-			for (const field of familyConfig.fields) {
-				if (field.key === modelField?.key) continue;
-				const candidates = files.filter((f) => f.category === field.cat);
-				const currentValid = candidates.some(
-					(f) => f.path === current[field.key],
-				);
-				if (currentValid) {
-					next[field.key] = current[field.key];
-					continue;
-				}
-				const sameDir = candidates.filter((f) => f.dir === mainModelDir);
-				if (sameDir.length === 1) next[field.key] = sameDir[0].path;
-				else if (candidates.length === 1) next[field.key] = candidates[0].path;
-			}
-			return next;
-		});
-	}, [
-		detectedFamily,
-		familyConfig,
-		files,
-		mainModel,
-		mainModelDir,
-		modelField?.key,
-		setComponents,
-	]);
+  useEffect(() => {
+    if (!mainModel || !familyConfig) return;
+    setComponents((current) => {
+      const next: Record<string, string> = {};
+      for (const field of familyConfig.fields) {
+        if (field.key === modelField?.key) continue;
+        const candidates = files.filter((f) => f.category === field.cat);
+        const currentValid = candidates.some((f) => f.path === current[field.key]);
+        if (currentValid) {
+          next[field.key] = current[field.key];
+          continue;
+        }
+        const sameDir = candidates.filter((f) => f.dir === mainModelDir);
+        if (sameDir.length === 1) next[field.key] = sameDir[0].path;
+        else if (candidates.length === 1) next[field.key] = candidates[0].path;
+      }
+      return next;
+    });
+  }, [
+    detectedFamily,
+    familyConfig,
+    files,
+    mainModel,
+    mainModelDir,
+    modelField?.key,
+    setComponents,
+  ]);
 
-	const launchPreview =
-		familyConfig && mainModel
-			? buildLaunchConfig({
-					family: detectedFamily,
-					modelPath: mainModel,
-					components,
-					runtime: settings,
-					modelDir: settings.modelDir,
-				})
-			: null;
-	const missingRequirements = launchPreview?.missing || [];
-	// GO/NO-GO 检查单:能否发射只取决于这三件事实
-	const pathsReady = settings.modelDir.trim().length > 0;
-	const modelReady = mainModel.length > 0;
-	const familyUnsupported = Boolean(familyConfig?.unsupported);
-	const componentsReady =
-		modelReady &&
-		familyConfig !== null &&
-		!familyUnsupported &&
-		missingRequirements.length === 0;
-	const readyCount = [pathsReady, modelReady, componentsReady].filter(
-		Boolean,
-	).length;
-	const allReady = readyCount === 3;
-	const mainModelName = mainModel
-		? (files.find((f) => f.path === mainModel)?.name ??
-			mainModel.split(/[\\/]/).pop())
-		: "";
-	const pathsSection = useRef<HTMLDivElement>(null);
-	const modelSection = useRef<HTMLDivElement>(null);
-	const componentsSection = useRef<HTMLDivElement>(null);
-	const revealSection = (
-		ref: { current: HTMLElement | null },
-		focusFirstField = false
-	) => {
-		const el = ref.current;
-		if (!el) return;
-		el.scrollIntoView({ behavior: "smooth", block: "start" });
-		// 先移除再强制回流后重加,让闪烁动画可以重复触发
-		el.classList.remove("section-flash");
-		void el.offsetWidth;
-		el.classList.add("section-flash");
-		if (!focusFirstField) return;
-		// 审查 50-ux F-14：滚动 + 闪烁只到"面板"，而目标面板常常是折叠态，
-		// 用户点完检查单看到的是一片折叠面板，还得自己猜在哪一个里。这里先展开
-		// 本区域内第一个折叠面板（走用户点击标题同一条路径），再把焦点送到
-		// 该区域第一个控件上，检查单的"最后一厘米"才算走完。
-		el.querySelector<HTMLElement>(".panel.collapsed .panel-head")?.click();
-		requestAnimationFrame(() => {
-			el.querySelector<HTMLElement>(
-				"select, input, textarea, button.input"
-			)?.focus();
-		});
-	};
+  const launchPreview =
+    familyConfig && mainModel
+      ? buildLaunchConfig({
+          family: detectedFamily,
+          modelPath: mainModel,
+          components,
+          runtime: settings,
+          modelDir: settings.modelDir,
+        })
+      : null;
+  const missingRequirements = launchPreview?.missing || [];
+  // GO/NO-GO 检查单:能否发射只取决于这三件事实
+  const pathsReady = settings.modelDir.trim().length > 0;
+  const modelReady = mainModel.length > 0;
+  const familyUnsupported = Boolean(familyConfig?.unsupported);
+  const componentsReady =
+    modelReady && familyConfig !== null && !familyUnsupported && missingRequirements.length === 0;
+  const readyCount = [pathsReady, modelReady, componentsReady].filter(Boolean).length;
+  const allReady = readyCount === 3;
+  const mainModelName = mainModel
+    ? (files.find((f) => f.path === mainModel)?.name ?? mainModel.split(/[\\/]/).pop())
+    : "";
+  const pathsSection = useRef<HTMLDivElement>(null);
+  const modelSection = useRef<HTMLDivElement>(null);
+  const componentsSection = useRef<HTMLDivElement>(null);
+  const revealSection = (ref: { current: HTMLElement | null }, focusFirstField = false) => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    // 先移除再强制回流后重加,让闪烁动画可以重复触发
+    el.classList.remove("section-flash");
+    void el.offsetWidth;
+    el.classList.add("section-flash");
+    if (!focusFirstField) return;
+    // 审查 50-ux F-14：滚动 + 闪烁只到"面板"，而目标面板常常是折叠态，
+    // 用户点完检查单看到的是一片折叠面板，还得自己猜在哪一个里。这里先展开
+    // 本区域内第一个折叠面板（走用户点击标题同一条路径），再把焦点送到
+    // 该区域第一个控件上，检查单的"最后一厘米"才算走完。
+    el.querySelector<HTMLElement>(".panel.collapsed .panel-head")?.click();
+    requestAnimationFrame(() => {
+      el.querySelector<HTMLElement>("select, input, textarea, button.input")?.focus();
+    });
+  };
 
-	const browse = async (key: "exeDir" | "modelDir" | "outputDir") => {
-		const p = key === "exeDir" ? await api.pickFile() : await api.pickFolder();
-		if (p) setSettings((s) => ({ ...s, [key]: p }));
-	};
+  const browse = async (key: "exeDir" | "modelDir" | "outputDir") => {
+    const p = key === "exeDir" ? await api.pickFile() : await api.pickFolder();
+    if (p) setSettings((s) => ({ ...s, [key]: p }));
+  };
 
-	/** 当前模型的启动配置快照（与历史字段保持一致）。 */
-	const buildSnapshot = () => ({
-		familyOverride,
-		components: { ...components },
-		backend: settings.backend,
-		refImagePreset: settings.refImagePreset,
-		vaeFormat: settings.vaeFormat || "",
-		tokenizer: settings.tokenizer || "",
-		sageAttn: !!settings.sageAttn,
-		conditioningCacheSize: settings.conditioningCacheSize || "",
-		extraArgs: settings.extraArgs,
-		offloadCpu: settings.offloadCpu,
-		quantType: settings.quantType,
-		maxVram: settings.maxVram || "",
-		...diagnosticsFor(settings),
-		maxQueueSize: settings.maxQueueSize,
-	});
+  /** 当前模型的启动配置快照（与历史字段保持一致）。 */
+  const buildSnapshot = () => ({
+    familyOverride,
+    components: { ...components },
+    backend: settings.backend,
+    refImagePreset: settings.refImagePreset,
+    vaeFormat: settings.vaeFormat || "",
+    tokenizer: settings.tokenizer || "",
+    sageAttn: !!settings.sageAttn,
+    conditioningCacheSize: settings.conditioningCacheSize || "",
+    extraArgs: settings.extraArgs,
+    offloadCpu: settings.offloadCpu,
+    quantType: settings.quantType,
+    maxVram: settings.maxVram || "",
+    ...diagnosticsFor(settings),
+    maxQueueSize: settings.maxQueueSize,
+  });
 
-	const selectMainModel = (path: string) => {
-		setPendingSwitch(null);
-		setMaxVramModePick(null);
-		setMainModel(path);
-		const snapshot = path ? settings.modelSnapshots?.[path] : undefined;
-		if (!snapshot) {
-			setFamilyOverride("");
-			setComponents(() => ({}));
-			const detected = path ? scanFamilies[path] : "";
-			setSettings((current) => ({
-				...current,
-				vaeFormat: detected === "pid" ? inferPidVaeFormat(path) : "",
-				tokenizer: "",
-			}));
-			return;
-		}
-		setFamilyOverride(snapshot.familyOverride);
-		setComponents(() => ({ ...snapshot.components }));
-		const snapshotFamily = snapshot.familyOverride || scanFamilies[path] || "";
-		setSettings((current) => ({
-			...current,
-			backend: snapshot.backend,
-			refImagePreset: snapshot.refImagePreset,
-			vaeFormat:
-				snapshot.vaeFormat ||
-				(snapshotFamily === "pid" ? inferPidVaeFormat(path) : ""),
-			tokenizer: snapshot.tokenizer || "",
-			sageAttn: !!snapshot.sageAttn,
-			conditioningCacheSize: snapshot.conditioningCacheSize || "",
-			extraArgs: snapshot.extraArgs,
-			offloadCpu: snapshot.offloadCpu,
-			quantType: snapshot.quantType,
-			maxVram: snapshot.maxVram || "",
-			...diagnosticsFor(snapshot),
-			maxQueueSize: snapshot.maxQueueSize,
-		}));
-		toast("已恢复该模型上次启动配置");
-	};
+  const selectMainModel = (path: string) => {
+    setPendingSwitch(null);
+    setMaxVramModePick(null);
+    setMainModel(path);
+    const snapshot = path ? settings.modelSnapshots?.[path] : undefined;
+    if (!snapshot) {
+      setFamilyOverride("");
+      setComponents(() => ({}));
+      const detected = path ? scanFamilies[path] : "";
+      setSettings((current) => ({
+        ...current,
+        vaeFormat: detected === "pid" ? inferPidVaeFormat(path) : "",
+        tokenizer: "",
+      }));
+      return;
+    }
+    setFamilyOverride(snapshot.familyOverride);
+    setComponents(() => ({ ...snapshot.components }));
+    const snapshotFamily = snapshot.familyOverride || scanFamilies[path] || "";
+    setSettings((current) => ({
+      ...current,
+      backend: snapshot.backend,
+      refImagePreset: snapshot.refImagePreset,
+      vaeFormat: snapshot.vaeFormat || (snapshotFamily === "pid" ? inferPidVaeFormat(path) : ""),
+      tokenizer: snapshot.tokenizer || "",
+      sageAttn: !!snapshot.sageAttn,
+      conditioningCacheSize: snapshot.conditioningCacheSize || "",
+      extraArgs: snapshot.extraArgs,
+      offloadCpu: snapshot.offloadCpu,
+      quantType: snapshot.quantType,
+      maxVram: snapshot.maxVram || "",
+      ...diagnosticsFor(snapshot),
+      maxQueueSize: snapshot.maxQueueSize,
+    }));
+    toast("已恢复该模型上次启动配置");
+  };
 
-	const saveModelSnapshot = () => {
-		if (!mainModel) return;
-		const current = useStore.getState().settings;
-		const next: Settings = {
-			...current,
-			modelSnapshots: {
-				...(current.modelSnapshots || {}),
-				[mainModel]: buildSnapshot(),
-			},
-		};
-		setSettings(() => next);
-		// 立即落盘，不等 400ms 防抖：切换模型路径中本函数之后紧跟
-		// setDashboardOpen(false)（Dashboard 卸载），防抖定时器会被卸载
-		// 清理掉，快照整个丢失（RedCraft-V3 一直没进快照的直接原因）。
-		void api.saveSettings(next).catch(() => {});
-	};
+  const saveModelSnapshot = () => {
+    if (!mainModel) return;
+    const current = useStore.getState().settings;
+    const next: Settings = {
+      ...current,
+      modelSnapshots: {
+        ...(current.modelSnapshots || {}),
+        [mainModel]: buildSnapshot(),
+      },
+    };
+    setSettings(() => next);
+    // 立即落盘，不等 400ms 防抖：切换模型路径中本函数之后紧跟
+    // setDashboardOpen(false)（Dashboard 卸载），防抖定时器会被卸载
+    // 清理掉，快照整个丢失（RedCraft-V3 一直没进快照的直接原因）。
+    void api.saveSettings(next).catch(() => {});
+  };
 
-	// 主模型选中/组件配置/家族覆盖变化即记录当前模型快照：旧设计只在启动
-	// 成功后记录，用户配置了组件但没启动（或启动失败）就切换/关闭时，
-	// 配置永远丢失——"选中后组件配置没有记录并沿用"的另一半根因。
-	useEffect(() => {
-		if (!mainModel || !settingsLoaded.current) return;
-		setSettings((current) => ({
-			...current,
-			modelSnapshots: {
-				...(current.modelSnapshots || {}),
-				[mainModel]: buildSnapshot(),
-			},
-		}));
-		// Track scalar runtime values, not settings/modelSnapshots identity: controls
-		// must survive switching away without starting, without a save-effect loop.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [mainModel, components, familyOverride, settings.backend, settings.refImagePreset,
-		settings.vaeFormat, settings.tokenizer, settings.sageAttn,
-		settings.conditioningCacheSize, settings.extraArgs, settings.offloadCpu,
-		settings.quantType,
-		settings.maxVram, settings.maxQueueSize, settings.logLevel, settings.linearScale, settings.attnScale]);
+  // 主模型选中/组件配置/家族覆盖变化即记录当前模型快照：旧设计只在启动
+  // 成功后记录，用户配置了组件但没启动（或启动失败）就切换/关闭时，
+  // 配置永远丢失——"选中后组件配置没有记录并沿用"的另一半根因。
+  useEffect(() => {
+    if (!mainModel || !settingsLoaded.current) return;
+    setSettings((current) => ({
+      ...current,
+      modelSnapshots: {
+        ...(current.modelSnapshots || {}),
+        [mainModel]: buildSnapshot(),
+      },
+    }));
+    // Track scalar runtime values, not settings/modelSnapshots identity: controls
+    // must survive switching away without starting, without a save-effect loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    mainModel,
+    components,
+    familyOverride,
+    settings.backend,
+    settings.refImagePreset,
+    settings.vaeFormat,
+    settings.tokenizer,
+    settings.sageAttn,
+    settings.conditioningCacheSize,
+    settings.extraArgs,
+    settings.offloadCpu,
+    settings.quantType,
+    settings.maxVram,
+    settings.maxQueueSize,
+    settings.logLevel,
+    settings.linearScale,
+    settings.attnScale,
+  ]);
 
-	// 端口输入允许中途处于空/越界状态，落到启动与展示时统一夹回合法区间。
-	const sdPort = normalizeSdPort(settings.sdPort);
+  // 端口输入允许中途处于空/越界状态，落到启动与展示时统一夹回合法区间。
+  const sdPort = normalizeSdPort(settings.sdPort);
 
-	// --max-vram 的原始 spec 即设置中存的字符串，界面模式由此推导：
-	// 空 = 不传；含 "=" = 按设备自定义；负值 = 自动探测保留余量；其余 = 固定预算。
-	const maxVramRaw = (settings.maxVram || "").trim();
-	const maxVramDerived =
-		maxVramRaw === ""
-			? "unset"
-			: maxVramRaw.includes("=")
-				? "custom"
-				: maxVramRaw.startsWith("-")
-					? "auto"
-					: "fixed";
-	// 手动选择的模式需要粘住：自定义模式下清空输入时值为空，纯推导会掉回
-	// "不限"导致输入框消失。快照恢复/换模型时重置回推导（见 selectMainModel）。
-	const [maxVramModePick, setMaxVramModePick] = useState<string | null>(null);
-	const maxVramMode = maxVramModePick ?? maxVramDerived;
-	// 切换模式时尽量保留同模式下的已有数值，避免来回切换丢掉输入。
-	const setMaxVramMode = (mode: string) => {
-		setMaxVramModePick(mode === "unset" ? null : mode);
-		setSettings((s) => {
-			const raw = (s.maxVram || "").trim();
-			let maxVram = "";
-			if (mode === "fixed") maxVram = /^\d+(\.\d+)?$/.test(raw) ? raw : "6";
-			else if (mode === "auto")
-				maxVram = /^-\d+(\.\d+)?$/.test(raw) ? raw : "-2";
-			else if (mode === "custom") maxVram = raw.includes("=") ? raw : "";
-			return { ...s, maxVram };
-		});
-	};
+  // --max-vram 的原始 spec 即设置中存的字符串，界面模式由此推导：
+  // 空 = 不传；含 "=" = 按设备自定义；负值 = 自动探测保留余量；其余 = 固定预算。
+  const maxVramRaw = (settings.maxVram || "").trim();
+  const maxVramDerived =
+    maxVramRaw === ""
+      ? "unset"
+      : maxVramRaw.includes("=")
+        ? "custom"
+        : maxVramRaw.startsWith("-")
+          ? "auto"
+          : "fixed";
+  // 手动选择的模式需要粘住：自定义模式下清空输入时值为空，纯推导会掉回
+  // "不限"导致输入框消失。快照恢复/换模型时重置回推导（见 selectMainModel）。
+  const [maxVramModePick, setMaxVramModePick] = useState<string | null>(null);
+  const maxVramMode = maxVramModePick ?? maxVramDerived;
+  // 切换模式时尽量保留同模式下的已有数值，避免来回切换丢掉输入。
+  const setMaxVramMode = (mode: string) => {
+    setMaxVramModePick(mode === "unset" ? null : mode);
+    setSettings((s) => {
+      const raw = (s.maxVram || "").trim();
+      let maxVram = "";
+      if (mode === "fixed") maxVram = /^\d+(\.\d+)?$/.test(raw) ? raw : "6";
+      else if (mode === "auto") maxVram = /^-\d+(\.\d+)?$/.test(raw) ? raw : "-2";
+      else if (mode === "custom") maxVram = raw.includes("=") ? raw : "";
+      return { ...s, maxVram };
+    });
+  };
 
-	const startServer = async (confirmed = false) => {
-		if (!mainModel) {
-			toast("请先选择模型", true);
-			return;
-		}
-		if (!familyConfig) {
-			toast("无法识别模型类型", true);
-			return;
-		}
-		if (familyConfig.unsupported) {
-			toast(familyConfig.unsupported, true);
-			return;
-		}
-		if (missingRequirements.length > 0) {
-			toast("缺少必需配置: " + missingRequirements.join("、"), true);
-			return;
-		}
-		// --max-vram 自由文本预校验：非法 spec 会让 sd-server 启动即退，
-		// 在这里给出可读错误而不是事后翻日志（对抗性审查 A3）。
-		const maxVramError = validateMaxVramSpec(settings.maxVram || "");
-		if (maxVramError) {
-			toast("显存预算（--max-vram）格式无效：" + maxVramError, true);
-			return;
-		}
-		if (serverStatus?.reachable) {
-			if (serverStatus.external) {
-				toast(
-					"当前连接的是外部 sd-server，请先在外部停止服务后再更换模型",
-					true,
-				);
-				return;
-			}
-			if (caps?.model?.path === mainModel) {
-				setDashboardOpen(false);
-				return;
-			}
-			// 只在点击时取一次状态：订阅整个 jobs/results 数组会让「任务在后台跑、
-			// 用户在控制台改设置」这个最常见的场景每 2 秒整页重渲染一次
-			// （审查 20-frontend §2.6）。
-			const { jobs, results } = useStore.getState();
-			const activeJobs = jobs.filter(
-				(job) =>
-					job.status === "queued" ||
-					job.status === "generating" ||
-					job.status === "unknown",
-			).length;
-			// 全部图片/视频都已手动保存到输出目录才算"安全保存"
-			const unsavedResults = results.filter((result) => {
-				if (result.result?.images?.length) {
-					return !result.result.images.every(
-						(img, i) =>
-							result.saves?.[String(img.index ?? i)]?.status === "saved",
-					);
-				}
-				if (result.result?.b64_json) {
-					return result.saves?.["v"]?.status !== "saved";
-				}
-				return false;
-			}).length;
-			const impacts = [
-				activeJobs > 0 ? `${activeJobs} 个活动任务` : "",
-				unsavedResults > 0 ? `${unsavedResults} 个尚未安全保存的结果` : "",
-			].filter(Boolean);
-			if (impacts.length > 0 && !confirmed) {
-				setPendingSwitch(impacts);
-				return;
-			}
-			setPendingSwitch(null);
-			setStarting(true);
-			try {
-				const switched = await switchModel(mainModel);
-				if (switched) {
-					saveModelSnapshot();
-					setDashboardOpen(false);
-				}
-			} finally {
-				setStarting(false);
-			}
-			return;
-		}
-		setStarting(true);
-		try {
-			const launch = buildLaunchConfig({
-				family: detectedFamily,
-				modelPath: mainModel,
-				components,
-				runtime: settings,
-				modelDir: settings.modelDir,
-			});
-			if (launch.missing.length > 0) {
-				toast("缺少必需配置: " + launch.missing.join("、"), true);
-				return;
-			}
-			// 目录还是完整可执行文件路径都原样交给 Rust 端解析（is_file 探测），
-			// 这里不做平台相关的拼接（"\\sd-server.exe" 会破坏 Linux/macOS）。
-			const exePath = settings.exeDir || "sd-server";
-			await api.startServer(
-				exePath,
-				familyConfig.name,
-				launch.mode,
-				launch.args,
-				sdPort,
-			);
-			saveModelSnapshot();
-			persistFamilyDefaults(familyConfig);
-			toast("服务器启动中...");
-		} catch (e) {
-			toast("启动失败: " + formatError(e), true);
-		} finally {
-			setStarting(false);
-		}
-	};
+  const startServer = async (confirmed = false) => {
+    if (!mainModel) {
+      toast("请先选择模型", true);
+      return;
+    }
+    if (!familyConfig) {
+      toast("无法识别模型类型", true);
+      return;
+    }
+    if (familyConfig.unsupported) {
+      toast(familyConfig.unsupported, true);
+      return;
+    }
+    if (missingRequirements.length > 0) {
+      toast("缺少必需配置: " + missingRequirements.join("、"), true);
+      return;
+    }
+    // --max-vram 自由文本预校验：非法 spec 会让 sd-server 启动即退，
+    // 在这里给出可读错误而不是事后翻日志（对抗性审查 A3）。
+    const maxVramError = validateMaxVramSpec(settings.maxVram || "");
+    if (maxVramError) {
+      toast("显存预算（--max-vram）格式无效：" + maxVramError, true);
+      return;
+    }
+    if (serverStatus?.reachable) {
+      if (serverStatus.external) {
+        toast("当前连接的是外部 sd-server，请先在外部停止服务后再更换模型", true);
+        return;
+      }
+      if (caps?.model?.path === mainModel) {
+        setDashboardOpen(false);
+        return;
+      }
+      // 只在点击时取一次状态：订阅整个 jobs/results 数组会让「任务在后台跑、
+      // 用户在控制台改设置」这个最常见的场景每 2 秒整页重渲染一次
+      // （审查 20-frontend §2.6）。
+      const { jobs, results } = useStore.getState();
+      const activeJobs = jobs.filter(
+        (job) => job.status === "queued" || job.status === "generating" || job.status === "unknown",
+      ).length;
+      // 全部图片/视频都已手动保存到输出目录才算"安全保存"
+      const unsavedResults = results.filter((result) => {
+        if (result.result?.images?.length) {
+          return !result.result.images.every(
+            (img, i) => result.saves?.[String(img.index ?? i)]?.status === "saved",
+          );
+        }
+        if (result.result?.b64_json) {
+          return result.saves?.["v"]?.status !== "saved";
+        }
+        return false;
+      }).length;
+      const impacts = [
+        activeJobs > 0 ? `${activeJobs} 个活动任务` : "",
+        unsavedResults > 0 ? `${unsavedResults} 个尚未安全保存的结果` : "",
+      ].filter(Boolean);
+      if (impacts.length > 0 && !confirmed) {
+        setPendingSwitch(impacts);
+        return;
+      }
+      setPendingSwitch(null);
+      setStarting(true);
+      try {
+        const switched = await switchModel(mainModel);
+        if (switched) {
+          saveModelSnapshot();
+          setDashboardOpen(false);
+        }
+      } finally {
+        setStarting(false);
+      }
+      return;
+    }
+    setStarting(true);
+    try {
+      const launch = buildLaunchConfig({
+        family: detectedFamily,
+        modelPath: mainModel,
+        components,
+        runtime: settings,
+        modelDir: settings.modelDir,
+      });
+      if (launch.missing.length > 0) {
+        toast("缺少必需配置: " + launch.missing.join("、"), true);
+        return;
+      }
+      // 目录还是完整可执行文件路径都原样交给 Rust 端解析（is_file 探测），
+      // 这里不做平台相关的拼接（"\\sd-server.exe" 会破坏 Linux/macOS）。
+      const exePath = settings.exeDir || "sd-server";
+      await api.startServer(exePath, familyConfig.name, launch.mode, launch.args, sdPort);
+      saveModelSnapshot();
+      persistFamilyDefaults(familyConfig);
+      toast("服务器启动中...");
+    } catch (e) {
+      toast("启动失败: " + formatError(e), true);
+    } finally {
+      setStarting(false);
+    }
+  };
 
-	const stopServer = async () => {
-		try {
-			const result = await api.stopServer();
-			if (!result.stopped && !result.alreadyStopped) {
-				throw new Error("未能确认服务器已经停止");
-			}
-			toast("已停止");
-		} catch (e) {
-			toast("停止失败: " + formatError(e), true);
-		}
-	};
+  const stopServer = async () => {
+    try {
+      const result = await api.stopServer();
+      if (!result.stopped && !result.alreadyStopped) {
+        throw new Error("未能确认服务器已经停止");
+      }
+      toast("已停止");
+    } catch (e) {
+      toast("停止失败: " + formatError(e), true);
+    }
+  };
 
-	const running = serverStatus?.running ?? false;
-	const external = serverStatus?.external ?? false;
-	// 停止服务器 = 卸载模型：进行中/排队中的任务会随服务器内存一起蒸发，
-	// 存在活动任务时必须两段式确认（对抗性审查 B3）。
-	// 用标量 selector：数量不变就不重渲染（审查 20-frontend §2.6）。
-	const activeJobsCount = useStore(
-		(s) =>
-			s.jobs.filter(
-				(job) =>
-					job.status === "queued" ||
-					job.status === "generating" ||
-					job.status === "unknown",
-			).length,
-	);
-	// 安全灯 orb 的四种活法:灭(未运行)/闪烁(启动中)/长明(就绪)/警示(失败)
-	const orbState = running
-		? serverStatus?.phase === "failed"
-			? "failed"
-			: serverStatus?.reachable
-				? "ready"
-				: "starting"
-		: external
-			? "ready"
-			: "offline";
-	// 文案随主题语境:暗房"启动" ↔ 太空"发射/在轨"(任务控制语言)
-	const vostok = theme === "vostok";
+  const running = serverStatus?.running ?? false;
+  const external = serverStatus?.external ?? false;
+  // 停止服务器 = 卸载模型：进行中/排队中的任务会随服务器内存一起蒸发，
+  // 存在活动任务时必须两段式确认（对抗性审查 B3）。
+  // 用标量 selector：数量不变就不重渲染（审查 20-frontend §2.6）。
+  const activeJobsCount = useStore(
+    (s) =>
+      s.jobs.filter(
+        (job) => job.status === "queued" || job.status === "generating" || job.status === "unknown",
+      ).length,
+  );
+  // 安全灯 orb 的四种活法:灭(未运行)/闪烁(启动中)/长明(就绪)/警示(失败)
+  const orbState = running
+    ? serverStatus?.phase === "failed"
+      ? "failed"
+      : serverStatus?.reachable
+        ? "ready"
+        : "starting"
+    : external
+      ? "ready"
+      : "offline";
+  // 文案随主题语境:暗房"启动" ↔ 太空"发射/在轨"(任务控制语言)
+  const vostok = theme === "vostok";
 
-	return (
-		<div className="dashboard">
-			{/* VOSTOK 胶片边注:GO/NO-GO 遥测印字(检查单确实每 3s 轮询,见 App.tsx) */}
-			{theme === "vostok" && (
-				<span className="r-vertical r-dash-vertical" aria-hidden="true">
-					GO / NO-GO · 检查单 POLLING 3S
-				</span>
-			)}
-			<motion.div
-				className="dash-rail"
-				initial={{ opacity: 0, y: 16 }}
-				animate={{ opacity: 1, y: 0 }}
-				transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
-			>
-				<div className="logo-row">
-					<Logo size={30} />
-					<div>
-						<div className="wordmark">流光</div>
-						<div className="hero-en">LUMINA STUDIO</div>
-					</div>
-				</div>
-				<div className="orb-wrap">
-					<span className={cn("orb", orbState)} aria-hidden="true" />
-					<div className="orb-info">
-						<div className="model-name">
-							{running
-								? serverStatus?.model || "sd-server"
-								: serverStatus?.external
-									? "外部 sd-server"
-									: "未运行"}
-						</div>
-						<div className="status-text">
-							{running
-								? serverStatus?.phase === "failed"
-									? `启动失败：${serverStatus.lastError || "请查看日志"}`
-									: serverStatus?.reachable
-										? vostok
-											? "在轨运行"
-											: "就绪"
-										: serverStatus?.phase === "starting"
-											? vostok
-												? "载荷加载中…"
-												: "正在加载模型…"
-											: vostok
-												? "点火中…"
-												: "正在启动…"
-								: serverStatus?.external
-									? vostok
-										? "在轨运行（外部进程）"
-										: "就绪（外部进程）"
-									: vostok
-										? "待命"
-										: "等待启动"}
-						</div>
-					</div>
-					<div className="orb-actions">
-						{external && (
-							<span className="tag text-[11px] opacity-70">
-								外部进程
-							</span>
-						)}
-						{serverStatus?.reachable && (
-							<button
-								className="btn btn-sm"
-								onClick={() => setDashboardOpen(false)}
-							>
-								{vostok ? "进入测控台" : "进入生成界面"}
-							</button>
-						)}
-					</div>
-				</div>
-				<div className="check-list">
-					<div className="check-head">
-						{vostok ? "发射检查单" : "启动检查"}
-						<span className={cn("check-summary", allReady && "ready")}>
-							{allReady
-								? vostok
-									? "全部就绪 ALL GO"
-									: "READY · 可以启动"
-								: vostok
-									? `NO-GO · 待完成 ${3 - readyCount} 项`
-									: `待完成 ${3 - readyCount} 项`}
-						</span>
-					</div>
-					<button
-						type="button"
-						className={cn("check-item", pathsReady && "done")}
-						onClick={() => revealSection(pathsSection)}
-					>
-						<span className="check-dot" aria-hidden="true" />
-						<span className="check-label">路径</span>
-						<span className="check-detail">
-							{!pathsReady
-								? "未设置模型目录"
-								: scanning
-									? "扫描中…"
-									: files.length
-										? `${files.length} 个模型文件`
-										: "目录已设置"}
-						</span>
-					</button>
-					<button
-						type="button"
-						className={cn("check-item", modelReady && "done")}
-						onClick={() => revealSection(modelReady ? modelSection : pathsSection)}
-					>
-						<span className="check-dot" aria-hidden="true" />
-						<span className="check-label">主模型</span>
-						<span className="check-detail">
-							{modelReady ? mainModelName : "等待选择"}
-						</span>
-					</button>
-					<button
-						type="button"
-						className={cn("check-item", componentsReady && "done")}
-						onClick={() =>
-							revealSection(
-								modelReady ? componentsSection : pathsSection,
-								modelReady
-							)
-						}
-					>
-						<span className="check-dot" aria-hidden="true" />
-						<span className="check-label">组件</span>
-						<span
-							className={cn(
-								"check-detail",
-								modelReady &&
-									(missingRequirements.length > 0 || familyUnsupported) &&
-									"warn",
-							)}
-						>
-							{!modelReady
-								? "随主模型检测"
-								: familyUnsupported
-									? "暂不支持"
-									: missingRequirements.length > 0
-										? `缺 ${missingRequirements.length} 项`
-										: "齐备"}
-						</span>
-					</button>
-				</div>
+  return (
+    <div className="dashboard">
+      {/* VOSTOK 胶片边注:GO/NO-GO 遥测印字(检查单确实每 3s 轮询,见 App.tsx) */}
+      {theme === "vostok" && (
+        <span className="r-vertical r-dash-vertical" aria-hidden="true">
+          GO / NO-GO · 检查单 POLLING 3S
+        </span>
+      )}
+      <motion.div
+        className="dash-rail"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <div className="logo-row">
+          <Logo size={30} />
+          <div>
+            <div className="wordmark">流光</div>
+            <div className="hero-en">LUMINA STUDIO</div>
+          </div>
+        </div>
+        <div className="orb-wrap">
+          <span className={cn("orb", orbState)} aria-hidden="true" />
+          <div className="orb-info">
+            <div className="model-name">
+              {running
+                ? serverStatus?.model || "sd-server"
+                : serverStatus?.external
+                  ? "外部 sd-server"
+                  : "未运行"}
+            </div>
+            <div className="status-text">
+              {running
+                ? serverStatus?.phase === "failed"
+                  ? `启动失败：${serverStatus.lastError || "请查看日志"}`
+                  : serverStatus?.reachable
+                    ? vostok
+                      ? "在轨运行"
+                      : "就绪"
+                    : serverStatus?.phase === "starting"
+                      ? vostok
+                        ? "载荷加载中…"
+                        : "正在加载模型…"
+                      : vostok
+                        ? "点火中…"
+                        : "正在启动…"
+                : serverStatus?.external
+                  ? vostok
+                    ? "在轨运行（外部进程）"
+                    : "就绪（外部进程）"
+                  : vostok
+                    ? "待命"
+                    : "等待启动"}
+            </div>
+          </div>
+          <div className="orb-actions">
+            {external && <span className="tag text-[11px] opacity-70">外部进程</span>}
+            {serverStatus?.reachable && (
+              <button className="btn btn-sm" onClick={() => setDashboardOpen(false)}>
+                {vostok ? "进入测控台" : "进入生成界面"}
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="check-list">
+          <div className="check-head">
+            {vostok ? "发射检查单" : "启动检查"}
+            <span className={cn("check-summary", allReady && "ready")}>
+              {allReady
+                ? vostok
+                  ? "全部就绪 ALL GO"
+                  : "READY · 可以启动"
+                : vostok
+                  ? `NO-GO · 待完成 ${3 - readyCount} 项`
+                  : `待完成 ${3 - readyCount} 项`}
+            </span>
+          </div>
+          <button
+            type="button"
+            className={cn("check-item", pathsReady && "done")}
+            onClick={() => revealSection(pathsSection)}
+          >
+            <span className="check-dot" aria-hidden="true" />
+            <span className="check-label">路径</span>
+            <span className="check-detail">
+              {!pathsReady
+                ? "未设置模型目录"
+                : scanning
+                  ? "扫描中…"
+                  : files.length
+                    ? `${files.length} 个模型文件`
+                    : "目录已设置"}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={cn("check-item", modelReady && "done")}
+            onClick={() => revealSection(modelReady ? modelSection : pathsSection)}
+          >
+            <span className="check-dot" aria-hidden="true" />
+            <span className="check-label">主模型</span>
+            <span className="check-detail">{modelReady ? mainModelName : "等待选择"}</span>
+          </button>
+          <button
+            type="button"
+            className={cn("check-item", componentsReady && "done")}
+            onClick={() => revealSection(modelReady ? componentsSection : pathsSection, modelReady)}
+          >
+            <span className="check-dot" aria-hidden="true" />
+            <span className="check-label">组件</span>
+            <span
+              className={cn(
+                "check-detail",
+                modelReady && (missingRequirements.length > 0 || familyUnsupported) && "warn",
+              )}
+            >
+              {!modelReady
+                ? "随主模型检测"
+                : familyUnsupported
+                  ? "暂不支持"
+                  : missingRequirements.length > 0
+                    ? `缺 ${missingRequirements.length} 项`
+                    : "齐备"}
+            </span>
+          </button>
+        </div>
 
-				<div className={cn("launch-dock", allReady && "ready")}>
-					{pendingSwitch && (
-						<div className="confirm-strip" role="alert">
-							<span className="confirm-strip-text">
-								切换模型将停止当前服务：{pendingSwitch.join("、")}
-							</span>
-							<span className="confirm-strip-actions">
-								<button
-									className="btn btn-sm"
-									onClick={() => setPendingSwitch(null)}
-								>
-									取消
-								</button>
-								<button
-									className="btn btn-sm btn-danger"
-									onClick={() => startServer(true)}
-									disabled={starting || switchingModel}
-								>
-									确认切换
-								</button>
-							</span>
-						</div>
-					)}
-					{mainModel &&
-						familyConfig &&
-						missingRequirements.length > 0 &&
-						!familyUnsupported && (
-							<div className="validation-summary" role="alert">
-								还缺 {missingRequirements.length} 个必需配置：
-								{missingRequirements.join("、")}
-								{/* 审查 50-ux F-14：给"缺 X 项"一个直达入口，点开就是
+        <div className={cn("launch-dock", allReady && "ready")}>
+          {pendingSwitch && (
+            <div className="confirm-strip" role="alert">
+              <span className="confirm-strip-text">
+                切换模型将停止当前服务：{pendingSwitch.join("、")}
+              </span>
+              <span className="confirm-strip-actions">
+                <button className="btn btn-sm" onClick={() => setPendingSwitch(null)}>
+                  取消
+                </button>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => startServer(true)}
+                  disabled={starting || switchingModel}
+                >
+                  确认切换
+                </button>
+              </span>
+            </div>
+          )}
+          {mainModel && familyConfig && missingRequirements.length > 0 && !familyUnsupported && (
+            <div className="validation-summary" role="alert">
+              还缺 {missingRequirements.length} 个必需配置：
+              {missingRequirements.join("、")}
+              {/* 审查 50-ux F-14：给"缺 X 项"一个直达入口，点开就是
 								    组件面板展开 + 光标落在第一个可填控件上。 */}
-								<button
-									type="button"
-									className="btn btn-sm ml-2"
-									onClick={() => revealSection(componentsSection, true)}
-								>
-									去填写
-								</button>
-							</div>
-						)}
-					{mainModel && familyConfig?.unsupported && (
-						<div className="validation-summary" role="alert">
-							{familyConfig.unsupported}
-						</div>
-					)}
-					{mainModel && familyConfig && (
-						<div className="launch-meta">
-							{familyConfig.name} ·{" "}
-							{launchPreview?.mode === "vid_gen" ? "视频生成" : "图像生成"}
-						</div>
-					)}
-					<div className="launch-row">
-						<button
-							className="btn btn-primary btn-launch"
-							onClick={() => startServer()}
-							disabled={
-								!mainModel ||
-								!familyConfig ||
-								familyUnsupported ||
-								starting ||
-								switchingModel ||
-								missingRequirements.length > 0
-							}
-						>
-							{starting || switchingModel ? (
-								<>
-									<span className="spinner" />
-									{switchPhase === "preflight"
-										? "正在检查模型…"
-										: switchPhase === "stopping"
-											? "正在停止当前模型…"
-											: switchPhase === "rollback"
-												? "正在恢复上一个模型…"
-												: serverStatus?.reachable
-													? "正在切换模型…"
-													: vostok
-														? "点火中…"
-														: "启动中…"}
-								</>
-							) : (
-								<>
-									{IC.play}
-									{serverStatus?.reachable
-										? caps?.model?.path === mainModel
-											? vostok
-												? "进入测控台"
-												: "返回生成界面"
-											: "切换到此模型"
-										: vostok
-											? "发射 · 进入测控台"
-											: "启动服务器"}
-								</>
-							)}
-						</button>
-						{running && !external && (
-							<TwoTapButton
-								className="btn btn-danger"
-								label="停止服务器"
-								armedLabel={`确认停止（${activeJobsCount} 个任务将丢失）`}
-								armedTitle="停止服务器会卸载模型并丢失进行中的任务，再次点击确认"
-								needsConfirm={activeJobsCount > 0}
-								onConfirm={() => void stopServer()}
-								idle={<>{IC.power} 停止</>}
-								armed="确认?"
-							/>
-						)}
-					</div>
-				</div>
+              <button
+                type="button"
+                className="btn btn-sm ml-2"
+                onClick={() => revealSection(componentsSection, true)}
+              >
+                去填写
+              </button>
+            </div>
+          )}
+          {mainModel && familyConfig?.unsupported && (
+            <div className="validation-summary" role="alert">
+              {familyConfig.unsupported}
+            </div>
+          )}
+          {mainModel && familyConfig && (
+            <div className="launch-meta">
+              {familyConfig.name} · {launchPreview?.mode === "vid_gen" ? "视频生成" : "图像生成"}
+            </div>
+          )}
+          <div className="launch-row">
+            <button
+              className="btn btn-primary btn-launch"
+              onClick={() => startServer()}
+              disabled={
+                !mainModel ||
+                !familyConfig ||
+                familyUnsupported ||
+                starting ||
+                switchingModel ||
+                missingRequirements.length > 0
+              }
+            >
+              {starting || switchingModel ? (
+                <>
+                  <span className="spinner" />
+                  {switchPhase === "preflight"
+                    ? "正在检查模型…"
+                    : switchPhase === "stopping"
+                      ? "正在停止当前模型…"
+                      : switchPhase === "rollback"
+                        ? "正在恢复上一个模型…"
+                        : serverStatus?.reachable
+                          ? "正在切换模型…"
+                          : vostok
+                            ? "点火中…"
+                            : "启动中…"}
+                </>
+              ) : (
+                <>
+                  {IC.play}
+                  {serverStatus?.reachable
+                    ? caps?.model?.path === mainModel
+                      ? vostok
+                        ? "进入测控台"
+                        : "返回生成界面"
+                      : "切换到此模型"
+                    : vostok
+                      ? "发射 · 进入测控台"
+                      : "启动服务器"}
+                </>
+              )}
+            </button>
+            {running && !external && (
+              <TwoTapButton
+                className="btn btn-danger"
+                label="停止服务器"
+                armedLabel={`确认停止（${activeJobsCount} 个任务将丢失）`}
+                armedTitle="停止服务器会卸载模型并丢失进行中的任务，再次点击确认"
+                needsConfirm={activeJobsCount > 0}
+                onConfirm={() => void stopServer()}
+                idle={<>{IC.power} 停止</>}
+                armed="确认?"
+              />
+            )}
+          </div>
+        </div>
 
-				<div className="rail-keys" aria-hidden="true">
-					<span>
-						<span className="kbd">Ctrl + Enter</span> 提交生成
-					</span>
-					<span>
-						<span className="kbd">Ctrl + ,</span> 参数面板
-					</span>
-					<span>
-						<span className="kbd">Esc</span> 关闭浮层
-					</span>
-				</div>
-			</motion.div>
+        <div className="rail-keys" aria-hidden="true">
+          <span>
+            <span className="kbd">Ctrl + Enter</span> 提交生成
+          </span>
+          <span>
+            <span className="kbd">Ctrl + ,</span> 参数面板
+          </span>
+          <span>
+            <span className="kbd">Esc</span> 关闭浮层
+          </span>
+        </div>
+      </motion.div>
 
-			<motion.div
-				className="dashboard-card"
-				initial={{ opacity: 0, y: 16 }}
-				animate={{ opacity: 1, y: 0 }}
-				transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1], delay: 0.08 }}
-			>
-				<div className={cn("settings-state", settingsState)} role="status">
-					{settingsState === "loading"
-						? "正在读取设置…"
-						: settingsState === "saving"
-							? "正在保存设置…"
-							: settingsState === "error"
-								? "设置未保存，请检查配置目录权限"
-								: "设置已保存"}
-				</div>
+      <motion.div
+        className="dashboard-card"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1], delay: 0.08 }}
+      >
+        <div className={cn("settings-state", settingsState)} role="status">
+          {settingsState === "loading"
+            ? "正在读取设置…"
+            : settingsState === "saving"
+              ? "正在保存设置…"
+              : settingsState === "error"
+                ? "设置未保存，请检查配置目录权限"
+                : "设置已保存"}
+        </div>
 
-				<Panel title="界面主题">
-					<ThemePicker />
-				</Panel>
+        <Panel title="界面主题">
+          <ThemePicker />
+        </Panel>
 
-				<div ref={pathsSection}>
-				<Panel title="程序与路径">
-					<div className="field-row">
-						<label className="form-label" htmlFor="dashboard-server-exe">
-							{IC.box} sd-server
-						</label>
-						<input
-							id="dashboard-server-exe"
-							className="input"
-							type="text"
-							value={settings.exeDir}
-							onChange={(e) =>
-								setSettings((s) => ({ ...s, exeDir: e.target.value }))
-							}
-							placeholder="可留空从 PATH 查找，或选择 sd-server 可执行文件"
-						/>
-						<button
-							className="icon-btn"
-							title="浏览..."
-							onClick={() => browse("exeDir")}
-						>
-							{IC.folder}
-						</button>
-					</div>
-					<div className="field-hint">
-						sd-server 可执行文件；留空时从 PATH 查找
-					</div>
-					<div className="field-row">
-						<label className="form-label" htmlFor="dashboard-model-dir">
-							{IC.folder} 模型目录
-						</label>
-						<input
-							id="dashboard-model-dir"
-							className="input"
-							type="text"
-							value={settings.modelDir}
-							onChange={(e) =>
-								setSettings((s) => ({ ...s, modelDir: e.target.value }))
-							}
-							placeholder="例如 D:\models"
-						/>
-						<button
-							className="icon-btn"
-							title="浏览..."
-							onClick={() => browse("modelDir")}
-						>
-							{IC.folder}
-						</button>
-					</div>
-					<div className="field-hint">
-						{scanning
-							? `正在扫描：${settings.modelDir}`
-							: scanError
-								? `扫描失败：${scanError}`
-								: files.length
-									? `已发现 ${files.length} 个文件${scanResult?.truncated ? "（结果已截断）" : ""}`
-									: settings.modelDir
-										? "扫描完成，未发现支持的模型文件"
-										: "扫描模型文件的根目录"}
-					</div>
-					{!!scanResult?.warnings?.length && (
-						<div className="scan-warning" role="alert">
-							扫描部分完成：
-							{scanResult.warnings
-								.slice(0, 3)
-								.map((warning) => warning.message)
-								.join("；")}
-							{scanResult.warnings.length > 3
-								? `；另有 ${scanResult.warnings.length - 3} 项警告`
-								: ""}
-						</div>
-					)}
-					<div className="field-row">
-						<label className="form-label" htmlFor="dashboard-output-dir">
-							{IC.folder} 输出目录
-						</label>
-						<input
-							id="dashboard-output-dir"
-							className="input"
-							type="text"
-							value={settings.outputDir}
-							onChange={(e) =>
-								setSettings((s) => ({ ...s, outputDir: e.target.value }))
-							}
-							placeholder="例如 D:\output（留空则无法一键保存）"
-						/>
-						<button
-							className="icon-btn"
-							title="浏览..."
-							onClick={() => browse("outputDir")}
-						>
-							{IC.folder}
-						</button>
-					</div>
-					<div className="field-hint">「保存到输出目录」按钮的目标路径；开启下方开关后，生成完成也会自动写入这里</div>
-					<div style={{ marginTop: 10 }}>
-						<Toggle
-							label="生成完成后自动保存到输出目录"
-							checked={settings.autoSaveResults === true}
-							onChange={(v) =>
-								setSettings((s) => ({ ...s, autoSaveResults: v }))
-							}
-						/>
-						<div className="field-hint">
-							{settings.outputDir.trim()
-								? "默认关闭：关闭时结果只存在内存里，关闭窗口、刷新或内存淘汰都会丢失未保存的结果"
-								: "未配置输出目录时该开关不生效"}
-						</div>
-					</div>
-				</Panel>
-				</div>
+        <div ref={pathsSection}>
+          <Panel title="程序与路径">
+            <div className="field-row">
+              <label className="form-label" htmlFor="dashboard-server-exe">
+                {IC.box} sd-server
+              </label>
+              <input
+                id="dashboard-server-exe"
+                className="input"
+                type="text"
+                value={settings.exeDir}
+                onChange={(e) => setSettings((s) => ({ ...s, exeDir: e.target.value }))}
+                placeholder="可留空从 PATH 查找，或选择 sd-server 可执行文件"
+              />
+              <button className="icon-btn" title="浏览..." onClick={() => browse("exeDir")}>
+                {IC.folder}
+              </button>
+            </div>
+            <div className="field-hint">sd-server 可执行文件；留空时从 PATH 查找</div>
+            <div className="field-row">
+              <label className="form-label" htmlFor="dashboard-model-dir">
+                {IC.folder} 模型目录
+              </label>
+              <input
+                id="dashboard-model-dir"
+                className="input"
+                type="text"
+                value={settings.modelDir}
+                onChange={(e) => setSettings((s) => ({ ...s, modelDir: e.target.value }))}
+                placeholder="例如 D:\models"
+              />
+              <button className="icon-btn" title="浏览..." onClick={() => browse("modelDir")}>
+                {IC.folder}
+              </button>
+            </div>
+            <div className="field-hint">
+              {scanning
+                ? `正在扫描：${settings.modelDir}`
+                : scanError
+                  ? `扫描失败：${scanError}`
+                  : files.length
+                    ? `已发现 ${files.length} 个文件${scanResult?.truncated ? "（结果已截断）" : ""}`
+                    : settings.modelDir
+                      ? "扫描完成，未发现支持的模型文件"
+                      : "扫描模型文件的根目录"}
+            </div>
+            {!!scanResult?.warnings?.length && (
+              <div className="scan-warning" role="alert">
+                扫描部分完成：
+                {scanResult.warnings
+                  .slice(0, 3)
+                  .map((warning) => warning.message)
+                  .join("；")}
+                {scanResult.warnings.length > 3
+                  ? `；另有 ${scanResult.warnings.length - 3} 项警告`
+                  : ""}
+              </div>
+            )}
+            <div className="field-row">
+              <label className="form-label" htmlFor="dashboard-output-dir">
+                {IC.folder} 输出目录
+              </label>
+              <input
+                id="dashboard-output-dir"
+                className="input"
+                type="text"
+                value={settings.outputDir}
+                onChange={(e) => setSettings((s) => ({ ...s, outputDir: e.target.value }))}
+                placeholder="例如 D:\output（留空则无法一键保存）"
+              />
+              <button className="icon-btn" title="浏览..." onClick={() => browse("outputDir")}>
+                {IC.folder}
+              </button>
+            </div>
+            <div className="field-hint">
+              「保存到输出目录」按钮的目标路径；开启下方开关后，生成完成也会自动写入这里
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <Toggle
+                label="生成完成后自动保存到输出目录"
+                checked={settings.autoSaveResults === true}
+                onChange={(v) => setSettings((s) => ({ ...s, autoSaveResults: v }))}
+              />
+              <div className="field-hint">
+                {settings.outputDir.trim()
+                  ? "默认关闭：关闭时结果只存在内存里，关闭窗口、刷新或内存淘汰都会丢失未保存的结果"
+                  : "未配置输出目录时该开关不生效"}
+              </div>
+            </div>
+          </Panel>
+        </div>
 
-				<div ref={modelSection}>
-				{(files.length > 0 || scanning) && (
-					<Panel title="模型检测">
-						{scanning ? (
-							<div className="empty-state">
-								<span className="spinner" /> 正在扫描模型…
-							</div>
-						) : modelCandidates.length === 0 ? (
-							<div className="empty-state">
-								发现了文件，但没有可作为主模型的候选项
-							</div>
-						) : (
-							<>
-								<div className="form-row">
-									<label className="form-label" htmlFor="dashboard-main-model">
-										主模型
-									</label>
-									<Select
-										id="dashboard-main-model"
-										value={mainModel}
-										onChange={selectMainModel}
-										options={[
-											{ value: "", label: "-- 选择模型 --" },
-											...modelCandidates.map((f) => ({
-												value: f.path,
-												label: modelFileOptionLabel(f),
-											})),
-										]}
-									/>
-								</div>
-								{mainModel && detectedFamily && (
-									<div className="form-row mt-2">
-										<label className="form-label" htmlFor="dashboard-family">
-											识别类型
-										</label>
-										<Select
-											id="dashboard-family"
-											value={familyOverride || detectedFamily}
-											onChange={(next) => {
-												setFamilyOverride(next);
-												if (next === "pid" && !settings.vaeFormat) {
-													setSettings((current) => ({
-														...current,
-														vaeFormat: inferPidVaeFormat(mainModel),
-													}));
-												}
-											}}
-											options={Object.entries(FAMILY_CONFIG).map(([k, v]) => ({
-												value: k,
-												label: v.unsupported
-													? `${v.name}（暂不支持）`
-													: v.name,
-											}))}
-										/>
-										{familyConfig && (
-											<span className="tag ml-1">
-												{familyConfig.hint}
-											</span>
-										)}
-									</div>
-								)}
-							</>
-						)}
-					</Panel>
-				)}
-				</div>
+        <div ref={modelSection}>
+          {(files.length > 0 || scanning) && (
+            <Panel title="模型检测">
+              {scanning ? (
+                <div className="empty-state">
+                  <span className="spinner" /> 正在扫描模型…
+                </div>
+              ) : modelCandidates.length === 0 ? (
+                <div className="empty-state">发现了文件，但没有可作为主模型的候选项</div>
+              ) : (
+                <>
+                  <div className="form-row">
+                    <label className="form-label" htmlFor="dashboard-main-model">
+                      主模型
+                    </label>
+                    <Select
+                      id="dashboard-main-model"
+                      value={mainModel}
+                      onChange={selectMainModel}
+                      options={[
+                        { value: "", label: "-- 选择模型 --" },
+                        ...modelCandidates.map((f) => ({
+                          value: f.path,
+                          label: modelFileOptionLabel(f),
+                        })),
+                      ]}
+                    />
+                  </div>
+                  {mainModel && detectedFamily && (
+                    <div className="form-row mt-2">
+                      <label className="form-label" htmlFor="dashboard-family">
+                        识别类型
+                      </label>
+                      <Select
+                        id="dashboard-family"
+                        value={familyOverride || detectedFamily}
+                        onChange={(next) => {
+                          setFamilyOverride(next);
+                          if (next === "pid" && !settings.vaeFormat) {
+                            setSettings((current) => ({
+                              ...current,
+                              vaeFormat: inferPidVaeFormat(mainModel),
+                            }));
+                          }
+                        }}
+                        options={Object.entries(FAMILY_CONFIG).map(([k, v]) => ({
+                          value: k,
+                          label: v.unsupported ? `${v.name}（暂不支持）` : v.name,
+                        }))}
+                      />
+                      {familyConfig && <span className="tag ml-1">{familyConfig.hint}</span>}
+                    </div>
+                  )}
+                </>
+              )}
+            </Panel>
+          )}
+        </div>
 
-				<div ref={componentsSection}>
-				{mainModel && familyConfig && (
-					<>
-						{familyConfig.fields.filter((f) => f.key !== modelField?.key)
-							.length > 0 && (
-							<Panel title={`组件配置 — ${familyConfig.name}`}>
-								{familyConfig.fields
-									.filter((field) => field.key !== modelField?.key)
-									.map((field) => {
-										const opts = getOptions(field.cat);
-										const val = components[field.key] || "";
-										return (
-											<div key={field.key} className="form-row">
-												<label
-													className="form-label"
-													htmlFor={`component-${field.key}`}
-												>
-													{field.label}
-												</label>
-												<Select
-													id={`component-${field.key}`}
-													value={val}
-													onChange={(v) =>
-														setComponents((c) => ({
-															...c,
-															[field.key]: v,
-														}))
-													}
-													options={[
-														{
-															value: "",
-															label:
-																field.required && detectedFamily !== "custom"
-																	? "-- 必需，尚未设置 --"
-																	: "-- 未设置（可选） --",
-														},
-														...opts.map((f) => ({
-															value: f.path,
-															label:
-																modelFileOptionLabel(f) +
-																(f.dir !== mainModelDir
-																	? " — " + f.dir.split("/").pop()
-																	: ""),
-														})),
-													]}
-												/>
-												{field.description && (
-													<div className="field-hint field-hint-flush mt-0.5">
-														{field.description}
-													</div>
-												)}
-											</div>
-										);
-									})}
-								{detectedFamily === "pid" && (
-									<div className="form-row">
-										<label
-											className="form-label"
-											htmlFor="component-pid-vae-format"
-										>
-											VAE 格式
-										</label>
-										<Select
-											id="component-pid-vae-format"
-											value={settings.vaeFormat || ""}
-											onChange={(v) =>
-												setSettings((current) => ({
-													...current,
-													vaeFormat: v,
-												}))
-											}
-											options={[
-												{ value: "", label: "-- 必需，请匹配 PiD 模型 --" },
-												...PID_VAE_FORMATS.map((option) => ({
-													value: option.value,
-													label: `${option.label}（${option.value}）`,
-												})),
-											]}
-										/>
-										<div className="field-hint field-hint-flush mt-0.5">
-											{settings.vaeFormat
-												? "必须与 PiD checkpoint 使用的 VAE latent 布局一致"
-												: "无法从文件名可靠确定，请按模型卡选择对应格式"}
-										</div>
-									</div>
-								)}
-								{familyNeedsExternalTokenizer(detectedFamily) && (
-									<div className="field-row">
-										<label
-											className="form-label"
-											htmlFor="component-external-tokenizer"
-										>
-											{IC.box} Tokenizer
-										</label>
-										<input
-											id="component-external-tokenizer"
-											className="input"
-											type="text"
-											value={settings.tokenizer || ""}
-											onChange={(e) =>
-												setSettings((s) => ({
-													...s,
-													tokenizer: e.target.value,
-												}))
-											}
-											placeholder="必需：与文本编码器匹配的 tokenizer.json"
-										/>
-										<button
-											className="icon-btn"
-											title="浏览..."
-											onClick={async () => {
-												const p = await api.pickFile();
-												if (p) setSettings((s) => ({ ...s, tokenizer: p }));
-											}}
-										>
-											{IC.folder}
-										</button>
-									</div>
-								)}
-								{familyNeedsExternalTokenizer(detectedFamily) && (
-									<div className="field-hint">
-										{settings.tokenizer
-											? "已设置；也可用 main=…,clip-l=…,clip-g=… 形式一次配置多个槽位"
-											: EXTERNAL_TOKENIZER_HINT[detectedFamily] ||
-												"该家族不再内嵌词表，缺少外部 tokenizer 会在初始化文本编码器时失败"}
-									</div>
-								)}
-							</Panel>
-						)}
-					</>
-				)}
-				</div>
+        <div ref={componentsSection}>
+          {mainModel && familyConfig && (
+            <>
+              {familyConfig.fields.filter((f) => f.key !== modelField?.key).length > 0 && (
+                <Panel title={`组件配置 — ${familyConfig.name}`}>
+                  {familyConfig.fields
+                    .filter((field) => field.key !== modelField?.key)
+                    .map((field) => {
+                      const opts = getOptions(field.cat);
+                      const val = components[field.key] || "";
+                      return (
+                        <div key={field.key} className="form-row">
+                          <label className="form-label" htmlFor={`component-${field.key}`}>
+                            {field.label}
+                          </label>
+                          <Select
+                            id={`component-${field.key}`}
+                            value={val}
+                            onChange={(v) =>
+                              setComponents((c) => ({
+                                ...c,
+                                [field.key]: v,
+                              }))
+                            }
+                            options={[
+                              {
+                                value: "",
+                                label:
+                                  field.required && detectedFamily !== "custom"
+                                    ? "-- 必需，尚未设置 --"
+                                    : "-- 未设置（可选） --",
+                              },
+                              ...opts.map((f) => ({
+                                value: f.path,
+                                label:
+                                  modelFileOptionLabel(f) +
+                                  (f.dir !== mainModelDir ? " — " + f.dir.split("/").pop() : ""),
+                              })),
+                            ]}
+                          />
+                          {field.description && (
+                            <div className="field-hint field-hint-flush mt-0.5">
+                              {field.description}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  {detectedFamily === "pid" && (
+                    <div className="form-row">
+                      <label className="form-label" htmlFor="component-pid-vae-format">
+                        VAE 格式
+                      </label>
+                      <Select
+                        id="component-pid-vae-format"
+                        value={settings.vaeFormat || ""}
+                        onChange={(v) =>
+                          setSettings((current) => ({
+                            ...current,
+                            vaeFormat: v,
+                          }))
+                        }
+                        options={[
+                          { value: "", label: "-- 必需，请匹配 PiD 模型 --" },
+                          ...PID_VAE_FORMATS.map((option) => ({
+                            value: option.value,
+                            label: `${option.label}（${option.value}）`,
+                          })),
+                        ]}
+                      />
+                      <div className="field-hint field-hint-flush mt-0.5">
+                        {settings.vaeFormat
+                          ? "必须与 PiD checkpoint 使用的 VAE latent 布局一致"
+                          : "无法从文件名可靠确定，请按模型卡选择对应格式"}
+                      </div>
+                    </div>
+                  )}
+                  {familyNeedsExternalTokenizer(detectedFamily) && (
+                    <div className="field-row">
+                      <label className="form-label" htmlFor="component-external-tokenizer">
+                        {IC.box} Tokenizer
+                      </label>
+                      <input
+                        id="component-external-tokenizer"
+                        className="input"
+                        type="text"
+                        value={settings.tokenizer || ""}
+                        onChange={(e) =>
+                          setSettings((s) => ({
+                            ...s,
+                            tokenizer: e.target.value,
+                          }))
+                        }
+                        placeholder="必需：与文本编码器匹配的 tokenizer.json"
+                      />
+                      <button
+                        className="icon-btn"
+                        title="浏览..."
+                        onClick={async () => {
+                          const p = await api.pickFile();
+                          if (p) setSettings((s) => ({ ...s, tokenizer: p }));
+                        }}
+                      >
+                        {IC.folder}
+                      </button>
+                    </div>
+                  )}
+                  {familyNeedsExternalTokenizer(detectedFamily) && (
+                    <div className="field-hint">
+                      {settings.tokenizer
+                        ? "已设置；也可用 main=…,clip-l=…,clip-g=… 形式一次配置多个槽位"
+                        : EXTERNAL_TOKENIZER_HINT[detectedFamily] ||
+                          "该家族不再内嵌词表，缺少外部 tokenizer 会在初始化文本编码器时失败"}
+                    </div>
+                  )}
+                </Panel>
+              )}
+            </>
+          )}
+        </div>
 
-				<div className="config-group-label">高级配置</div>
+        <div className="config-group-label">高级配置</div>
 
-				<Panel title="运行后端" collapsed>
-					<div className="form-row">
-						<label className="form-label" htmlFor="dashboard-backend-preset">
-							后端预设
-						</label>
-						<Select
-							id="dashboard-backend-preset"
-							value={settings.backend || "auto"}
-							onChange={(v) =>
-								setSettings((s) => ({
-									...s,
-									backend: v === "auto" ? "" : v,
-								}))
-							}
-							options={[
-								{ value: "auto", label: "自动（默认）" },
-								{ value: "gpu", label: "首个可用 GPU" },
-								{ value: "cuda0", label: "CUDA" },
-								{ value: "rocm", label: "AMD ROCm / HIP" },
-								{ value: "vulkan0", label: "Vulkan" },
-								{ value: "cpu", label: "仅 CPU" },
-								// 自定义 --backend 值不在预设中时回显为"自定义",避免触发器空态
-								...(settings.backend &&
-								!["gpu", "cuda0", "rocm", "vulkan0", "cpu"].includes(
-									settings.backend,
-								)
-									? [
-											{
-												value: settings.backend,
-												label: `自定义（${settings.backend}）`,
-											},
-										]
-									: []),
-							]}
-						/>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-backend-custom">
-							自定义 --backend
-						</label>
-						<input
-							id="dashboard-backend-custom"
-							className="input"
-							type="text"
-							value={settings.backend}
-							onChange={(e) =>
-								setSettings((s) => ({ ...s, backend: e.target.value }))
-							}
-							placeholder="例如 cuda0 或 clip=cpu,vae=cuda0,diffusion=vulkan0"
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							支持组件级分配，如 clip=cpu,diffusion=cuda0。只有 params-backend 或 CPU 卸载会关闭 auto-fit；显式 --backend 会被 auto-fit 保留并作为计算设备分配。“自动”且无手动放置时默认启用单 GPU 自动放置。
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<Toggle
-							label="原生 SageAttention（--sage-attn）"
-							checked={!!settings.sageAttn}
-							onChange={(v) => setSettings((s) => ({ ...s, sageAttn: v }))}
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与 --flash-attn 同时存在时，Sage 在 diffusion 内优先；把 diffusion 的注意力显式设为 off 会同时关掉 Sage 的 Flash Attention 回退。会改变数值结果，建议固定种子对比。
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label
-							className="form-label"
-							htmlFor="dashboard-conditioning-cache-size"
-						>
-							条件缓存上限（--conditioning-cache-size）
-						</label>
-						<input
-							id="dashboard-conditioning-cache-size"
-							className="input"
-							type="text"
-							inputMode="numeric"
-							value={settings.conditioningCacheSize || ""}
-							onChange={(e) =>
-								setSettings((s) => ({
-									...s,
-									conditioningCacheSize: e.target.value,
-								}))
-							}
-							placeholder="留空 = 内核默认（服务器 4）"
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							按模型上下文缓存条件结果，与 --cache-mode 的步间缓存无关；0 表示关闭。
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-threads">
-							计算线程数（--threads）
-						</label>
-						<NumberInput
-							id="dashboard-threads"
-							className="w-20"
-							value={settings.threads ?? 0}
-							min={0}
-							max={256}
-							onChange={(value) =>
-								setSettings((s) => ({ ...s, threads: value }))
-							}
-							ariaLabel="计算线程数"
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							0 = 不传该参数，由内核按 CPU 物理核数决定（弱核 CPU 上这是性能调优第一步）；留 0 或正整数，不要填逻辑核数。
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label
-							className="form-label"
-							htmlFor="dashboard-params-backend"
-						>
-							参数驻留后端（--params-backend）
-						</label>
-						<input
-							id="dashboard-params-backend"
-							className="input"
-							type="text"
-							value={settings.paramsBackend || ""}
-							onChange={(e) =>
-								setSettings((s) => ({
-									...s,
-									paramsBackend: e.target.value,
-								}))
-							}
-							placeholder="例如 cpu / disk / te=cpu,vae=cpu"
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							决定权重放在哪里（与上面 --backend 决定"在哪算"是两套分配）。显式填写会关闭新版 auto-fit；只接受单个后端，不能写 &amp; 设备列表；disk 表示直接从磁盘读，仅此参数支持。小显存卡把文本编码器放到 cpu 是常见做法。
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-rpc-servers">
-							RPC 服务器（--rpc-servers）
-						</label>
-						<input
-							id="dashboard-rpc-servers"
-							className="input"
-							type="text"
-							value={settings.rpcServers || ""}
-							onChange={(e) =>
-								setSettings((s) => ({
-									...s,
-									rpcServers: e.target.value,
-								}))
-							}
-							placeholder="例如 127.0.0.1:50052,192.168.1.10:50052"
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							多机拆卡的 RPC 端点，host:port 逗号分隔。连上后仍需在 --backend 里用 RPC 设备名（如 RPC0）指定计算设备，否则显存不会参与计算。
-						</div>
-					</div>
-					<CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
-				</Panel>
+        <Panel title="运行后端" collapsed>
+          <div className="form-row">
+            <label className="form-label" htmlFor="dashboard-backend-preset">
+              后端预设
+            </label>
+            <Select
+              id="dashboard-backend-preset"
+              value={settings.backend || "auto"}
+              onChange={(v) =>
+                setSettings((s) => ({
+                  ...s,
+                  backend: v === "auto" ? "" : v,
+                }))
+              }
+              options={[
+                { value: "auto", label: "自动（默认）" },
+                { value: "gpu", label: "首个可用 GPU" },
+                { value: "cuda0", label: "CUDA" },
+                { value: "rocm", label: "AMD ROCm / HIP" },
+                { value: "vulkan0", label: "Vulkan" },
+                { value: "cpu", label: "仅 CPU" },
+                // 自定义 --backend 值不在预设中时回显为"自定义",避免触发器空态
+                ...(settings.backend &&
+                !["gpu", "cuda0", "rocm", "vulkan0", "cpu"].includes(settings.backend)
+                  ? [
+                      {
+                        value: settings.backend,
+                        label: `自定义（${settings.backend}）`,
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-backend-custom">
+              自定义 --backend
+            </label>
+            <input
+              id="dashboard-backend-custom"
+              className="input"
+              type="text"
+              value={settings.backend}
+              onChange={(e) => setSettings((s) => ({ ...s, backend: e.target.value }))}
+              placeholder="例如 cuda0 或 clip=cpu,vae=cuda0,diffusion=vulkan0"
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              支持组件级分配，如 clip=cpu,diffusion=cuda0。只有 params-backend 或 CPU 卸载会关闭
+              auto-fit；显式 --backend 会被 auto-fit
+              保留并作为计算设备分配。“自动”且无手动放置时默认启用单 GPU 自动放置。
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <Toggle
+              label="原生 SageAttention（--sage-attn）"
+              checked={!!settings.sageAttn}
+              onChange={(v) => setSettings((s) => ({ ...s, sageAttn: v }))}
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与
+              --flash-attn 同时存在时，Sage 在 diffusion 内优先；把 diffusion 的注意力显式设为 off
+              会同时关掉 Sage 的 Flash Attention 回退。会改变数值结果，建议固定种子对比。
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-conditioning-cache-size">
+              条件缓存上限（--conditioning-cache-size）
+            </label>
+            <input
+              id="dashboard-conditioning-cache-size"
+              className="input"
+              type="text"
+              inputMode="numeric"
+              value={settings.conditioningCacheSize || ""}
+              onChange={(e) =>
+                setSettings((s) => ({
+                  ...s,
+                  conditioningCacheSize: e.target.value,
+                }))
+              }
+              placeholder="留空 = 内核默认（服务器 4）"
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              按模型上下文缓存条件结果，与 --cache-mode 的步间缓存无关；0 表示关闭。
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-threads">
+              计算线程数（--threads）
+            </label>
+            <NumberInput
+              id="dashboard-threads"
+              className="w-20"
+              value={settings.threads ?? 0}
+              min={0}
+              max={256}
+              onChange={(value) => setSettings((s) => ({ ...s, threads: value }))}
+              ariaLabel="计算线程数"
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              0 = 不传该参数，由内核按 CPU 物理核数决定（弱核 CPU 上这是性能调优第一步）；留 0
+              或正整数，不要填逻辑核数。
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-params-backend">
+              参数驻留后端（--params-backend）
+            </label>
+            <input
+              id="dashboard-params-backend"
+              className="input"
+              type="text"
+              value={settings.paramsBackend || ""}
+              onChange={(e) =>
+                setSettings((s) => ({
+                  ...s,
+                  paramsBackend: e.target.value,
+                }))
+              }
+              placeholder="例如 cpu / disk / te=cpu,vae=cpu"
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              决定权重放在哪里（与上面 --backend 决定"在哪算"是两套分配）。显式填写会关闭新版
+              auto-fit；只接受单个后端，不能写 &amp; 设备列表；disk
+              表示直接从磁盘读，仅此参数支持。小显存卡把文本编码器放到 cpu 是常见做法。
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-rpc-servers">
+              RPC 服务器（--rpc-servers）
+            </label>
+            <input
+              id="dashboard-rpc-servers"
+              className="input"
+              type="text"
+              value={settings.rpcServers || ""}
+              onChange={(e) =>
+                setSettings((s) => ({
+                  ...s,
+                  rpcServers: e.target.value,
+                }))
+              }
+              placeholder="例如 127.0.0.1:50052,192.168.1.10:50052"
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              多机拆卡的 RPC 端点，host:port 逗号分隔。连上后仍需在 --backend 里用 RPC 设备名（如
+              RPC0）指定计算设备，否则显存不会参与计算。
+            </div>
+          </div>
+          <CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
+        </Panel>
 
-				<Panel title="参考图处理" collapsed>
-					<div className="form-row">
-						<label className="form-label" htmlFor="dashboard-ref-image-preset">
-							处理预设
-						</label>
-						<Select
-							id="dashboard-ref-image-preset"
-							value={settings.refImagePreset}
-							onChange={(v) =>
-								setSettings((s) => ({ ...s, refImagePreset: v }))
-							}
-							options={[
-								{ value: "", label: "自动检测（推荐）" },
-								{ value: "flux_kontext", label: "Flux Kontext" },
-								{ value: "longcat", label: "LongCat Edit" },
-								{ value: "qwen", label: "Qwen Image Edit" },
-								{ value: "qwen_layered", label: "Qwen Image Layered" },
-								{ value: "mage_flow", label: "Mage-Flow Edit" },
-								{ value: "flux2", label: "Flux 2" },
-								{ value: "z_image_omni", label: "Boogu / Z-Image Omni" },
-								{ value: "krea2_ostris_edit", label: "Krea2 Ostris Edit" },
-								{ value: "krea2_edit", label: "Krea2 Edit 768" },
-								{ value: "cosmos_reference", label: "Anima / Cosmos Reference" },
-								{ value: "llada_image", label: "LLaDA-Image" },
-							]}
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							作为 --ref-image-args preset=… 在模型启动时传给
-							sd-server；通常保持自动即可
-						</div>
-						{(detectedFamily === "krea2" ||
-							detectedFamily === "krea2-turbo") && (
-							<div className="field-hint field-hint-flush mt-1">
-								Krea2 自动模式使用 Ostris Edit；仅 lbouaraba/krea2edit
-								一类模型选择 “Krea2 Edit 768”
-							</div>
-						)}
-					</div>
-				</Panel>
+        <Panel title="参考图处理" collapsed>
+          <div className="form-row">
+            <label className="form-label" htmlFor="dashboard-ref-image-preset">
+              处理预设
+            </label>
+            <Select
+              id="dashboard-ref-image-preset"
+              value={settings.refImagePreset}
+              onChange={(v) => setSettings((s) => ({ ...s, refImagePreset: v }))}
+              options={[
+                { value: "", label: "自动检测（推荐）" },
+                { value: "flux_kontext", label: "Flux Kontext" },
+                { value: "longcat", label: "LongCat Edit" },
+                { value: "qwen", label: "Qwen Image Edit" },
+                { value: "qwen_layered", label: "Qwen Image Layered" },
+                { value: "mage_flow", label: "Mage-Flow Edit" },
+                { value: "flux2", label: "Flux 2" },
+                { value: "z_image_omni", label: "Boogu / Z-Image Omni" },
+                { value: "krea2_ostris_edit", label: "Krea2 Ostris Edit" },
+                { value: "krea2_edit", label: "Krea2 Edit 768" },
+                { value: "cosmos_reference", label: "Anima / Cosmos Reference" },
+                { value: "llada_image", label: "LLaDA-Image" },
+              ]}
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              作为 --ref-image-args preset=… 在模型启动时传给 sd-server；通常保持自动即可
+            </div>
+            {(detectedFamily === "krea2" || detectedFamily === "krea2-turbo") && (
+              <div className="field-hint field-hint-flush mt-1">
+                Krea2 自动模式使用 Ostris Edit；仅 lbouaraba/krea2edit 一类模型选择 “Krea2 Edit 768”
+              </div>
+            )}
+          </div>
+        </Panel>
 
-				<Panel title="性能与显存" collapsed>
-					<div className="form-row">
-						<Toggle
-							label="CPU 卸载（--offload-to-cpu）"
-							checked={settings.offloadCpu}
-							onChange={(v) =>
-								setSettings((s) => ({ ...s, offloadCpu: v }))
-							}
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							强制将权重放在 CPU 内存、按需搬到计算设备；新版会因此关闭 auto-fit。不勾选也不禁止 auto-fit 自动使用 RAM 或磁盘。
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-max-vram-mode">
-							显存预算（--max-vram）
-						</label>
-						{/* form-row 是块级布局，Select 触发器 width:100%——联动输入框必须与
+        <Panel title="性能与显存" collapsed>
+          <div className="form-row">
+            <Toggle
+              label="CPU 卸载（--offload-to-cpu）"
+              checked={settings.offloadCpu}
+              onChange={(v) => setSettings((s) => ({ ...s, offloadCpu: v }))}
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              强制将权重放在 CPU 内存、按需搬到计算设备；新版会因此关闭 auto-fit。不勾选也不禁止
+              auto-fit 自动使用 RAM 或磁盘。
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-max-vram-mode">
+              显存预算（--max-vram）
+            </label>
+            {/* form-row 是块级布局，Select 触发器 width:100%——联动输入框必须与
 						    Select 包进同一个 flex 容器，否则会换行并带着 margin 错位。 */}
-						<div className="flex items-center gap-2">
-							<Select
-								id="dashboard-max-vram-mode"
-								className="flex-1"
-								value={maxVramMode}
-								onChange={setMaxVramMode}
-								options={[
-									{ value: "unset", label: "引擎默认（不传显式预算）" },
-									{ value: "fixed", label: "固定预算（GiB）" },
-									{ value: "auto", label: "自动探测（保留空闲余量）" },
-									{ value: "custom", label: "按设备自定义" },
-								]}
-							/>
-							{maxVramMode === "fixed" && (
-								<NumberInput
-									id="dashboard-max-vram-fixed"
-									className="w-24 shrink-0"
-									value={Number(maxVramRaw) || 0}
-									min={0}
-									max={256}
-									step={0.5}
-									onChange={(v) =>
-										setSettings((s) => ({ ...s, maxVram: String(v) }))
-									}
-									ariaLabel="显存预算 GiB"
-								/>
-							)}
-							{maxVramMode === "auto" && (
-								<NumberInput
-									id="dashboard-max-vram-reserve"
-									className="w-24 shrink-0"
-									value={Math.abs(Number(maxVramRaw)) || 2}
-									min={0.5}
-									max={64}
-									step={0.5}
-									onChange={(v) =>
-										setSettings((s) => ({ ...s, maxVram: String(-v) }))
-									}
-									ariaLabel="保留的空闲显存 GiB"
-								/>
-							)}
-							{maxVramMode === "custom" && (
-								<input
-									id="dashboard-max-vram-custom"
-									className="input flex-1 min-w-0"
-									type="text"
-									
-									value={settings.maxVram || ""}
-									onChange={(e) =>
-										setSettings((s) => ({ ...s, maxVram: e.target.value }))
-									}
-									placeholder="例如 cuda0=6,vulkan0=4"
-									aria-label="按设备自定义显存预算"
-								/>
-							)}
-						</div>
-						<div className="field-hint field-hint-flush mt-0.5">
-							{maxVramMode === "unset" &&
-								"不传显式预算：新版内核仍会按可用显存自动分段，auto-fit 会预留安全余量"}
-							{maxVramMode === "fixed" &&
-								"受管理权重与计算缓冲的预算（非物理显存硬上限）；新版 0 = 按实时空闲显存自动分段，旧版 0 才禁用图切分"}
-							{maxVramMode === "auto" &&
-								"自动探测空闲显存并保留指定余量（以负值传给 --max-vram）"}
-							{maxVramMode === "custom" &&
-								"按后端/设备分别指定预算（GiB），逗号分隔"}
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-quant-type">
-							加载时量化（--type）
-						</label>
-						<Select
-							id="dashboard-quant-type"
-							value={settings.quantType}
-							onChange={(v) =>
-								setSettings((s) => ({ ...s, quantType: v }))
-							}
-							options={[
-								{ value: "", label: "不量化（默认）" },
-								// 常用 K 量化（注意：无 _S/_M 配方区分，见下方说明）
-								{ value: "q4_K", label: "Q4_K（推荐）" },
-								{ value: "q5_K", label: "Q5_K" },
-								{ value: "q6_K", label: "Q6_K" },
-								{ value: "q8_K", label: "Q8_K" },
-								{ value: "q3_K", label: "Q3_K" },
-								{ value: "q2_K", label: "Q2_K" },
-								// 传统均匀量化
-								{ value: "q8_0", label: "Q8_0" },
-								{ value: "q8_1", label: "Q8_1" },
-								{ value: "q5_0", label: "Q5_0" },
-								{ value: "q5_1", label: "Q5_1" },
-								{ value: "q4_0", label: "Q4_0" },
-								{ value: "q4_1", label: "Q4_1" },
-								{ value: "q2_0", label: "Q2_0" },
-								// FP8 直载权重（上游 #1913 起 sd_type_t 新增 F8_E4M3/E5M2，
-								// 如 Ideogram4 官方 FP8 safetensors 可免转换直接加载）
-								{ value: "f8_e4m3", label: "F8_E4M3（FP8）" },
-								{ value: "f8_e5m2", label: "F8_E5M2（FP8）" },
-								// IQ 系列（需 imatrix 才有可用质量）
-								{ value: "iq4_xs", label: "IQ4_XS（需 imatrix）" },
-								{ value: "iq4_nl", label: "IQ4_NL（需 imatrix）" },
-								{ value: "iq3_s", label: "IQ3_S（需 imatrix）" },
-								{ value: "iq3_xxs", label: "IQ3_XXS（需 imatrix）" },
-								{ value: "iq2_s", label: "IQ2_S（需 imatrix）" },
-								{ value: "iq2_xs", label: "IQ2_XS（需 imatrix）" },
-								{ value: "iq2_xxs", label: "IQ2_XXS（需 imatrix）" },
-								{ value: "iq1_s", label: "IQ1_S（需 imatrix）" },
-								{ value: "iq1_m", label: "IQ1_M（需 imatrix）" },
-								// 无损转换（BF16 数值范围大于 F16；上游 docs/z_image_l2p.md 的 Z-Image L2P 权重含 F32 张量，以 bf16 载入约 18.6GB→11.8GB）
-								{ value: "bf16", label: "BF16" },
-								{ value: "f16", label: "F16" },
-								{ value: "f32", label: "F32" },
-							]}
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							Q4_K 等 K 量化不区分 _S/_M 配方；混合精度（如视觉塔保
-							F16）需在附加启动参数写 --tensor-type-rules
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-extra-args">
-							附加启动参数
-						</label>
-						<input
-							id="dashboard-extra-args"
-							className="input"
-							type="text"
-							list="dashboard-extra-arg-options"
-							value={settings.extraArgs}
-							onChange={(e) =>
-								setSettings((s) => ({ ...s, extraArgs: e.target.value }))
-							}
-							placeholder="例如 --threads 8 --mmap"
-						/>
-						<datalist id="dashboard-extra-arg-options">
-							{cliOptions.map((opt) => (
-								<option key={opt} value={opt} />
-							))}
-						</datalist>
-						<div className="field-hint field-hint-flush mt-0.5">
-							{cliOptions.length > 0
-								? `最后追加到 sd-server 命令行，同名值优先于控件；输入时按 ↓ 可从当前内核的 ${cliOptions.length} 个选项里补全`
-								: "最后追加到 sd-server 命令行，同名值优先于控件；启动前按实际内核预检，不会改写保存值"}
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-max-queue">
-							最大队列
-						</label>
-						<NumberInput
-							id="dashboard-max-queue"
-							className="w-20"
-							value={settings.maxQueueSize ?? 4}
-							min={1}
-							max={32}
-							onChange={(value) =>
-								setSettings((s) => ({ ...s, maxQueueSize: value }))
-							}
-							ariaLabel="最大队列数量"
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							生成队列上限（服务器未提供时生效）
-						</div>
-					</div>
-					<div className="form-row mt-2">
-						<label className="form-label" htmlFor="dashboard-sd-port">
-							启动端口
-						</label>
-						<NumberInput
-							id="dashboard-sd-port"
-							className="w-24"
-							value={sdPort}
-							min={MIN_SD_PORT}
-							max={MAX_SD_PORT}
-							onChange={(value) =>
-								setSettings((s) => ({ ...s, sdPort: value }))
-							}
-							ariaLabel="sd-server 启动端口"
-						/>
-						<div className="field-hint field-hint-flush mt-0.5">
-							sd-server 监听 127.0.0.1 的端口，默认 {DEFAULT_SD_PORT}；范围{" "}
-							{MIN_SD_PORT}–{MAX_SD_PORT}
-							{running && sdPort !== serverStatus?.sdPort
-								? `。当前服务器运行在 ${serverStatus?.sdPort}，重启后改用新端口`
-								: ""}
-						</div>
-					</div>
-				</Panel>
-				<DiagnosticsPanel />
+            <div className="flex items-center gap-2">
+              <Select
+                id="dashboard-max-vram-mode"
+                className="flex-1"
+                value={maxVramMode}
+                onChange={setMaxVramMode}
+                options={[
+                  { value: "unset", label: "引擎默认（不传显式预算）" },
+                  { value: "fixed", label: "固定预算（GiB）" },
+                  { value: "auto", label: "自动探测（保留空闲余量）" },
+                  { value: "custom", label: "按设备自定义" },
+                ]}
+              />
+              {maxVramMode === "fixed" && (
+                <NumberInput
+                  id="dashboard-max-vram-fixed"
+                  className="w-24 shrink-0"
+                  value={Number(maxVramRaw) || 0}
+                  min={0}
+                  max={256}
+                  step={0.5}
+                  onChange={(v) => setSettings((s) => ({ ...s, maxVram: String(v) }))}
+                  ariaLabel="显存预算 GiB"
+                />
+              )}
+              {maxVramMode === "auto" && (
+                <NumberInput
+                  id="dashboard-max-vram-reserve"
+                  className="w-24 shrink-0"
+                  value={Math.abs(Number(maxVramRaw)) || 2}
+                  min={0.5}
+                  max={64}
+                  step={0.5}
+                  onChange={(v) => setSettings((s) => ({ ...s, maxVram: String(-v) }))}
+                  ariaLabel="保留的空闲显存 GiB"
+                />
+              )}
+              {maxVramMode === "custom" && (
+                <input
+                  id="dashboard-max-vram-custom"
+                  className="input flex-1 min-w-0"
+                  type="text"
 
-				</motion.div>
-		</div>
-	);
+                  value={settings.maxVram || ""}
+                  onChange={(e) => setSettings((s) => ({ ...s, maxVram: e.target.value }))}
+                  placeholder="例如 cuda0=6,vulkan0=4"
+                  aria-label="按设备自定义显存预算"
+                />
+              )}
+            </div>
+            <div className="field-hint field-hint-flush mt-0.5">
+              {maxVramMode === "unset" &&
+                "不传显式预算：新版内核仍会按可用显存自动分段，auto-fit 会预留安全余量"}
+              {maxVramMode === "fixed" &&
+                "受管理权重与计算缓冲的预算（非物理显存硬上限）；新版 0 = 按实时空闲显存自动分段，旧版 0 才禁用图切分"}
+              {maxVramMode === "auto" && "自动探测空闲显存并保留指定余量（以负值传给 --max-vram）"}
+              {maxVramMode === "custom" && "按后端/设备分别指定预算（GiB），逗号分隔"}
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-quant-type">
+              加载时量化（--type）
+            </label>
+            <Select
+              id="dashboard-quant-type"
+              value={settings.quantType}
+              onChange={(v) => setSettings((s) => ({ ...s, quantType: v }))}
+              options={[
+                { value: "", label: "不量化（默认）" },
+                // 常用 K 量化（注意：无 _S/_M 配方区分，见下方说明）
+                { value: "q4_K", label: "Q4_K（推荐）" },
+                { value: "q5_K", label: "Q5_K" },
+                { value: "q6_K", label: "Q6_K" },
+                { value: "q8_K", label: "Q8_K" },
+                { value: "q3_K", label: "Q3_K" },
+                { value: "q2_K", label: "Q2_K" },
+                // 传统均匀量化
+                { value: "q8_0", label: "Q8_0" },
+                { value: "q8_1", label: "Q8_1" },
+                { value: "q5_0", label: "Q5_0" },
+                { value: "q5_1", label: "Q5_1" },
+                { value: "q4_0", label: "Q4_0" },
+                { value: "q4_1", label: "Q4_1" },
+                { value: "q2_0", label: "Q2_0" },
+                // FP8 直载权重（上游 #1913 起 sd_type_t 新增 F8_E4M3/E5M2，
+                // 如 Ideogram4 官方 FP8 safetensors 可免转换直接加载）
+                { value: "f8_e4m3", label: "F8_E4M3（FP8）" },
+                { value: "f8_e5m2", label: "F8_E5M2（FP8）" },
+                // IQ 系列（需 imatrix 才有可用质量）
+                { value: "iq4_xs", label: "IQ4_XS（需 imatrix）" },
+                { value: "iq4_nl", label: "IQ4_NL（需 imatrix）" },
+                { value: "iq3_s", label: "IQ3_S（需 imatrix）" },
+                { value: "iq3_xxs", label: "IQ3_XXS（需 imatrix）" },
+                { value: "iq2_s", label: "IQ2_S（需 imatrix）" },
+                { value: "iq2_xs", label: "IQ2_XS（需 imatrix）" },
+                { value: "iq2_xxs", label: "IQ2_XXS（需 imatrix）" },
+                { value: "iq1_s", label: "IQ1_S（需 imatrix）" },
+                { value: "iq1_m", label: "IQ1_M（需 imatrix）" },
+                // 无损转换（BF16 数值范围大于 F16；上游 docs/z_image_l2p.md 的 Z-Image L2P 权重含 F32 张量，以 bf16 载入约 18.6GB→11.8GB）
+                { value: "bf16", label: "BF16" },
+                { value: "f16", label: "F16" },
+                { value: "f32", label: "F32" },
+              ]}
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              Q4_K 等 K 量化不区分 _S/_M 配方；混合精度（如视觉塔保 F16）需在附加启动参数写
+              --tensor-type-rules
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-extra-args">
+              附加启动参数
+            </label>
+            <input
+              id="dashboard-extra-args"
+              className="input"
+              type="text"
+              list="dashboard-extra-arg-options"
+              value={settings.extraArgs}
+              onChange={(e) => setSettings((s) => ({ ...s, extraArgs: e.target.value }))}
+              placeholder="例如 --threads 8 --mmap"
+            />
+            <datalist id="dashboard-extra-arg-options">
+              {cliOptions.map((opt) => (
+                <option key={opt} value={opt} />
+              ))}
+            </datalist>
+            <div className="field-hint field-hint-flush mt-0.5">
+              {cliOptions.length > 0
+                ? `最后追加到 sd-server 命令行，同名值优先于控件；输入时按 ↓ 可从当前内核的 ${cliOptions.length} 个选项里补全`
+                : "最后追加到 sd-server 命令行，同名值优先于控件；启动前按实际内核预检，不会改写保存值"}
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-max-queue">
+              最大队列
+            </label>
+            <NumberInput
+              id="dashboard-max-queue"
+              className="w-20"
+              value={settings.maxQueueSize ?? 4}
+              min={1}
+              max={32}
+              onChange={(value) => setSettings((s) => ({ ...s, maxQueueSize: value }))}
+              ariaLabel="最大队列数量"
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              生成队列上限（服务器未提供时生效）
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <label className="form-label" htmlFor="dashboard-sd-port">
+              启动端口
+            </label>
+            <NumberInput
+              id="dashboard-sd-port"
+              className="w-24"
+              value={sdPort}
+              min={MIN_SD_PORT}
+              max={MAX_SD_PORT}
+              onChange={(value) => setSettings((s) => ({ ...s, sdPort: value }))}
+              ariaLabel="sd-server 启动端口"
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              sd-server 监听 127.0.0.1 的端口，默认 {DEFAULT_SD_PORT}；范围 {MIN_SD_PORT}–
+              {MAX_SD_PORT}
+              {running && sdPort !== serverStatus?.sdPort
+                ? `。当前服务器运行在 ${serverStatus?.sdPort}，重启后改用新端口`
+                : ""}
+            </div>
+          </div>
+        </Panel>
+        <DiagnosticsPanel />
+      </motion.div>
+    </div>
+  );
 }

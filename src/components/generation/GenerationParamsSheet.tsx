@@ -1,12 +1,11 @@
 import { useMemo } from "react";
-import type {
-  Capabilities,
-  Features,
-  GenMode,
-  GenParams,
-} from "../../types";
+import type { Capabilities, Features, GenMode, GenParams } from "../../types";
 import { FAMILY_CONFIG, SIZE_PRESETS, VIDEO_FRAME_PRESETS } from "../../config/families";
-import { featureEnabled, previewModesFromCapabilities, vaeTilingProtocolFromCapabilities } from "../../lib/utils";
+import {
+  featureEnabled,
+  previewModesFromCapabilities,
+  vaeTilingProtocolFromCapabilities,
+} from "../../lib/utils";
 import { ParamsSheet } from "./ParamsSheet";
 import { Panel } from "../ui/Panel";
 import { ImageInputsPanel } from "./panels/ImageInputsPanel";
@@ -53,13 +52,8 @@ export interface GenerationParamsSheetProps {
   sheetTarget: "size" | "sampling" | null;
   onUpdate: (path: string, val: unknown) => void;
   onSetImage: (
-    which:
-      | "initImage"
-      | "maskImage"
-      | "controlImage"
-      | "ipAdapterImage"
-      | "endImage",
-    v: string | null
+    which: "initImage" | "maskImage" | "controlImage" | "ipAdapterImage" | "endImage",
+    v: string | null,
   ) => void;
   onSetRefImages: (updater: (r: string[]) => string[]) => void;
   onSetControlFrames: (updater: (r: string[]) => string[]) => void;
@@ -111,16 +105,10 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
   const hsp = params.high_noise_sample_params;
   const sizePresets = useMemo(
     () => FAMILY_CONFIG[family]?.sizePresetsByMode?.[mode] || SIZE_PRESETS[mode],
-    [family, mode]
+    [family, mode],
   );
-  const framePresets = useMemo(
-    () => VIDEO_FRAME_PRESETS[family],
-    [family]
-  );
-  const vaeTilingProtocol = useMemo(
-    () => vaeTilingProtocolFromCapabilities(caps),
-    [caps]
-  );
+  const framePresets = useMemo(() => VIDEO_FRAME_PRESETS[family], [family]);
+  const vaeTilingProtocol = useMemo(() => vaeTilingProtocolFromCapabilities(caps), [caps]);
 
   return (
     <ParamsSheet open={open} onClose={onClose}>
@@ -244,11 +232,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         />
       )}
       {featureEnabled(features, "lora") && (
-        <LoraPanel
-          loras={params.lora || []}
-          available={caps.loras || []}
-          onUpdate={onUpdate}
-        />
+        <LoraPanel loras={params.lora || []} available={caps.loras || []} onUpdate={onUpdate} />
       )}
       {featureEnabled(features, "hires") && (
         <HiresPanel

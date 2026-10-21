@@ -16,37 +16,38 @@
 前端 `tsc --noEmit` 零错误、`any` 零处、363 个测试全通过、最大 chunk 145 kB；Rust 侧 `cargo clippy` 除 2 条外零命中、89 个测试通过、设置写入做了 `ReplaceFileW(WRITE_THROUGH)` 级别的原子化。这些不是"看起来还行"，而是明显高于同类 Tauri 桌面客户端的平均水平。
 
 问题集中在三个方向：
+
 1. **10 条 P1 里有 5 条属于"静默无效"**——界面说成功，实际不生效或结果不对，且都没有任何报错：PuLID/PhotoMaker 死组件、`distilled-sd` 错误默认值、`-l` 绕过监听守卫、animated WebP 黑屏、LoRA 元数据回填永不匹配。这类问题最伤信任，也最难排查。
 2. **上游漂移没有任何自动化护栏**：60 个家族、156 个 CLI 参数、约 30 个请求体字段、8 组"同一事实写两遍"的结构，全靠人工跟随；上游 README 自己写着 "API and command-line option may change frequently"，实测一天 3 个提交。
 3. **没有任何 CI**：`cargo fmt` 不通过、`clippy -D warnings` 不通过、lockfile 已被手改过、当前版本连 git tag 都没有。
 
 ### 0.2 结论计数
 
-| 组 | 报告 | P0 | P1 | P2 | P3 | 合计 |
-|---|---|---:|---:|---:|---:|---:|
-| Rust 后端与 Tauri 安全边界 | `10-backend-rust.md` | 0 | 2 | 12 | 8 | 22 |
-| 前端架构 / 状态 / 性能 / 内存 | `20-frontend-arch.md` | 0 | 1 | 11 | 5 | 17 |
-| 上游 HTTP API 协议对齐 | `30-api-alignment.md` | 0 | 3 | 6 | 2 | 11（另 1 条附带） |
-| CLI 参数覆盖 / 家族数据 | `40-cli-families.md` | 0 | 2 | 5 | 3 | 10（另 3 条更正/信息） |
-| 交互 / 无障碍 / 国际化 / 同类 GUI | `50-ux-a11y.md` | 0 | 2 | 14 | 7 | 23 |
-| 构建 / 依赖 / 测试 / 发布 / 文档 | `60-build-test.md` | 0 | 0 | 6 | 11 | 17 |
-| **合计** | | **0** | **10** | **54** | **36** | **100**（另 4 条更正/附带） |
+| 组                                | 报告                  |    P0 |     P1 |     P2 |     P3 |                        合计 |
+| --------------------------------- | --------------------- | ----: | -----: | -----: | -----: | --------------------------: |
+| Rust 后端与 Tauri 安全边界        | `10-backend-rust.md`  |     0 |      2 |     12 |      8 |                          22 |
+| 前端架构 / 状态 / 性能 / 内存     | `20-frontend-arch.md` |     0 |      1 |     11 |      5 |                          17 |
+| 上游 HTTP API 协议对齐            | `30-api-alignment.md` |     0 |      3 |      6 |      2 |           11（另 1 条附带） |
+| CLI 参数覆盖 / 家族数据           | `40-cli-families.md`  |     0 |      2 |      5 |      3 |      10（另 3 条更正/信息） |
+| 交互 / 无障碍 / 国际化 / 同类 GUI | `50-ux-a11y.md`       |     0 |      2 |     14 |      7 |                          23 |
+| 构建 / 依赖 / 测试 / 发布 / 文档  | `60-build-test.md`    |     0 |      0 |      6 |     11 |                          17 |
+| **合计**                          |                       | **0** | **10** | **54** | **36** | **100**（另 4 条更正/附带） |
 
 没有 P0：没有任何一条会"打开即崩、必丢数据、必失败"。10 条 P1 里 5 条是"用户会以为成功但结果不对"（静默无效），2 条是安全/数据边界的自指问题，3 条是"界面直接不可用或数据整批丢失"。
 
 ### 0.3 必须立刻处理的 9 条（建议下一个补丁版全部修完）
 
-| # | 问题 | 级别 | 位置 | 修法成本 |
-|---|---|---|---|---|
-| 1 | `--listen-ip` 守卫漏了上游短别名 `-l`：把 `-l 0.0.0.0` 粘进「附加启动参数」即可让 sd-server 无鉴权对局域网开放，而界面仍写"监听 127.0.0.1" | **P1** | `src-tauri/src/server.rs:256` | 3 行 + 1 个测试 |
-| 2 | `dir_is_within` 的白名单根 `output_dir` 由 webview 自己经 `save_settings` 改写；配合无扩展名白名单的 `save_output` 与"文件名以 sd-server 开头即免探测"的 `start_server`，构成 任意写 → 任意执行 链 | **P1** | `lib.rs:375` / `save.rs:62` / `server.rs:1242` | 约 30 行（三选一即可破链） |
-| 3 | PuLID / PhotoMaker 在 sd-server 面是**死组件**（身份参数是生成级参数，`examples/server/**` 零引用），且挂错家族；用户看到"检查单全绿、启动成功、出图"，但身份注入永不发生 | **P1** | `families.ts:640-641,683-684` | 删除组件位或降级为 NO-GO，约 20 行 |
-| 4 | `distilled-sd` 默认 `1 步 / CFG 1 / 512²` 只对 SDXS 成立；SSD-1B / Vega / tiny-SD 用户一进生成页就被填错参数，出糊图且无报错 | **P1** | `families.ts:1846-1857` | 改 3 个默认值 + 提示，约 5 行 |
-| 5 | 生成结果只在内存：关窗、`Ctrl+R`、WebView 崩溃、内存预算淘汰任一发生即整批丢失；后端 `save_output` 已现成，只缺"完成后自动落盘"策略 | **P1** | `store.ts` / `README.md:113` | 约 40 行（新增 `autoSaveResults`） |
-| 6 | 提示词无 token 计数，Iris-3B 300 token 处**静默截断**；用户无从判断"为什么后半句没生效" | **P1** | `PromptDock.tsx:111-119` | 约 30 行 |
-| 7 | `vid_gen` 的 animated WebP（`mime_type: image/webp`）被无条件塞进 `<video>` → **永远黑屏、无报错**；而「编译了 libwebp 但没 libwebm」的内核会把 webp 当作**默认视频格式**发放，用户不改任何设置就会踩到（AVI 同理） | **P1** | `ResultsGrid.tsx:404-418,734-748` | 约 40 行（按 `mime_type` 选渲染器） |
-| 8 | 从 PNG 元数据恢复 LoRA **永远匹配不上**：元数据写含扩展名的文件名，capabilities 给的是 stem，代码用 `name === name` 比较 → 所有 LoRA 被静默丢弃；测试假数据两侧写成一样，绿灯掩盖 | **P1** | `utils.ts:670`；固化了错误假设的测试 `utils.test.ts:1152-1170` | 2 行 + 改测试夹具 |
-| 9 | capabilities 存在但缺 `defaults_by_mode`/`current_mode`（旧内核、裁剪响应、魔改内核）→ 生成界面 `return null` → **白屏且零提示**；`App.tsx` 的兜底只覆盖"caps 拉取失败"，不覆盖"HTTP 200 但形状不同" | **P1** | `GenerationUI.tsx:284-292,1003`、`App.tsx:117-125` | 约 20 行（补 fallback 链） |
+| #   | 问题                                                                                                                                                                                                                | 级别   | 位置                                                           | 修法成本                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------- | ----------------------------------- |
+| 1   | `--listen-ip` 守卫漏了上游短别名 `-l`：把 `-l 0.0.0.0` 粘进「附加启动参数」即可让 sd-server 无鉴权对局域网开放，而界面仍写"监听 127.0.0.1"                                                                          | **P1** | `src-tauri/src/server.rs:256`                                  | 3 行 + 1 个测试                     |
+| 2   | `dir_is_within` 的白名单根 `output_dir` 由 webview 自己经 `save_settings` 改写；配合无扩展名白名单的 `save_output` 与"文件名以 sd-server 开头即免探测"的 `start_server`，构成 任意写 → 任意执行 链                  | **P1** | `lib.rs:375` / `save.rs:62` / `server.rs:1242`                 | 约 30 行（三选一即可破链）          |
+| 3   | PuLID / PhotoMaker 在 sd-server 面是**死组件**（身份参数是生成级参数，`examples/server/**` 零引用），且挂错家族；用户看到"检查单全绿、启动成功、出图"，但身份注入永不发生                                           | **P1** | `families.ts:640-641,683-684`                                  | 删除组件位或降级为 NO-GO，约 20 行  |
+| 4   | `distilled-sd` 默认 `1 步 / CFG 1 / 512²` 只对 SDXS 成立；SSD-1B / Vega / tiny-SD 用户一进生成页就被填错参数，出糊图且无报错                                                                                        | **P1** | `families.ts:1846-1857`                                        | 改 3 个默认值 + 提示，约 5 行       |
+| 5   | 生成结果只在内存：关窗、`Ctrl+R`、WebView 崩溃、内存预算淘汰任一发生即整批丢失；后端 `save_output` 已现成，只缺"完成后自动落盘"策略                                                                                 | **P1** | `store.ts` / `README.md:113`                                   | 约 40 行（新增 `autoSaveResults`）  |
+| 6   | 提示词无 token 计数，Iris-3B 300 token 处**静默截断**；用户无从判断"为什么后半句没生效"                                                                                                                             | **P1** | `PromptDock.tsx:111-119`                                       | 约 30 行                            |
+| 7   | `vid_gen` 的 animated WebP（`mime_type: image/webp`）被无条件塞进 `<video>` → **永远黑屏、无报错**；而「编译了 libwebp 但没 libwebm」的内核会把 webp 当作**默认视频格式**发放，用户不改任何设置就会踩到（AVI 同理） | **P1** | `ResultsGrid.tsx:404-418,734-748`                              | 约 40 行（按 `mime_type` 选渲染器） |
+| 8   | 从 PNG 元数据恢复 LoRA **永远匹配不上**：元数据写含扩展名的文件名，capabilities 给的是 stem，代码用 `name === name` 比较 → 所有 LoRA 被静默丢弃；测试假数据两侧写成一样，绿灯掩盖                                   | **P1** | `utils.ts:670`；固化了错误假设的测试 `utils.test.ts:1152-1170` | 2 行 + 改测试夹具                   |
+| 9   | capabilities 存在但缺 `defaults_by_mode`/`current_mode`（旧内核、裁剪响应、魔改内核）→ 生成界面 `return null` → **白屏且零提示**；`App.tsx` 的兜底只覆盖"caps 拉取失败"，不覆盖"HTTP 200 但形状不同"                | **P1** | `GenerationUI.tsx:284-292,1003`、`App.tsx:117-125`             | 约 20 行（补 fallback 链）          |
 
 > 另有一条同级的"确定性泄漏"：历史画廊 512 MB 视频 blob 缓存在组件卸载时从不 `revokeObjectURL`，而它每次切 tab 都会卸载 → 每切一次永久泄漏一次（`HistoryGallery.tsx:341,367,574`，对照 `useBlobUrlCache.ts:109-116` 已有正确写法）。修法 10 行，建议并入本批。
 
@@ -56,11 +57,11 @@
 
 ### 1.1 基准
 
-| 基准 | 用途 |
-|---|---|
+| 基准                                                                 | 用途                                                                                                                                                                |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `stable-diffusion.cpp` @ `d55cc0f`（浅克隆到 `%TEMP%\lumina-audit`） | CLI 参数（`examples/common/common.cpp` 156 个长选项）、`/sdcpp/v1` 协议（`examples/server/routes_sdcpp.cpp` + `api.md` 46 KB）、家族必需权重（`docs/*.md` 60 余份） |
-| `sdcpp-webui`（上游 2026-04 起内嵌的官方 web UI，Vue 3 / MIT） | 同一协议的**第三个独立实现**，用于三方交叉核对字段，以及"能力驱动表单 vs 手写家族表"的架构对照 |
-| A1111 / ComfyUI / InvokeAI / SwarmUI / sd.cpp-webui | 只作 UX 与产品能力对照，判断"缺的这个功能对 sd.cpp 用户是否真有用" |
+| `sdcpp-webui`（上游 2026-04 起内嵌的官方 web UI，Vue 3 / MIT）       | 同一协议的**第三个独立实现**，用于三方交叉核对字段，以及"能力驱动表单 vs 手写家族表"的架构对照                                                                      |
+| A1111 / ComfyUI / InvokeAI / SwarmUI / sd.cpp-webui                  | 只作 UX 与产品能力对照，判断"缺的这个功能对 sd.cpp 用户是否真有用"                                                                                                  |
 
 **上游漂移量已实测**：Lumina README 声明对齐 `f0aac52`（10-17），上游此后又有 3 个提交（`95b3090` MOSS 拆分 QKV、`ab8d5ea` Diffusers 格式 MiniMax-H3 LoRA、`d55cc0f` 文档）。结论：**这 3 个提交都不需要界面改动**，但正好说明漂移频率——一天 3 个提交。
 
@@ -85,16 +86,16 @@
 
 ### 2.1 成熟度
 
-| 维度 | 实测 | 判断 |
-|---|---|---|
-| 类型 | `tsc --noEmit` 零输出；全库 `any` = 0、`@ts-ignore` = 0 | 优于同类 |
-| 前端测试 | 34 文件 / 363 用例全通过（21.98s），纯逻辑层覆盖厚 | 良好，但接缝与生命周期层空 |
-| Rust 测试 | 89/89 通过（5.7s），集中在 family/cli/server/settings | 良好 |
-| 打包 | 2357 模块 / 1.23s；最大 chunk 145.72 kB；`codeSplitting.groups` 确认生效 | 良好 |
-| 依赖 | 25 个直接依赖全部真被 import，无重复职责；221 包无许可冲突 | 良好 |
-| 代码整洁度 | clippy 默认 lint 零命中，仅 2 条（`unnecessary_unwrap`、`too_many_arguments`） | 良好 |
-| 文档 | README 174 行，10 条可验证论断 9 条一致 | 良好但会腐烂 |
-| 工程护栏 | 无 CI、无格式化、无 lint、当前版本无 tag、lockfile 被手改过 | **明显短板** |
+| 维度       | 实测                                                                           | 判断                       |
+| ---------- | ------------------------------------------------------------------------------ | -------------------------- |
+| 类型       | `tsc --noEmit` 零输出；全库 `any` = 0、`@ts-ignore` = 0                        | 优于同类                   |
+| 前端测试   | 34 文件 / 363 用例全通过（21.98s），纯逻辑层覆盖厚                             | 良好，但接缝与生命周期层空 |
+| Rust 测试  | 89/89 通过（5.7s），集中在 family/cli/server/settings                          | 良好                       |
+| 打包       | 2357 模块 / 1.23s；最大 chunk 145.72 kB；`codeSplitting.groups` 确认生效       | 良好                       |
+| 依赖       | 25 个直接依赖全部真被 import，无重复职责；221 包无许可冲突                     | 良好                       |
+| 代码整洁度 | clippy 默认 lint 零命中，仅 2 条（`unnecessary_unwrap`、`too_many_arguments`） | 良好                       |
+| 文档       | README 174 行，10 条可验证论断 9 条一致                                        | 良好但会腐烂               |
+| 工程护栏   | 无 CI、无格式化、无 lint、当前版本无 tag、lockfile 被手改过                    | **明显短板**               |
 
 ### 2.2 与上游的三层关系
 
@@ -181,13 +182,13 @@ Iris-3B 上限 300 token，超出被**静默截断**（`README.md:122` 自述）
 
 ### 批次 A：稳态化（1–2 天，收益最大）——把人工动作变成机器动作
 
-| 项 | 来源 | 说明 |
-|---|---|---|
-| 加 CI（3 个 job） | `60` §2.4 | `npm ci` + `tsc --noEmit` + `npm test` + `cargo test` + `npm audit --omit=dev`。约 3 分钟 |
-| `cargo fmt` + 修 2 条 clippy | `10` §2.14 | 当前 `-D warnings` 只差 2 处，修完即可开门禁 |
-| 加 `check-version.mjs` + 打 tag | `60` §2.1/2.2 | 5 处版本号已一致，但 `0.8.6` 无 tag；`.npmrc` 建议的 `--git-tag-version` 会打出脱同步 tag（npm 只 `git add` package.json） |
-| 重新生成 lockfile + 验证 `npm ci` | `60` §2.3 | 现在 `npm ls --all` 有 1 个非 optional 的 UNMET + 4 个 extraneous，根因是 `ab2d5ea` 手改过 lockfile |
-| 上游差异检测脚本 | 本报告 §5.2 | 见下节，这是本项目的"降本关键" |
+| 项                                | 来源          | 说明                                                                                                                       |
+| --------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 加 CI（3 个 job）                 | `60` §2.4     | `npm ci` + `tsc --noEmit` + `npm test` + `cargo test` + `npm audit --omit=dev`。约 3 分钟                                  |
+| `cargo fmt` + 修 2 条 clippy      | `10` §2.14    | 当前 `-D warnings` 只差 2 处，修完即可开门禁                                                                               |
+| 加 `check-version.mjs` + 打 tag   | `60` §2.1/2.2 | 5 处版本号已一致，但 `0.8.6` 无 tag；`.npmrc` 建议的 `--git-tag-version` 会打出脱同步 tag（npm 只 `git add` package.json） |
+| 重新生成 lockfile + 验证 `npm ci` | `60` §2.3     | 现在 `npm ls --all` 有 1 个非 optional 的 UNMET + 4 个 extraneous，根因是 `ab2d5ea` 手改过 lockfile                        |
+| 上游差异检测脚本                  | 本报告 §5.2   | 见下节，这是本项目的"降本关键"                                                                                             |
 
 ### 批次 B：安全收口（1 天）
 
@@ -218,20 +219,21 @@ Iris-3B 上限 300 token，超出被**静默截断**（`README.md:122` 自述）
 
 ### 5.1 双源真值矩阵（8 处"同一事实写两遍"）
 
-| 事实 | 副本 A | 副本 B | 现有保护 |
-|---|---|---|---|
-| 家族 id（60 个） | `src-tauri/src/family.rs` 的字符串 | `families.ts` 的 `FAMILY_CONFIG` 键 | **无**（本次实测双向零差集，属运气好） |
-| 组件类别词表（20 类） | `family.rs::classify_file` | `families.ts` 的 `F(..., cat)` | 无 |
-| 设置结构（22 字段） | `types.ts` 的 `Settings` | `settings.rs` 的 `Settings` | 无（`#[serde(default)]` 让漂移静默） |
-| 23 个 Tauri 命令名与参数键 | `src/api.ts` 的 `invoke("...")` | `lib.rs` 的 `generate_handler!` | **无**：7 个测试把整个 `api` mock 掉，改名后 tsc 绿、363 测试全绿 |
-| CLI 参数（156 个） | 上游 `common.cpp` | `server.rs::build_args` + `launchConfig.ts` | 运行时 `--help` 探测（能发现"有没有"，发现不了"语义变没变"） |
-| HTTP 请求体字段 | 上游 `routes_sdcpp.cpp` | `types.ts` + `utils.ts` | capabilities 键存在性判定 |
-| PNG 元数据键 | 上游 `image_metadata.cpp` | `png_info.rs` + `utils.ts::mapSamplingMetadata` | 无 |
-| 采样器/调度器显示名 | 上游 `str_to_sampler` | `families.ts` 的 `SAMPLER_NAMES` / `SCHEDULER_NAMES` | 无（未知值静默显示原名） |
+| 事实                       | 副本 A                             | 副本 B                                               | 现有保护                                                          |
+| -------------------------- | ---------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
+| 家族 id（60 个）           | `src-tauri/src/family.rs` 的字符串 | `families.ts` 的 `FAMILY_CONFIG` 键                  | **无**（本次实测双向零差集，属运气好）                            |
+| 组件类别词表（20 类）      | `family.rs::classify_file`         | `families.ts` 的 `F(..., cat)`                       | 无                                                                |
+| 设置结构（22 字段）        | `types.ts` 的 `Settings`           | `settings.rs` 的 `Settings`                          | 无（`#[serde(default)]` 让漂移静默）                              |
+| 23 个 Tauri 命令名与参数键 | `src/api.ts` 的 `invoke("...")`    | `lib.rs` 的 `generate_handler!`                      | **无**：7 个测试把整个 `api` mock 掉，改名后 tsc 绿、363 测试全绿 |
+| CLI 参数（156 个）         | 上游 `common.cpp`                  | `server.rs::build_args` + `launchConfig.ts`          | 运行时 `--help` 探测（能发现"有没有"，发现不了"语义变没变"）      |
+| HTTP 请求体字段            | 上游 `routes_sdcpp.cpp`            | `types.ts` + `utils.ts`                              | capabilities 键存在性判定                                         |
+| PNG 元数据键               | 上游 `image_metadata.cpp`          | `png_info.rs` + `utils.ts::mapSamplingMetadata`      | 无                                                                |
+| 采样器/调度器显示名        | 上游 `str_to_sampler`              | `families.ts` 的 `SAMPLER_NAMES` / `SCHEDULER_NAMES` | 无（未知值静默显示原名）                                          |
 
 **判断**：这种双写本身在桌面客户端里很难避免（Rust 管进程与文件，TS 管界面），但**必须有一条自动化的"两份必须一致"检查**。唯一有保护的是家族识别（`family.rs` 是唯一实现），而这恰好是历史上最容易漂移的一处——说明作者选择"收敛到一处"是正确的方向，只是没推广到其余 7 处。
 
 **建议的最小护栏**（都不需要重构）：
+
 1. `src/__tests__/contract.test.ts`：正则抽 `api.ts` 的 `invoke("xxx")` 与 `api.ts` 的参数键，对硬编码快照断言；Rust 侧对 `generate_handler![...]` 做同样快照。改名必须显式改快照。
 2. Rust 侧 `#[test]` 把 `detect_family` 的 id 全集导出成一份 JSON，TS 测试读它断言 ⊆ `FAMILY_CONFIG` 键集。
 3. 把上游 `api.md` 的字段表解析进测试：断言 `buildRequestBody` 的键集合 ⊇ 上游表（允许白名单）。
@@ -243,6 +245,7 @@ Iris-3B 上限 300 token，超出被**静默截断**（`README.md:122` 自述）
 上游 README 自述 "API and command-line option may change frequently"；实测一天 3 个提交。本仓库的应对是**每版人工"同步上游"**（`git log` 里 6 次 `feat: 同步上游 xxx 的 GUI 适配`），成本全部压在一个人的记忆上。
 
 **建议：`scripts/upstream-diff.mjs`（约 150 行，收益最大的一处工程投入）**
+
 1. 拉取上游 `examples/common/common.cpp` 与 `examples/server/api.md`（可 `curl` raw，或把上游加为只读 submodule）；
 2. 抽出：全部 `--xxx` 参数名、`api.md` 里的请求体字段名、`docs/*.md` 里出现的家族名；
 3. 与本仓库的映射表（`families.ts` 的 arg 集合 + `launchConfig.ts`/`diagnostics.ts` 的结构化键 + `types.ts` 的字段）求差；
@@ -279,6 +282,7 @@ Iris-3B 上限 300 token，超出被**静默截断**（`README.md:122` 自述）
 **先给一个正面结论，这决定了后续所有协议类问题的性质**：上游 `from_json_str` 接受的 **61 个请求键**逐一比对，Lumina 用它发送的字段**没有一处拼错、没有一处类型错、没有一处单位错**；`sample_params` / `guidance.slg` / `hires` / `vae_tiling_params` / `lora` / `image_preprocess` / `ref_image_args` / `preview` 的嵌套结构全部与上游吻合。所以问题不在"字段没对齐"，而在**响应侧使用**与**降级路径**——这是完全不同量级的结论：协议层已经被认真对过。
 
 **Lumina 比上游官方 webui 更严格的地方**（值得在 CHANGELOG 里写出来，也说明这些代码不是抄的）：
+
 - 错误体的两种形状分开解析（`utils.ts:111-132`）；上游 webui 只取 `.error || .message`，遇到 job 内的对象形状会打出 `[object Object]`。
 - 不发 `scm_policy_dynamic`——上游解析器根本不存在该键（`common.cpp:2144-2147`），`api.md` 把它列为请求字段是**上游文档错**。
 - SLG 用 `{scale: 0}` 显式关闭；因为请求体是合并在服务端默认值之上的，**只有显式发 0 才能关闭**，上游 webui 恒发整套 slg 反而关不掉。
@@ -286,12 +290,12 @@ Iris-3B 上限 300 token，超出被**静默截断**（`README.md:122` 自述）
 - `vae_tiling` 的**键名嗅探**（`utils.ts:431-447`）是全仓最可靠的协议探测——按内核实际声明的键名决定发 `tile_size_w/h` 还是 `tile_size_x/y`，不靠版本号猜。
 
 **仍有缺口的三类**（细节见 `30-api-alignment.md`）：
+
 1. **响应字段未取用**：job 的 `queue_position`（1 起的真实排队位次）、`started` / `completed`（内核时间戳）在 `types.ts:453-472` 连声明都没有 → 队列位置丢失，且 `elapsed` 混入了排队等待与轮询抖动。补三个可选字段 + `JobQueue` 展示即可，纯增量。
 2. **`features.*` 两条路径极性相反**：面板显隐用真值（缺键即隐藏），提交裁剪用 `=== false`（缺键即照发）→ 同一个缺失键得到「看不见但仍生效」。而 `routes_sdcpp.cpp:195-225` 的 `features` 其实是**硬编码常量**，它只能当握手标记用，不能当能力真值。
 3. **缺统一降级链**：`defaults_by_mode` → 兼容镜像 `defaults` → 家族预设。第三档已经在手边（`familyDefaults`），只是没接上。同族问题还有 `output_format` 不按 `output_formats_by_mode` 复核（跨内核切换后 localStorage 旧值让**每次提交都 400**，而下拉里根本没这一项）、陈旧 `sampler`/`scheduler` 被保留并发送（上游对未知枚举静默忽略 → 界面显示 A、实际用默认）。
 
 **另两套 API（`/sdapi/v1`、`/v1`）的评估结论：不接。** 逐项比对后，只有 `upscalers[].scale`（放大倍率）是 sdcpp 面真的缺的，其余全冗余且更弱（sdapi 的 txt2img 是同步阻塞、参数更少）。为一件事接一整层 A1111 命名翻译不划算。
-
 
 ### 6.2 CLI 面（`40-cli-families.md` §2.4）
 
@@ -322,6 +326,7 @@ Iris-3B 上限 300 token，超出被**静默截断**（`README.md:122` 自述）
 `95b3090`（MOSS 拆分 QKV + host 侧批量加载）、`ab8d5ea`（Diffusers 格式 MiniMax-H3 LoRA）、`d55cc0f`（文档）：**都不需要界面改动**。报文面已被逐文件确认——`git diff --stat f0aac52..HEAD` 里 `examples/server/**` 与 `examples/common/**` **一行未改**，改动只落在 `src/model_loader*`、`src/name_conversion.cpp`、`src/model/adapter/lora.hpp`。因此 README 的对齐号可以直接更新为 `d55cc0f`，并可加一句"报文面自 f0aac52 未变"。
 
 两个值得留意的副作用（不是缺陷，但会变成 issue）：
+
 - `ab8d5ea` 让**带 `alpha` 元数据的 LoRA 实际强度发生变化**（`scale_value = alpha/rank`，此前恒 1.0）→ 同一 LoRA 升级内核前后出图不同，属预期行为。
 - 该提交里 `alpha` 解析失败会直接判 LoRA 加载失败，而 Lumina 对"LoRA 没生效"没有任何可见反馈。
 
@@ -350,13 +355,13 @@ P1 十条（S-1 … S-11）+ blob 泄漏 + CI + fmt/clippy + tag + lockfile 重�
 
 ### 7.3 明确不建议做的事
 
-| 不做 | 理由 |
-|---|---|
-| `--mode convert` / imatrix | 离线权重量化工具，与"启动服务跑推理"正交；要做应做成独立小工具 |
-| ADetailer | 上游 `/sdcpp/v1` 没有这个面（README:118 已正确声明）；`server.rs:153` 还把它列进路径校验白名单，属假信号，建议移除 |
-| PuLID / PhotoMaker 的「完整支持」 | 上游没开 HTTP 面；现在的半截支持比不支持更糟（见 S-3） |
-| 工作流 / 节点图 | `/sdcpp/v1` 没有图执行语义，硬做只是负担 |
-| 局域网共享（`--listen-ip 0.0.0.0`） | 可以做，但必须先补鉴权或明确警告；当前硬拒是对的 |
+| 不做                                | 理由                                                                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `--mode convert` / imatrix          | 离线权重量化工具，与"启动服务跑推理"正交；要做应做成独立小工具                                                     |
+| ADetailer                           | 上游 `/sdcpp/v1` 没有这个面（README:118 已正确声明）；`server.rs:153` 还把它列进路径校验白名单，属假信号，建议移除 |
+| PuLID / PhotoMaker 的「完整支持」   | 上游没开 HTTP 面；现在的半截支持比不支持更糟（见 S-3）                                                             |
+| 工作流 / 节点图                     | `/sdcpp/v1` 没有图执行语义，硬做只是负担                                                                           |
+| 局域网共享（`--listen-ip 0.0.0.0`） | 可以做，但必须先补鉴权或明确警告；当前硬拒是对的                                                                   |
 
 ---
 
@@ -364,48 +369,48 @@ P1 十条（S-1 … S-11）+ blob 泄漏 + CI + fmt/clippy + tag + lockfile 重�
 
 ### 8.1 分领域报告索引
 
-| 文件 | 内容 | 条目 |
-|---|---|---|
-| `10-backend-rust.md` | Rust 后端、进程生命周期、Tauri 命令面与安全边界 | 22 条 + 1 条「已核实不成立」 |
-| `20-frontend-arch.md` | 前端架构、状态、渲染性能、内存与生命周期 | 17 条 |
-| `30-api-alignment.md` | `/sdcpp/v1` 协议逐字段三方核对（上游 C++ / 上游 webui / Lumina）、能力探测三组合失效模式、任务模型 | 11 条 + 1 条附带 |
-| `40-cli-families.md` | CLI 参数覆盖矩阵、60 家族数据核对、硬缺口逐项判断 | 10 条 + 3 条更正 |
-| `50-ux-a11y.md` | 交互、无障碍、国际化、错误文案逐条点评、同类 GUI 对照 | 23 条 |
-| `60-build-test.md` | 构建、依赖、测试、发布、文档治理（含实测记录） | 17 条 |
+| 文件                  | 内容                                                                                               | 条目                         |
+| --------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `10-backend-rust.md`  | Rust 后端、进程生命周期、Tauri 命令面与安全边界                                                    | 22 条 + 1 条「已核实不成立」 |
+| `20-frontend-arch.md` | 前端架构、状态、渲染性能、内存与生命周期                                                           | 17 条                        |
+| `30-api-alignment.md` | `/sdcpp/v1` 协议逐字段三方核对（上游 C++ / 上游 webui / Lumina）、能力探测三组合失效模式、任务模型 | 11 条 + 1 条附带             |
+| `40-cli-families.md`  | CLI 参数覆盖矩阵、60 家族数据核对、硬缺口逐项判断                                                  | 10 条 + 3 条更正             |
+| `50-ux-a11y.md`       | 交互、无障碍、国际化、错误文案逐条点评、同类 GUI 对照                                              | 23 条                        |
+| `60-build-test.md`    | 构建、依赖、测试、发布、文档治理（含实测记录）                                                     | 17 条                        |
 
 ### 8.2 Lead 抽检记录（11 处独立复核）
 
 > 各组结论由我重跑一遍关键证据，目的是排除"读代码读出来的幻觉"。全部命中，无一条被推翻。
 
-| # | 待复核结论 | 复核方式 | 结果 |
-|---|---|---|---|
-| 1 | `-l` 绕过监听守卫 | 读上游 `runtime.cpp:193` 与 `server.rs:250-265` | **成立**：上游短别名为 `-l`，本地只判 4 种长名 |
-| 2 | 发布包带 WebView Inspector | 读依赖源码 `tauri-runtime-wry-2.11.2/src/lib.rs:5211` | **成立**：`with_devtools(attrs.devtools.unwrap_or(true))` |
-| 3 | 历史画廊 blob 泄漏 | 读 `HistoryGallery.tsx` 全文 + `GenerationUI.tsx:1109-1164` | **成立**：卸载清理只拆 ResizeObserver/滚轮监听，不 revoke；tab 切换确实卸载 |
-| 4 | Dashboard 订阅 `jobs`/`results` | 读 `Dashboard.tsx:43-50` | **成立**：`jobs`、`results` 各一个 subscription，均只用于计数 |
-| 5 | App 3 s 轮询误报"连接已断开" | 读 `App.tsx:126-131` | **成立**：`caps` 存在且 status 显示不可达时即 toast |
-| 6 | 家族数量 58 vs 实际 | 用 node 脚本按 brace depth 解析 `families.ts` | **成立**：60 个家族 + `custom` = 61 键 |
-| 7 | README 家族清单漏项 | grep README 的 `LLaDA` / `SenseNova` | **成立**：零命中，而 `families.ts:401/1198/1228` 有完整配置 |
-| 8 | `parse_png_metadata` 无调用方 | 全库 grep `parsePngMetadata` | **成立**：仅 `api.ts:98` 定义一处 |
-| 9 | `useKeyboardShortcuts.ts:14-15` 重复赋值 | 直接读文件 | **成立**：两行完全相同 |
-| 10 | `MAX_RESULTS` / `MAX_RESULTS_BYTES` / `MAX_JOBS` | 读 `utils.ts:188`、`useJobPolling.ts:270` | **成立**：60 / 1 GiB / 300 |
-| 11 | 设置结构无未知字段兜底 | 读 `settings.rs:89-157` | **成立**：`#[serde(flatten)]` 只出现在 `SettingsLoadResponse`，`Settings`/`ModelConfigSnapshot` 无 catch-all |
+| #   | 待复核结论                                       | 复核方式                                                    | 结果                                                                                                         |
+| --- | ------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | `-l` 绕过监听守卫                                | 读上游 `runtime.cpp:193` 与 `server.rs:250-265`             | **成立**：上游短别名为 `-l`，本地只判 4 种长名                                                               |
+| 2   | 发布包带 WebView Inspector                       | 读依赖源码 `tauri-runtime-wry-2.11.2/src/lib.rs:5211`       | **成立**：`with_devtools(attrs.devtools.unwrap_or(true))`                                                    |
+| 3   | 历史画廊 blob 泄漏                               | 读 `HistoryGallery.tsx` 全文 + `GenerationUI.tsx:1109-1164` | **成立**：卸载清理只拆 ResizeObserver/滚轮监听，不 revoke；tab 切换确实卸载                                  |
+| 4   | Dashboard 订阅 `jobs`/`results`                  | 读 `Dashboard.tsx:43-50`                                    | **成立**：`jobs`、`results` 各一个 subscription，均只用于计数                                                |
+| 5   | App 3 s 轮询误报"连接已断开"                     | 读 `App.tsx:126-131`                                        | **成立**：`caps` 存在且 status 显示不可达时即 toast                                                          |
+| 6   | 家族数量 58 vs 实际                              | 用 node 脚本按 brace depth 解析 `families.ts`               | **成立**：60 个家族 + `custom` = 61 键                                                                       |
+| 7   | README 家族清单漏项                              | grep README 的 `LLaDA` / `SenseNova`                        | **成立**：零命中，而 `families.ts:401/1198/1228` 有完整配置                                                  |
+| 8   | `parse_png_metadata` 无调用方                    | 全库 grep `parsePngMetadata`                                | **成立**：仅 `api.ts:98` 定义一处                                                                            |
+| 9   | `useKeyboardShortcuts.ts:14-15` 重复赋值         | 直接读文件                                                  | **成立**：两行完全相同                                                                                       |
+| 10  | `MAX_RESULTS` / `MAX_RESULTS_BYTES` / `MAX_JOBS` | 读 `utils.ts:188`、`useJobPolling.ts:270`                   | **成立**：60 / 1 GiB / 300                                                                                   |
+| 11  | 设置结构无未知字段兜底                           | 读 `settings.rs:89-157`                                     | **成立**：`#[serde(flatten)]` 只出现在 `SettingsLoadResponse`，`Settings`/`ModelConfigSnapshot` 无 catch-all |
 
 ### 8.3 实测记录（本次审查真跑过的命令）
 
-| 命令 | 结果 |
-|---|---|
-| `npx tsc --noEmit` | exit 0，零输出 |
-| `npm test` | 34 文件 / 363 用例全通过，21.98 s（`Dashboard.test.tsx` 单文件 17.0 s = 77%） |
-| `npm run build` | 2357 模块 / 1.23 s，最大 chunk 145.72 kB，CSS 97.75 kB |
-| `npm ls --all` | 1 个非 optional UNMET（`@emnapi/runtime`）+ 4 个 extraneous |
-| `npm audit` | 4 个（2 high / 2 moderate），全在 dev 链；`--omit=dev` 为 0 |
-| `npm outdated` | 19 个落后，5 个跨大版本 |
-| `cargo test` | 89 passed / 0 failed，5.7 s |
-| `cargo fmt --check` | **exit 1**（`family.rs` 8 处） |
-| `cargo clippy --all-targets -- -D warnings` | **exit 1**（2 条：`cli.rs:314`、`scanner.rs:300`） |
-| `git tag -l` / `git describe` | 无 `v0.8.6`；`v0.8.5-3-gd442371` |
-| 上游 clone | `d55cc0f`；对比声明对齐的 `f0aac52` 多 3 个提交 |
+| 命令                                        | 结果                                                                          |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| `npx tsc --noEmit`                          | exit 0，零输出                                                                |
+| `npm test`                                  | 34 文件 / 363 用例全通过，21.98 s（`Dashboard.test.tsx` 单文件 17.0 s = 77%） |
+| `npm run build`                             | 2357 模块 / 1.23 s，最大 chunk 145.72 kB，CSS 97.75 kB                        |
+| `npm ls --all`                              | 1 个非 optional UNMET（`@emnapi/runtime`）+ 4 个 extraneous                   |
+| `npm audit`                                 | 4 个（2 high / 2 moderate），全在 dev 链；`--omit=dev` 为 0                   |
+| `npm outdated`                              | 19 个落后，5 个跨大版本                                                       |
+| `cargo test`                                | 89 passed / 0 failed，5.7 s                                                   |
+| `cargo fmt --check`                         | **exit 1**（`family.rs` 8 处）                                                |
+| `cargo clippy --all-targets -- -D warnings` | **exit 1**（2 条：`cli.rs:314`、`scanner.rs:300`）                            |
+| `git tag -l` / `git describe`               | 无 `v0.8.6`；`v0.8.5-3-gd442371`                                              |
+| 上游 clone                                  | `d55cc0f`；对比声明对齐的 `f0aac52` 多 3 个提交                               |
 
 ### 8.4 复现方式
 

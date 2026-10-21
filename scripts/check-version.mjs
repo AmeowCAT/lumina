@@ -74,9 +74,7 @@ let failed = false;
 for (const [file, version] of found) {
   if (version === expected) continue;
   failed = true;
-  console.error(
-    `✗ 版本不一致：package.json=${expected}，${file}=${version ?? "（未找到）"}`
-  );
+  console.error(`✗ 版本不一致：package.json=${expected}，${file}=${version ?? "（未找到）"}`);
 }
 
 // Tauri 的 npm 包与 Rust crate 必须 major.minor 对齐，否则 `tauri build` 直接
@@ -90,9 +88,7 @@ for (const [file, version] of found) {
 const crateVersion = (name) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const block = new RegExp(`^name\\s*=\\s*"${escaped}"\\s*$`, "m").exec(cargoLock);
-  return block
-    ? /^version\s*=\s*"([^"]+)"/m.exec(cargoLock.slice(block.index))?.[1]
-    : undefined;
+  return block ? /^version\s*=\s*"([^"]+)"/m.exec(cargoLock.slice(block.index))?.[1] : undefined;
 };
 /**
  * @param {string | undefined} v
@@ -114,7 +110,7 @@ for (const [npmName, crateName] of tauriPairs) {
   if (minor(npmVersion) === minor(crate)) continue;
   failed = true;
   console.error(
-    `✗ Tauri 版本不匹配：${npmName}=${npmVersion} 与 Rust crate ${crateName}=${crate} 的 major.minor 不一致，tauri build 会直接失败。`
+    `✗ Tauri 版本不匹配：${npmName}=${npmVersion} 与 Rust crate ${crateName}=${crate} 的 major.minor 不一致，tauri build 会直接失败。`,
   );
 }
 
@@ -122,7 +118,7 @@ if (!failed) {
   // 处数由实际检查清单推导，避免"写死 5 处、只列 4 个文件"这类文案漂移。
   const checked = ["package.json", ...found.map(([file]) => file)];
   console.log(
-    `✓ 版本号一致：${expected}（${checked.length} 处：${checked.join(" / ")}）；Tauri npm/crate 主次版本匹配`
+    `✓ 版本号一致：${expected}（${checked.length} 处：${checked.join(" / ")}）；Tauri npm/crate 主次版本匹配`,
   );
 }
 
@@ -141,7 +137,7 @@ if (process.argv.includes("--release") && !failed) {
   if (!hasTag) {
     failed = true;
     console.error(
-      `✗ 发布前缺少 git tag：${tag}（发布物无法溯源到提交，请先 git tag -a ${tag} -m "Lumina ${expected}"）`
+      `✗ 发布前缺少 git tag：${tag}（发布物无法溯源到提交，请先 git tag -a ${tag} -m "Lumina ${expected}"）`,
     );
   }
 }

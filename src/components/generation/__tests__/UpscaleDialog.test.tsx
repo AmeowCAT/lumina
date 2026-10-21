@@ -5,9 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { UpscalerInfo } from "../../../types";
 import { UpscaleDialog } from "../UpscaleDialog";
 
-const UPSCALERS: UpscalerInfo[] = [
-  { name: "RealESRGAN_x4plus", model: true, image_upscale: true },
-];
+const UPSCALERS: UpscalerInfo[] = [{ name: "RealESRGAN_x4plus", model: true, image_upscale: true }];
 
 function renderDialog(overrides: Partial<Parameters<typeof UpscaleDialog>[0]> = {}) {
   return render(
@@ -20,7 +18,7 @@ function renderDialog(overrides: Partial<Parameters<typeof UpscaleDialog>[0]> = 
       busy={false}
       onSubmit={vi.fn()}
       {...overrides}
-    />
+    />,
   );
 }
 

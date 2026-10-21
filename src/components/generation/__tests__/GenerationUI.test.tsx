@@ -127,25 +127,39 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     ["missing capability", undefined, undefined],
     ["disabled mode", ["none", "vae"], false],
     ["unsupported saved value", ["none", "proj"], true],
-  ] as const)("does not submit an old preview setting with %s", async (_, preview_modes, preview) => {
-    localStorage.setItem("sdcpp:params:img_gen", JSON.stringify({ preview: "vae", preview_interval: 2 }));
-    useStore.setState({ caps: { ...CAPS, preview_modes, features_by_mode: { img_gen: { preview } } } as never });
-    render(<GenerationUI />);
-    fireEvent.click(await screen.findByRole("button", { name: "生成" }));
-    await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
-    const body = apiMocks.sdcppSubmit.mock.calls[0][1];
-    expect(body.preview).toBe("none");
-    expect(body).not.toHaveProperty("preview_interval");
-    expect(useStore.getState().jobs[0].config?.params.preview).toBe("none");
-  });
+  ] as const)(
+    "does not submit an old preview setting with %s",
+    async (_, preview_modes, preview) => {
+      localStorage.setItem(
+        "sdcpp:params:img_gen",
+        JSON.stringify({ preview: "vae", preview_interval: 2 }),
+      );
+      useStore.setState({
+        caps: { ...CAPS, preview_modes, features_by_mode: { img_gen: { preview } } } as never,
+      });
+      render(<GenerationUI />);
+      fireEvent.click(await screen.findByRole("button", { name: "生成" }));
+      await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
+      const body = apiMocks.sdcppSubmit.mock.calls[0][1];
+      expect(body.preview).toBe("none");
+      expect(body).not.toHaveProperty("preview_interval");
+      expect(useStore.getState().jobs[0].config?.params.preview).toBe("none");
+    },
+  );
 
   it("blocks MiniMax references with keyframes and allows resubmission after fixing them", async () => {
-    const model = { name: "minimax_h3_ref2va.safetensors", path: "D:/models/minimax_h3_ref2va.safetensors" };
+    const model = {
+      name: "minimax_h3_ref2va.safetensors",
+      path: "D:/models/minimax_h3_ref2va.safetensors",
+    };
     useStore.setState({
       caps: { ...VIDEO_CAPS, model } as never,
-      mode: "vid_gen", mainModel: model.path, familyOverride: "minimax-h3-ref2va",
+      mode: "vid_gen",
+      mainModel: model.path,
+      familyOverride: "minimax-h3-ref2va",
       refImages: ["data:image/png;base64,cmVm"],
-      initImage: "data:image/png;base64,aW5pdA==", endImage: "data:image/png;base64,ZW5k",
+      initImage: "data:image/png;base64,aW5pdA==",
+      endImage: "data:image/png;base64,ZW5k",
     });
     render(<GenerationUI />);
     const generate = await screen.findByRole("button", { name: "生成" });
@@ -156,23 +170,59 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     act(() => useStore.setState({ initImage: null, endImage: null }));
     fireEvent.click(generate);
     await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
-    expect(apiMocks.sdcppSubmit.mock.calls[0][1].ref_images).toEqual(["data:image/png;base64,cmVm"]);
+    expect(apiMocks.sdcppSubmit.mock.calls[0][1].ref_images).toEqual([
+      "data:image/png;base64,cmVm",
+    ]);
   });
 
   it("uses PNG preview frames, restarts step labels per pass, and never carries a frame to another job", async () => {
-    const job = { id: "a", kind: "img_gen" as const, status: "generating" as const,
-      config: { mode: "img_gen" as const, params: { ...CAPS.defaults_by_mode.img_gen, output_format: "jpeg" } },
+    const job = {
+      id: "a",
+      kind: "img_gen" as const,
+      status: "generating" as const,
+      config: {
+        mode: "img_gen" as const,
+        params: { ...CAPS.defaults_by_mode.img_gen, output_format: "jpeg" },
+      },
       preview: { pass: 1, step: 5, total_steps: 20, b64_json: "first" },
     };
     useStore.setState({ jobs: [job] });
     render(<GenerationUI />);
-    expect(await screen.findByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,first");
-    act(() => useStore.setState({ jobs: [{ ...job, preview: { pass: 2, step: 1, total_steps: 10, b64_json: "second" } }] }));
+    expect(await screen.findByAltText("生成预览")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,first",
+    );
+    act(() =>
+      useStore.setState({
+        jobs: [{ ...job, preview: { pass: 2, step: 1, total_steps: 10, b64_json: "second" } }],
+      }),
+    );
     expect(screen.getByText("生成预览 · 第 2 段 · 1/10 步")).toBeTruthy();
-    act(() => useStore.setState({ jobs: [{ ...job, status: "completed" }, { id: "b", kind: "vid_gen", status: "queued" }] }));
+    act(() =>
+      useStore.setState({
+        jobs: [
+          { ...job, status: "completed" },
+          { id: "b", kind: "vid_gen", status: "queued" },
+        ],
+      }),
+    );
     expect(screen.queryByAltText("生成预览")).toBeNull();
-    act(() => useStore.setState({ jobs: [{ id: "b", kind: "vid_gen", status: "generating", preview: { pass: 1, step: 1, total_steps: 5, b64_json: "video-preview" } }] }));
-    expect(screen.getByAltText("生成预览")).toHaveAttribute("src", "data:image/png;base64,video-preview");
+    act(() =>
+      useStore.setState({
+        jobs: [
+          {
+            id: "b",
+            kind: "vid_gen",
+            status: "generating",
+            preview: { pass: 1, step: 1, total_steps: 5, b64_json: "video-preview" },
+          },
+        ],
+      }),
+    );
+    expect(screen.getByAltText("生成预览")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,video-preview",
+    );
   });
 
   it("keeps the L2P hint free of development metadata", async () => {
@@ -196,9 +246,7 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     expect(screen.getByRole("tab", { name: "历史画廊" })).toBeTruthy();
     // 参数面板移入召唤式 Sheet（懒加载后按需就绪,关闭时保持挂载）,
     // 首个面板带仪表编号样式
-    await waitFor(() =>
-      expect(document.querySelector(".params-sheet .panel")).toBeTruthy()
-    );
+    await waitFor(() => expect(document.querySelector(".params-sheet .panel")).toBeTruthy());
     expect(screen.getByText("准备就绪")).toBeTruthy();
   });
 
@@ -247,8 +295,8 @@ describe("GenerationUI 结构（暗房重构版）", () => {
 
     await waitFor(() =>
       expect(useStore.getState().toasts[useStore.getState().toasts.length - 1]?.msg).toContain(
-        "参考图片"
-      )
+        "参考图片",
+      ),
     );
   });
 
@@ -276,27 +324,50 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     fireEvent.click(generate);
 
     await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
-    const requestBody = apiMocks.sdcppSubmit.mock.calls[0][1] as Record<
-      string,
-      unknown
-    >;
+    const requestBody = apiMocks.sdcppSubmit.mock.calls[0][1] as Record<string, unknown>;
     expect(requestBody.control_frames).toBeUndefined();
-    expect(
-      useStore.getState().jobs[0]?.config?.images?.controlFrames
-    ).toEqual([]);
+    expect(useStore.getState().jobs[0]?.config?.images?.controlFrames).toEqual([]);
   });
 
   it("restricts SenseNova to text-to-image and filters stale editing inputs", async () => {
     const caps = {
       ...CAPS,
-      model: { name: "SenseNova-U1.5", path: "D:/models/SenseNova-U1.5/model.safetensors.index.json" },
-      features_by_mode: { img_gen: { init_image: true, mask_image: true, control_image: true, ip_adapter_image: true, ref_images: true, vae_tiling: true, hires: true } },
-      defaults_by_mode: { img_gen: { ...CAPS.defaults_by_mode.img_gen, width: 2049, height: 2048, hires: { enabled: true }, vae_tiling_params: { enabled: true } } },
+      model: {
+        name: "SenseNova-U1.5",
+        path: "D:/models/SenseNova-U1.5/model.safetensors.index.json",
+      },
+      features_by_mode: {
+        img_gen: {
+          init_image: true,
+          mask_image: true,
+          control_image: true,
+          ip_adapter_image: true,
+          ref_images: true,
+          vae_tiling: true,
+          hires: true,
+        },
+      },
+      defaults_by_mode: {
+        img_gen: {
+          ...CAPS.defaults_by_mode.img_gen,
+          width: 2049,
+          height: 2048,
+          hires: { enabled: true },
+          vae_tiling_params: { enabled: true },
+        },
+      },
     };
     useStore.setState({
-      caps: caps as never, params: null, mainModel: caps.model.path, familyOverride: "sensenova-u1",
-      initImage: "stale-init", maskImage: "stale-mask", controlImage: "stale-control", ipAdapterImage: "stale-adapter",
-      refImages: ["stale-reference"], seedRandom: false,
+      caps: caps as never,
+      params: null,
+      mainModel: caps.model.path,
+      familyOverride: "sensenova-u1",
+      initImage: "stale-init",
+      maskImage: "stale-mask",
+      controlImage: "stale-control",
+      ipAdapterImage: "stale-adapter",
+      refImages: ["stale-reference"],
+      seedRandom: false,
     });
     render(<GenerationUI />);
     await screen.findByRole("button", { name: "生成" });
@@ -307,8 +378,20 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     fireEvent.click(await screen.findByRole("button", { name: "生成" }));
     await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
     const body = apiMocks.sdcppSubmit.mock.calls[0][1];
-    for (const key of ["init_image", "mask_image", "control_image", "ip_adapter_image", "ref_images"]) expect(body).not.toHaveProperty(key);
-    expect(body).toMatchObject({ width: 2080, height: 2048, hires: { enabled: false }, vae_tiling_params: { enabled: false } });
+    for (const key of [
+      "init_image",
+      "mask_image",
+      "control_image",
+      "ip_adapter_image",
+      "ref_images",
+    ])
+      expect(body).not.toHaveProperty(key);
+    expect(body).toMatchObject({
+      width: 2080,
+      height: 2048,
+      hires: { enabled: false },
+      vae_tiling_params: { enabled: false },
+    });
     expect(useStore.getState().jobs[0]?.config?.images?.initImage).toBeNull();
   });
 
@@ -330,9 +413,7 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     render(<GenerationUI />);
 
     screen.getByLabelText("打开参数面板").click();
-    expect(
-      await screen.findByRole("button", { name: "添加条件帧" })
-    ).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "添加条件帧" })).toBeTruthy();
   });
 
   it("hides control frames for a non-Wan file that merely contains 'vace'", async () => {

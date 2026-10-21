@@ -23,11 +23,7 @@ export function Slider({
   const hintId = useId();
   const isSet = typeof value === "number" && !Number.isNaN(value);
   const numVal = isSet ? value : min;
-  const d = isSet
-    ? Number.isInteger(step || 1)
-      ? numVal
-      : numVal.toFixed(2)
-    : "—";
+  const d = isSet ? (Number.isInteger(step || 1) ? numVal : numVal.toFixed(2)) : "—";
   return (
     <div className="form-row">
       {label ? (

@@ -29,9 +29,15 @@ export function TitleBar() {
 
   useEffect(() => {
     if (!win) return;
-    win.isMaximized().then(setMaximized).catch(() => {});
+    win
+      .isMaximized()
+      .then(setMaximized)
+      .catch(() => {});
     const unlisten = win.onResized(() => {
-      win.isMaximized().then(setMaximized).catch(() => {});
+      win
+        .isMaximized()
+        .then(setMaximized)
+        .catch(() => {});
     });
     return () => {
       unlisten.then((f) => f()).catch(() => {});
@@ -39,10 +45,9 @@ export function TitleBar() {
   }, [win]);
 
   // win 为空(非 Tauri 环境)时点击降级为空操作
-  const run =
-    (fn: (w: NonNullable<typeof win>) => Promise<void>) => () => {
-      if (win) fn(win).catch(() => {});
-    };
+  const run = (fn: (w: NonNullable<typeof win>) => Promise<void>) => () => {
+    if (win) fn(win).catch(() => {});
+  };
 
   return (
     <div className="titlebar">

@@ -29,7 +29,7 @@ function handlerNames(source: string): string[] {
 const declCommands = (source: string): string[] => {
   // 命令函数可能是 `async fn` 也可能不是（例如 `detect_family`）。
   const names = [...source.matchAll(/#\[tauri::command\][\s\S]{0,80}?\bfn ([a-z0-9_]+)/g)].map(
-    (m) => m[1]
+    (m) => m[1],
   );
   return [...new Set(names)].sort();
 };

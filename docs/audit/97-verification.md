@@ -5,22 +5,22 @@
 
 ## 1. 门禁矩阵
 
-| # | 命令 | 结果 |
-|---|---|---|
-| 1 | `npm run check:types` | exit 0（`src` + `vite/vitest/scripts` 两套 project） |
-| 2 | `npm run lint` | exit 0 —— 0 error / 52 warning（React 19 建议类与 `exhaustive-deps`，见第九轮说明） |
-| 3 | `npm test` | 42 files / **489 passed** |
-| 4 | `npm run test:coverage` | 语句 71.92% / 分支 67.26% / 函数 65.41% / 行 73.77%，**全部通过阈值**（60/55/55/62） |
-| 5 | `npm run build` | 通过；入口 `index.js` 112.58 kB（gzip 36.56）、`families-data` 独立 chunk 40.66 kB |
-| 6 | `npm audit` | 0 vulnerabilities |
-| 7 | `npm ls --depth=0` | 无 extraneous / UNMET / invalid |
-| 8 | `npm run check:version` | 5 处版本号一致（含 `package-lock.json`），Tauri npm↔crate 主次版本匹配 |
-| 9 | `cd src-tauri && cargo fmt --check` | exit 0 |
-| 10 | `cargo clippy --all-targets -- -D warnings` | exit 0 |
-| 11 | `cargo test` | **108 passed** |
-| 12 | `npx tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json` | 产出 `src-tauri/target/debug/lumina.exe` |
-| 13 | `node scripts/upstream-diff.mjs` | 与上游 `d55cc0f…master` 相比无参数/字段增删 |
-| 14 | `npm run format:check` | 全库已格式化（Prettier 独立 commit 之后） |
+| #   | 命令                                                                         | 结果                                                                                 |
+| --- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1   | `npm run check:types`                                                        | exit 0（`src` + `vite/vitest/scripts` 两套 project）                                 |
+| 2   | `npm run lint`                                                               | exit 0 —— 0 error / 52 warning（React 19 建议类与 `exhaustive-deps`，见第九轮说明）  |
+| 3   | `npm test`                                                                   | 42 files / **489 passed**                                                            |
+| 4   | `npm run test:coverage`                                                      | 语句 71.92% / 分支 67.26% / 函数 65.41% / 行 73.77%，**全部通过阈值**（60/55/55/62） |
+| 5   | `npm run build`                                                              | 通过；入口 `index.js` 112.58 kB（gzip 36.56）、`families-data` 独立 chunk 40.66 kB   |
+| 6   | `npm audit`                                                                  | 0 vulnerabilities                                                                    |
+| 7   | `npm ls --depth=0`                                                           | 无 extraneous / UNMET / invalid                                                      |
+| 8   | `npm run check:version`                                                      | 5 处版本号一致（含 `package-lock.json`），Tauri npm↔crate 主次版本匹配               |
+| 9   | `cd src-tauri && cargo fmt --check`                                          | exit 0                                                                               |
+| 10  | `cargo clippy --all-targets -- -D warnings`                                  | exit 0                                                                               |
+| 11  | `cargo test`                                                                 | **108 passed**                                                                       |
+| 12  | `npx tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json` | 产出 `src-tauri/target/debug/lumina.exe`                                             |
+| 13  | `node scripts/upstream-diff.mjs`                                             | 与上游 `d55cc0f…master` 相比无参数/字段增删                                          |
+| 14  | `npm run format:check`                                                       | 全库已格式化（Prettier 独立 commit 之后）                                            |
 
 ## 2. P1 逐条核对（S-1 … S-11）
 
@@ -32,17 +32,17 @@ caps 缺键白屏。
 
 ## 3. 本轮新增的护栏（防止"修好了又退回去"）
 
-| 护栏 | 位置 | 作用 |
-|---|---|---|
-| TS↔Rust 命令面契约 | `src/__tests__/contract.test.ts` | 23 条命令双向断言，改名/漏注册立刻失败 |
-| 版本号一致性 | `scripts/check-version.mjs` | 5 处版本（含 lockfile）+ Tauri npm↔crate 主次版本 |
-| 上游漂移 | `scripts/upstream-diff.mjs` | 参数/字段增删对比，`--coverage` 查字段覆盖 |
-| 脚本类型门禁 | `tsconfig.node.json` | `allowJs` + `checkJs` 覆盖 `scripts/*.mjs`，随 `check:types` 一起跑 |
-| CI | `.github/workflows/ci.yml` | 类型 / lint / 测试 / 覆盖率门禁 / 构建 / 依赖审计 / Rust 三件套 / 上游漂移 |
-| 日志落盘 | `src-tauri/src/logging.rs` | release 无控制台，`lumina.log` 8 MB 滚动保留 3 份 |
-| 覆盖率阈值 | `vitest.config.ts` | 语句 60 / 分支 55 / 函数 55 / 行 62 |
-| 格式一致性 | `.prettierrc` + `npm run format:check` | 唯一格式来源；ESLint 不启用格式规则，避免两套规则打架 |
-| 行尾一致性 | `.gitattributes` | 逐条列出扩展名（花括号模式在 gitattributes 里不生效），源码 LF 入库 |
+| 护栏               | 位置                                   | 作用                                                                       |
+| ------------------ | -------------------------------------- | -------------------------------------------------------------------------- |
+| TS↔Rust 命令面契约 | `src/__tests__/contract.test.ts`       | 23 条命令双向断言，改名/漏注册立刻失败                                     |
+| 版本号一致性       | `scripts/check-version.mjs`            | 5 处版本（含 lockfile）+ Tauri npm↔crate 主次版本                          |
+| 上游漂移           | `scripts/upstream-diff.mjs`            | 参数/字段增删对比，`--coverage` 查字段覆盖                                 |
+| 脚本类型门禁       | `tsconfig.node.json`                   | `allowJs` + `checkJs` 覆盖 `scripts/*.mjs`，随 `check:types` 一起跑        |
+| CI                 | `.github/workflows/ci.yml`             | 类型 / lint / 测试 / 覆盖率门禁 / 构建 / 依赖审计 / Rust 三件套 / 上游漂移 |
+| 日志落盘           | `src-tauri/src/logging.rs`             | release 无控制台，`lumina.log` 8 MB 滚动保留 3 份                          |
+| 覆盖率阈值         | `vitest.config.ts`                     | 语句 60 / 分支 55 / 函数 55 / 行 62                                        |
+| 格式一致性         | `.prettierrc` + `npm run format:check` | 唯一格式来源；ESLint 不启用格式规则，避免两套规则打架                      |
+| 行尾一致性         | `.gitattributes`                       | 逐条列出扩展名（花括号模式在 gitattributes 里不生效），源码 LF 入库        |
 
 ## 4. 遗留项（2 项，均为产品决策，本轮明确不做）
 

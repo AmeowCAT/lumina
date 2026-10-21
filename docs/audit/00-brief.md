@@ -82,16 +82,17 @@
 
 ## 6. 并行分工与写入边界
 
-| 组 | 负责范围 | 只写这个文件 |
-|---|---|---|
-| backend-rust | `src-tauri/src/**`、`Cargo.toml`、`capabilities/`、`tauri.conf.json` 安全项 | `docs/audit/10-backend-rust.md` |
+| 组            | 负责范围                                                                          | 只写这个文件                     |
+| ------------- | --------------------------------------------------------------------------------- | -------------------------------- |
+| backend-rust  | `src-tauri/src/**`、`Cargo.toml`、`capabilities/`、`tauri.conf.json` 安全项       | `docs/audit/10-backend-rust.md`  |
 | frontend-arch | `src/**`（除 `config/families.ts` 的家族数据本身）、`store.ts`、hooks、性能与内存 | `docs/audit/20-frontend-arch.md` |
-| api-alignment | `/sdcpp/v1` HTTP 面：`types.ts`、`lib/requests*`、`api.ts`、能力探测与版本门控 | `docs/audit/30-api-alignment.md` |
-| cli-families | CLI 参数覆盖、`launchConfig.ts`、`config/families.ts`、`family.rs` 与上游家族文档 | `docs/audit/40-cli-families.md` |
-| ux-a11y | 交互流、无障碍、国际化、主题、与同类 GUI 的对照 | `docs/audit/50-ux-a11y.md` |
-| build-test | 构建、依赖、测试、CI、发布、文档、许可 | `docs/audit/60-build-test.md` |
+| api-alignment | `/sdcpp/v1` HTTP 面：`types.ts`、`lib/requests*`、`api.ts`、能力探测与版本门控    | `docs/audit/30-api-alignment.md` |
+| cli-families  | CLI 参数覆盖、`launchConfig.ts`、`config/families.ts`、`family.rs` 与上游家族文档 | `docs/audit/40-cli-families.md`  |
+| ux-a11y       | 交互流、无障碍、国际化、主题、与同类 GUI 的对照                                   | `docs/audit/50-ux-a11y.md`       |
+| build-test    | 构建、依赖、测试、CI、发布、文档、许可                                            | `docs/audit/60-build-test.md`    |
 
 构建类命令的分工（避免互相抢锁）：
+
 - 只有 **backend-rust** 可以跑 `cargo` 相关命令（`cargo fmt --check`、`cargo clippy`、`cargo test`）。
 - 只有 **build-test** 可以跑 `npm`/`npx`/`vitest` 相关命令（`npx tsc --noEmit`、`npm test`、`npm ls`）。
 - 其余组只做静态阅读，不跑构建。

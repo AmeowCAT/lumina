@@ -59,6 +59,7 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
 34 个测试文件 / 5649 行。
 
 **微基准**（`%TEMP%\lumina-audit\bench-*.mjs`，node v24，仅用于标注数量级）：
+
 - `b64ToBlobUrl` 的 base64→字节转换：1.5MB 约 3.5ms、8MB 约 10ms；
   120 张 1024²PNG 首次批量转换 ≈ **203ms 主线程**。
 - `getImageUrl` 的 cache-hit 路径（含 `b64.includes(",")` 全串扫描）：
@@ -76,7 +77,7 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
 - **现状**：
   ```ts
   const videoSrcsRef = useRef(new ByteBudgedCache<string>(VIDEO_CACHE_BYTES)); // 341
-  for (const [, oldUrl] of evicted) URL.revokeObjectURL(oldUrl);               // 367
+  for (const [, oldUrl] of evicted) URL.revokeObjectURL(oldUrl); // 367
   ```
   全文件没有任何 `useEffect(() => () => {...revoke...}, [])`。
 - **问题**：`ByteBudgedCache` 只负责把超预算的 key 挤出来交给调用方 revoke；组件卸载时
@@ -92,14 +93,17 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   仓库自身的 `useBlobUrlCache` 与本文件 `deleteFile` 都已按此语义写，属同一约定的漏网处。
 - **建议**：在 HistoryGallery 里补一个卸载清理，与 `useBlobUrlCache.ts:109-116` 对齐：
   ```ts
-  useEffect(() => () => {
-    const c = videoSrcsRef.current;
-    for (const k of [...c.keys()]) {
-      const u = c.get(k);
-      if (u) URL.revokeObjectURL(u);
-    }
-    c.clear();
-  }, []);
+  useEffect(
+    () => () => {
+      const c = videoSrcsRef.current;
+      for (const k of [...c.keys()]) {
+        const u = c.get(k);
+        if (u) URL.revokeObjectURL(u);
+      }
+      c.clear();
+    },
+    [],
+  );
   ```
   更彻底的做法是把「字节预算 + 卸载 revoke」抽成 `useByteBlobCache(capacity)` 一个 hook，
   让 `useBlobUrlCache` 与 HistoryGallery 共用（当前两份实现语义已经漂移）。
@@ -111,7 +115,7 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   `src/hooks/useBlobUrlCache.ts:30-41`、`src/components/generation/HistoryGallery.tsx:218,285,339`
 - **现状**：
   ```ts
-  export const MAX_RESULTS_BYTES = 1024 * 1024 * 1024;   // 1 GiB，按 base64 长度估算
+  export const MAX_RESULTS_BYTES = 1024 * 1024 * 1024; // 1 GiB，按 base64 长度估算
   return trimResultsToBudget([entry, ...r], MAX_RESULTS, MAX_RESULTS_BYTES);
   ```
   注释（`:266-270`）写明"blob URL 与 base64 双份常驻，再乘 2 也远低于失控叠加"，但：
@@ -130,11 +134,11 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   全套后端能力，具备改成"结果落盘 + 引用路径"的条件。
 - **建议**：最小改动按顺序做三件：
   (a) `resultEntryBytes` 里对每条结果额外加 `images.length * 估算位图字节(width*height*4)`——
-      但 store 里没有尺寸信息，更简单的是 (b)；
+  但 store 里没有尺寸信息，更简单的是 (b)；
   (b) 把 `MAX_RESULTS_BYTES` 降到 256MB，并把 `HistoryGallery` 的三份预算改成全局共享一个
-      `ByteBudgedCache` 总账（把 total bytes 暴露到 store，结果区录入时读它）；
+  `ByteBudgedCache` 总账（把 total bytes 暴露到 store，结果区录入时读它）；
   (c) 中期：结果区收到已完成任务后**自动**调 `api.saveOutput`（作者已删掉自动保存，
-      可改为"仅当内存紧张时保存到临时目录并降级为路径引用"）。
+  可改为"仅当内存紧张时保存到临时目录并降级为路径引用"）。
 
 ### 2.3 任务队列的 `config.images` 没有字节预算
 
@@ -172,7 +176,9 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   bodyRef.current.scrollTop = bodyRef.current.scrollHeight;  // :34（每次 flush 强制 reflow）
   ```
   ```ts
-  function capLogs(logs: string[]) { return logs.length >= 2000 ? logs.slice(-1500) : logs; } // store.ts:178
+  function capLogs(logs: string[]) {
+    return logs.length >= 2000 ? logs.slice(-1500) : logs;
+  } // store.ts:178
   ```
 - **问题**：三条独立后果，都被同一次 flush 触发：
   1. `flushLogs` 无论如何都返回新数组（`store.ts:348` `let logs = s.logs.slice()`），
@@ -182,8 +188,8 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
      `key={i}` 于是把"所有 key 都还在、但内容全变了"送给 React → 1500 行必须逐个重写
      text，等于一次全量重排；`role="log" aria-live="polite"`（`:117-119`）还会让每次
      重写都进无障碍播报队列。
-  另外 `scrollTop = scrollHeight` 在**刚改完 2000 行 DOM 之后**读 `scrollHeight`，
-  是典型的强制同步布局，把 flush 的开销再放大一次。
+     另外 `scrollTop = scrollHeight` 在**刚改完 2000 行 DOM 之后**读 `scrollHeight`，
+     是典型的强制同步布局，把 flush 的开销再放大一次。
 - **上游/对照依据**：React 对列表 key 的要求（索引 key 在列表头部变动时退化为"全部替换"）：
   https://react.dev/learn/rendering-lists#why-does-react-need-keys 。
   同类做法：日志视图按"增量 id"渲染，或超过 N 行后改用虚拟列表（仓库已有
@@ -228,7 +234,7 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
 - **位置**：`src/components/dashboard/Dashboard.tsx:47-48,212-217,249-258,458-476`
 - **现状**：
   ```tsx
-  const jobs = useStore((s) => s.jobs);       // :47   ← 只用于 :458 统计 activeJobs
+  const jobs = useStore((s) => s.jobs); // :47   ← 只用于 :458 统计 activeJobs
   const results = useStore((s) => s.results); // :48   ← 只用于 :465 统计 unsavedResults
   ```
 - **问题**：`useJobPolling` 每个周期都对 jobs 做 `store.setJobs(j => j.map(...))`
@@ -241,8 +247,8 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   - 大量内联 `options={[...]}`（如 `:1154-1173`、`:1368-1403` 的 30 项量化列表）每次重建；
   - `settings` 的防抖保存 effect（`:114-145`）也会因为 `settings` 对象被
     `modelSnapshots` 快照 effect（`:372-388`）替换而反复武装定时器。
-  这两个订阅**完全可以不订阅整个数组**：activeJobs/unsavedResults 只用于点击"切换模型"
-  时的确认文案（`:458-476`），在 `startServer` 里用 `useStore.getState().jobs` 现取即可。
+    这两个订阅**完全可以不订阅整个数组**：activeJobs/unsavedResults 只用于点击"切换模型"
+    时的确认文案（`:458-476`），在 `startServer` 里用 `useStore.getState().jobs` 现取即可。
 - **上游/对照依据**：`App.tsx:50-68` 已经为完全同类的问题写过"de-dupe：只有字段真的变了
   才 setState"的补丁（注释里写明是为了避免下拉框闪关）——同样的判据没有用到 `jobs`/`results`。
 - **建议**：删掉 `:47-48` 两个订阅，改写 `startServer`：
@@ -292,8 +298,11 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
 - **位置**：`src/hooks/useKeyboardShortcuts.ts:17-31`、`src/components/generation/GenerationUI.tsx:996-1001,352-356`
 - **现状**：
   ```ts
-  if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); genRef.current(); }   // 无任何浮层判断
-  if (e.key === "Escape" && handlers.escapeActive) escRef.current();              // 只有 Esc 有门禁
+  if (e.ctrlKey && e.key === "Enter") {
+    e.preventDefault();
+    genRef.current();
+  } // 无任何浮层判断
+  if (e.key === "Escape" && handlers.escapeActive) escRef.current(); // 只有 Esc 有门禁
   ```
   ```ts
   useKeyboardShortcuts({ ..., escapeActive: !!(lightbox || sheetOpen || queueOpen || upscaleTarget !== null) });
@@ -303,7 +312,7 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   把提示词发到服务器；`Ctrl+R` 会静默翻转 `seedRandom`。作者显然意识到这个问题——但只在
   `handleGenerate` 里加了放大对话框的专用锁：
   ```ts
-  if (upscaleOpenRef.current) return;   // GenerationUI.tsx:356
+  if (upscaleOpenRef.current) return; // GenerationUI.tsx:356
   ```
   同一个 `upscaleOpenRef` 也被 `randomSeed`（`:571`）使用，说明"模态内不允许改后台状态"
   是既定原则，只是锁的范围漏了另外三个浮层。
@@ -327,8 +336,10 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   ```ts
   useEffect(() => {
     if (!params) return;
-    const t = setTimeout(() => { localStorage.setItem("sdcpp:params:" + mode, JSON.stringify(params)); }, 300);
-    return () => clearTimeout(t);        // ← mode 变更时把未触发的写取消掉
+    const t = setTimeout(() => {
+      localStorage.setItem("sdcpp:params:" + mode, JSON.stringify(params));
+    }, 300);
+    return () => clearTimeout(t); // ← mode 变更时把未触发的写取消掉
   }, [params, mode]);
   ```
 - **问题**：`sdcpp:params:<mode>` 有**三个互不知情的写入者**：本 effect（防抖，真源是 store）、
@@ -356,11 +367,11 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   `src/hooks/useBlobUrlCache.ts:31-41`、`src/lib/utils.ts:163-168`
 - **现状**：
   ```tsx
-  const { items, indexOf } = buildLightboxItems(results, getImageUrl, getVideoUrl);  // :502，非 memo
+  const { items, indexOf } = buildLightboxItems(results, getImageUrl, getVideoUrl); // :502，非 memo
   ```
   ```ts
-  getImageUrl: const raw = b64.includes(",") ? b64.split(",")[1] : b64;  // 命中缓存前先扫全串
-                url = b64ToBlobUrl(raw, `image/${fmt}`);                  // 未命中：atob + 逐字符循环
+  getImageUrl: const raw = b64.includes(",") ? b64.split(",")[1] : b64; // 命中缓存前先扫全串
+  url = b64ToBlobUrl(raw, `image/${fmt}`); // 未命中：atob + 逐字符循环
   ```
 - **问题**：
   1. `buildLightboxItems` 对**所有**结果的**所有**图片调用 `getImageUrl`（包括屏幕外的），
@@ -438,7 +449,7 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
   CSS 依据 `src/styles.css:634`（`.output-main { padding: 48px 26px 190px; overflow-y: auto }`）
 - **现状**：
   ```ts
-  const range = computeVisibleRange(layout, scroll.top, scroll.height);   // scroll.top = scroller.scrollTop
+  const range = computeVisibleRange(layout, scroll.top, scroll.height); // scroll.top = scroller.scrollTop
   const firstRow = Math.max(0, Math.floor(scrollTop / layout.rowH) - overscanRows);
   ```
 - **问题**：`scroll.top` 取自最近的滚动祖先（`.output-main`），而瓷砖的 `top` 是相对
@@ -452,7 +463,7 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
 - **上游/对照依据**：`virtualGrid.ts:1-6` 的注释自称"与 CSS `auto-fill minmax` 规则一致"，
   即把 CSS 布局当契约；那么"网格原点在滚动容器中的位置"也应作为入参显式建模。
 - **建议**：`findScrollParent` 之后多量一次 `grid.getBoundingClientRect().top -
-  scroller.getBoundingClientRect().top + scroller.scrollTop`，作为 `origin` 传进
+scroller.getBoundingClientRect().top + scroller.scrollTop`，作为 `origin` 传进
   `computeVisibleRange`；`deleteFile`/`load` 后按被删项的行号补偿 `scrollTop`。
 
 ### 2.14 `useVideoPoster`：全分辨率 canvas + `preload="auto"`
@@ -461,9 +472,10 @@ HistoryGallery,GenerationParamsSheet,PromptDock,JobQueue}.tsx`、
 - **位置**：`src/hooks/useVideoPoster.ts:20,35-53`、`ResultsGrid.tsx:15-28,748`
 - **现状**：
   ```ts
-  video.preload = "auto";                                          // :20
-  canvas.width = w; canvas.height = h;                             // :45-46  原始分辨率
-  setPoster(canvas.toDataURL("image/webp", 0.72));                 // :53
+  video.preload = "auto"; // :20
+  canvas.width = w;
+  canvas.height = h; // :45-46  原始分辨率
+  setPoster(canvas.toDataURL("image/webp", 0.72)); // :53
   ```
 - **问题**：每张视频瓦片都创建一个 `preload="auto"` 的离屏 `<video>`，即让解码器立刻开始
   整片 demux/缓冲（数据源是已经是内存 Blob 的 blob URL）；随后按 **1080p 原始分辨率**

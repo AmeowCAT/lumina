@@ -5,7 +5,10 @@ import { processedJobs, saveEntryPart, trimResultsToBudget, useJobPolling } from
 
 const mocks = vi.hoisted(() => ({ saveOutput: vi.fn(), sdcppJob: vi.fn() }));
 vi.mock("../../api", () => ({ api: mocks }));
-vi.mock("../../lib/systemIntegration", () => ({ flashWindow: vi.fn(), notifyIfUnfocused: vi.fn() }));
+vi.mock("../../lib/systemIntegration", () => ({
+  flashWindow: vi.fn(),
+  notifyIfUnfocused: vi.fn(),
+}));
 
 describe("generation preview polling lifecycle", () => {
   beforeEach(() => {
@@ -19,15 +22,37 @@ describe("generation preview polling lifecycle", () => {
     vi.clearAllTimers();
     vi.useRealTimers();
   });
-  const poll = () => act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  const poll = () =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
 
   it("replaces each frame and releases it once the result arrives", async () => {
     useStore.setState({ jobs: [{ id: "preview-job", kind: "img_gen", status: "queued" }] });
     const preview = { pass: 1, step: 1, total_steps: 20, b64_json: "first-frame" };
     mocks.sdcppJob
-      .mockResolvedValueOnce({ status: 200, body: { id: "preview-job", kind: "img_gen", status: "generating", preview } })
-      .mockResolvedValueOnce({ status: 200, body: { id: "preview-job", kind: "img_gen", status: "generating", preview: { ...preview, step: 2, b64_json: "second-frame" } } })
-      .mockResolvedValueOnce({ status: 200, body: { id: "preview-job", kind: "img_gen", status: "completed", result: { output_format: "png", images: [{ index: 0, b64_json: "final-image" }] } } });
+      .mockResolvedValueOnce({
+        status: 200,
+        body: { id: "preview-job", kind: "img_gen", status: "generating", preview },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        body: {
+          id: "preview-job",
+          kind: "img_gen",
+          status: "generating",
+          preview: { ...preview, step: 2, b64_json: "second-frame" },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        body: {
+          id: "preview-job",
+          kind: "img_gen",
+          status: "completed",
+          result: { output_format: "png", images: [{ index: 0, b64_json: "final-image" }] },
+        },
+      });
     renderHook(() => useJobPolling());
     await poll();
     expect(useStore.getState().jobs[0].preview?.b64_json).toBe("first-frame");
@@ -43,7 +68,16 @@ describe("generation preview polling lifecycle", () => {
   });
 
   it.each([404, 410])("releases the preview after an expired %s response", async (status) => {
-    useStore.setState({ jobs: [{ id: "expired-preview", kind: "img_gen", status: "generating", preview: { b64_json: "large-frame" } }] });
+    useStore.setState({
+      jobs: [
+        {
+          id: "expired-preview",
+          kind: "img_gen",
+          status: "generating",
+          preview: { b64_json: "large-frame" },
+        },
+      ],
+    });
     mocks.sdcppJob.mockResolvedValue({ status, body: { error: "expired" } });
     renderHook(() => useJobPolling());
     await poll();
@@ -166,11 +200,7 @@ describe("saveEntryPart (manual save to output dir)", () => {
 });
 
 describe("trimResultsToBudget（按字节的内存上限）", () => {
-  const entry = (
-    jobId: string,
-    b64: string,
-    images: { index: number; b64_json: string }[] = []
-  ) =>
+  const entry = (jobId: string, b64: string, images: { index: number; b64_json: string }[] = []) =>
     ({
       jobId,
       mode: "img_gen",
@@ -186,11 +216,7 @@ describe("trimResultsToBudget（按字节的内存上限）", () => {
   it("evicts oldest results when the byte budget is exceeded", () => {
     // 每条 ≈ 75 字节（"A".repeat(100) → 4 字节约 3 字节），三条共 225 字节。
     const big = "A".repeat(100);
-    const arr = [
-      entry("new", big),
-      entry("mid", big),
-      entry("old", big),
-    ];
+    const arr = [entry("new", big), entry("mid", big), entry("old", big)];
     // 预算 150 字节 → 只挤出最旧的一条。
     const trimmed = trimResultsToBudget(arr, 60, 150);
     expect(trimmed.map((e) => e.jobId)).toEqual(["new", "mid"]);

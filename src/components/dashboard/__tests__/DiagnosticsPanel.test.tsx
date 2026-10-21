@@ -4,7 +4,9 @@ import { useStore } from "../../../store";
 import { diagnosticsFor } from "../../../lib/diagnostics";
 import { DiagnosticsPanel } from "../DiagnosticsPanel";
 
-beforeEach(() => useStore.setState({ settings: { ...useStore.getState().settings, ...diagnosticsFor() } }));
+beforeEach(() =>
+  useStore.setState({ settings: { ...useStore.getState().settings, ...diagnosticsFor() } }),
+);
 
 describe("startup diagnostics controls", () => {
   it("starts empty and lets the user explicitly apply and clear a diagnostic preset", () => {

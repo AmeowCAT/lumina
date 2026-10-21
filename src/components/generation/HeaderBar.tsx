@@ -20,14 +20,17 @@ function WedgeOrbitMark() {
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="16.5" cy="7" r="3.4" style={{ fill: "var(--color-fg, #eeead8)" }} />
       <ellipse
-        cx="12" cy="13" rx="10" ry="3.2" fill="none" strokeWidth="1.1" opacity="0.8"
+        cx="12"
+        cy="13"
+        rx="10"
+        ry="3.2"
+        fill="none"
+        strokeWidth="1.1"
+        opacity="0.8"
         transform="rotate(-18 12 13)"
         style={{ stroke: "var(--color-steel, #50afb9)" }}
       />
-      <polygon
-        points="2,22 2,14 22,19 22,22"
-        style={{ fill: "var(--color-accent, #cf3616)" }}
-      />
+      <polygon points="2,22 2,14 22,19 22,22" style={{ fill: "var(--color-accent, #cf3616)" }} />
     </svg>
   );
 }
@@ -37,7 +40,11 @@ function SafelightMark() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle
-        cx="12" cy="12" r="8.5" strokeWidth="1" opacity="0.4"
+        cx="12"
+        cy="12"
+        r="8.5"
+        strokeWidth="1"
+        opacity="0.4"
         style={{ stroke: "var(--color-accent-hi, #f0c26b)" }}
       />
       <circle cx="12" cy="12" r="4.5" style={{ fill: "var(--color-accent, #d9a441)" }} />

@@ -84,10 +84,7 @@ export function useBlobUrlCache() {
           if (img.b64_json) live.add(rawKey(img.b64_json));
         });
       }
-      const jobIds = new Set([
-        ...s.results.map((r) => r.jobId),
-        ...s.jobs.map((j) => j.id),
-      ]);
+      const jobIds = new Set([...s.results.map((r) => r.jobId), ...s.jobs.map((j) => j.id)]);
       for (const key of [...imageUrlCache.current.keys()]) {
         if (!live.has(key)) {
           const url = imageUrlCache.current.get(key);

@@ -21,7 +21,7 @@ interface Props {
     fmt?: string,
     mime?: string,
     seed?: number,
-    suffix?: string
+    suffix?: string,
   ) => Promise<void>;
 }
 
@@ -62,7 +62,6 @@ function shortId(id: string): string {
  * 把排队等待与 2s 轮询抖动都算进了生成耗时（审查 30-api §2.8）。
  * 逻辑放在 lib/utils 里以便单测，组件只负责展示。
  */
-
 
 export const JobQueue = memo(function JobQueue({
   jobs,
@@ -110,9 +109,7 @@ export const JobQueue = memo(function JobQueue({
         jobs.map((j) => {
           const generating = j.status === "generating";
           const terminal =
-            j.status === "completed" ||
-            j.status === "failed" ||
-            j.status === "cancelled";
+            j.status === "completed" || j.status === "failed" || j.status === "cancelled";
           const jobResult = results.find((r) => r.jobId === j.id)?.result;
           // 终态但没有成功轮询时间戳（404/410 失效路径）：耗时无法定格，
           // 显示空而不是随渲染继续增长的数字。
@@ -123,9 +120,7 @@ export const JobQueue = memo(function JobQueue({
                 <span className="job-id" title={`任务 ${j.id}`}>
                   {shortId(j.id)}
                 </span>
-                <span className="job-mode">
-                  {(j.kind || mode) === "img_gen" ? "IMG" : "VID"}
-                </span>
+                <span className="job-mode">{(j.kind || mode) === "img_gen" ? "IMG" : "VID"}</span>
                 <span
                   className={`job-status ${j.status}`}
                   title={j.error?.message}
@@ -157,8 +152,7 @@ export const JobQueue = memo(function JobQueue({
                   </button>
                   {(j.status === "queued" ||
                     (generating &&
-                      caps?.features_by_mode?.[j.kind || mode]
-                        ?.cancel_generating)) && (
+                      caps?.features_by_mode?.[j.kind || mode]?.cancel_generating)) && (
                     <button
                       className="btn btn-sm btn-danger"
                       aria-label={`取消任务 ${j.id}`}
@@ -200,7 +194,7 @@ export const JobQueue = memo(function JobQueue({
                               baseSeed != null && baseSeed >= 0
                                 ? baseSeed + (img.index ?? i)
                                 : undefined,
-                              images.length > 1 ? `_${i + 1}` : undefined
+                              images.length > 1 ? `_${i + 1}` : undefined,
                             );
                           }
                         }}

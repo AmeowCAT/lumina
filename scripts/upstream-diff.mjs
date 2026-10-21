@@ -132,8 +132,7 @@ function repoTokens() {
       if (name === "node_modules" || name === "__tests__" || name.startsWith(".")) continue;
       const full = join(dir, name);
       if (statSync(full).isDirectory()) walk(full);
-      else if ([".ts", ".tsx", ".rs"].includes(extname(name)))
-        out.push(readFileSync(full, "utf8"));
+      else if ([".ts", ".tsx", ".rs"].includes(extname(name))) out.push(readFileSync(full, "utf8"));
     }
   };
   if (existsSync(join(ROOT, "src"))) walk(join(ROOT, "src"));
@@ -159,7 +158,9 @@ function report(title, items, hint) {
 async function drift() {
   const since = flag("--since") || syncedRef();
   if (!since) {
-    console.error("✗ 无法确定起点：README 里没有「当前对齐上游 master @ `<sha>`」，请用 --since 指定。");
+    console.error(
+      "✗ 无法确定起点：README 里没有「当前对齐上游 master @ `<sha>`」，请用 --since 指定。",
+    );
     return 2;
   }
   const [oldCommon, oldRuntime, oldCli, newCommon, newRuntime, newCli] = await Promise.all([
@@ -188,10 +189,14 @@ async function drift() {
     report(
       "上游新增的启动参数",
       addedArgs,
-      "逐个判断：给控件 / 写进「附加启动参数」说明 / 明确不支持（见 docs/UPSTREAM-SYNC.md）。"
+      "逐个判断：给控件 / 写进「附加启动参数」说明 / 明确不支持（见 docs/UPSTREAM-SYNC.md）。",
     ),
     report("上游删除/改名的启动参数", removedArgs, "本仓库若还在发这些参数，需要同步改名或移除。"),
-    report("上游新增的请求体字段", addedKeys, "接进 types.ts + buildRequestBody，或确认不适用于本界面。"),
+    report(
+      "上游新增的请求体字段",
+      addedKeys,
+      "接进 types.ts + buildRequestBody，或确认不适用于本界面。",
+    ),
     report("上游删除/改名的请求体字段", removedKeys, "检查 types.ts 是否仍在发送。"),
   ];
   const any = findings.some(Boolean);
@@ -215,7 +220,7 @@ async function coverage() {
   const any = report(
     "上游接受、本仓库源码里完全没提到的请求体字段",
     missing,
-    "出现即说明该字段在 Lumina 里没有落点（既没发也没注释）；确认后补实现或登记到 KNOWN_UNSUPPORTED。"
+    "出现即说明该字段在 Lumina 里没有落点（既没发也没注释）；确认后补实现或登记到 KNOWN_UNSUPPORTED。",
   );
   if (!any) console.log(`\n✓ 未覆盖字段都已登记（${keys.length} 个字段全部有落点或已说明）。`);
   return any ? (strict ? 1 : 0) : 0;
@@ -233,6 +238,8 @@ async function coverage() {
   })
   .catch((e) => {
     console.error(String(e?.message || e));
-    console.error("提示：离线环境用 --upstream <本地 stable-diffusion.cpp 克隆路径>；漂移模式需要该克隆有 --since 对应的提交。");
+    console.error(
+      "提示：离线环境用 --upstream <本地 stable-diffusion.cpp 克隆路径>；漂移模式需要该克隆有 --since 对应的提交。",
+    );
     process.exitCode = 2;
   });

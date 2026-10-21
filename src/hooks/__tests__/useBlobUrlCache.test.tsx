@@ -175,8 +175,6 @@ describe("useBlobUrlCache 的 blob URL 生命周期", () => {
 
     // 清空后再次取值会重新创建，说明缓存 Map 也真的空了。
     expect(result.current.getImageUrl(IMG_A, "png")).not.toBe(imageUrl);
-    expect(result.current.getVideoUrl("job-1", IMG_B, "video/webm")).not.toBe(
-      videoUrl
-    );
+    expect(result.current.getVideoUrl("job-1", IMG_B, "video/webm")).not.toBe(videoUrl);
   });
 });

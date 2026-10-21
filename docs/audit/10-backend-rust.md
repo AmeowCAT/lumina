@@ -3,7 +3,8 @@
 > 审查对象：`src-tauri/src/**`（10 个 `.rs`，实测 7,506 行）、`Cargo.toml`、
 > `capabilities/default.json`、`tauri.conf.json` 安全项。基线 `d442371` / v0.8.6。
 > 方法：全量静态阅读 + 上游 `stable-diffusion.cpp@d55cc0f` 对照 + 实跑 `cargo fmt/clippy/test`
-> + 一个仓库外的临时 Rust 程序验证 Windows 链接语义（不改动任何源码/配置）。
+>
+> - 一个仓库外的临时 Rust 程序验证 Windows 链接语义（不改动任何源码/配置）。
 
 ## 0. 结论摘要
 
@@ -111,7 +112,7 @@
      `output_format` 对齐；
   3. `start_server` 去掉「文件名以 sd-server 开头即免探测」的快速通道（`server.rs:1242-1244`），
      或把 `exe_path` 限制在 `exe_dir` 子树内。
-  涉及文件：`lib.rs`、`save.rs`、`server.rs`、`settings.rs`。
+     涉及文件：`lib.rs`、`save.rs`、`server.rs`、`settings.rs`。
 
 ### 2.3 设置是「全量替换 + 无未知字段兜底」，字段漂移会静默丢配置
 
@@ -155,17 +156,17 @@
   ```
 - 问题：`server: Mutex<ServerManager>` 在 `start_server`（`lib.rs:215-220`）里被跨 `await` 持有，
   而 `ServerManager::start` 的持锁时长上限可逐段累加：
-  | 段 | 位置 | 上限 |
-  |---|---|---|
-  | `cli::probe`（`--help`+`--version` 并发） | `cli.rs:264`、`cli.rs:299` | 5s（外加等全局 `CACHE` 锁，`cli.rs:292`） |
-  | `probe_backend_devices` | `server.rs:1250-1256` | 20s |
-  | `self.stop()` → `child.wait()` | `server.rs:1143` | 10s |
-  | 启动后健康检查 | `server.rs:1358` | 0.4s |
-  合计 ≈ **35.4s**（若期间还有 `preflight_server` 抢 probe 锁，可再叠加）。此时用户点关闭，
-  进程会停在 `RunEvent::Exit` 里直到锁释放——窗口已消失但进程、显存、sd-server 都还在，
-  用户视角是「关了但关不掉」，会再点一次图标（单实例插件只 focus，于是彻底卡住）。
+  | 段                                                                                        | 位置                       | 上限                                      |
+  | ----------------------------------------------------------------------------------------- | -------------------------- | ----------------------------------------- |
+  | `cli::probe`（`--help`+`--version` 并发）                                                 | `cli.rs:264`、`cli.rs:299` | 5s（外加等全局 `CACHE` 锁，`cli.rs:292`） |
+  | `probe_backend_devices`                                                                   | `server.rs:1250-1256`      | 20s                                       |
+  | `self.stop()` → `child.wait()`                                                            | `server.rs:1143`           | 10s                                       |
+  | 启动后健康检查                                                                            | `server.rs:1358`           | 0.4s                                      |
+  | 合计 ≈ **35.4s**（若期间还有 `preflight_server` 抢 probe 锁，可再叠加）。此时用户点关闭， |
+  | 进程会停在 `RunEvent::Exit` 里直到锁释放——窗口已消失但进程、显存、sd-server 都还在，      |
+  | 用户视角是「关了但关不掉」，会再点一次图标（单实例插件只 focus，于是彻底卡住）。          |
 - 上游/对照依据：Tauri 官方推荐的优雅退出模式是 `RunEvent::ExitRequested` + `prevent_exit()`
-  + 异步收尾后 `app.exit(0)`；`blocking_lock` 在事件循环线程上同步阻塞是反模式。
+  - 异步收尾后 `app.exit(0)`；`blocking_lock` 在事件循环线程上同步阻塞是反模式。
 - 建议：改两处（约 20 行）——(a) `ExitRequested` 里 `api.prevent_exit()`，`spawn` 一个任务
   `tokio::time::timeout(Duration::from_secs(8), async { ... kill ... }).await` 后 `app.exit(0)`；
   (b) 若保留同步路径，改用 `try_lock()` + 拿不到就 `kill` 已知 `pid`（`ServerManager::pid()`
@@ -353,9 +354,9 @@
      `tauri.conf.json` 也没设 `devtools`（`tauri-utils` 的 `WindowConfig` 有这个字段）→
      wry 在 WebView2 上执行 `SetAreDevToolsEnabled(true)`（`wry/src/webview2/mod.rs:640`），
      **F12 / 右键「检查」在发布包里本来就能用**。`devtools` 特性只是额外把 Rust 侧 API 编进来。
-  后果：任何能在这台机器上操作 GUI 的人（或任何走社交工程让用户按 F12 的脚本）都能在
-  console 里 `__TAURI_INTERNALS__.invoke('save_settings'|'save_output'|'start_server', …)`，
-  而应用自定义命令不受 `capabilities/default.json` 约束——这正好把 2.2 的链条变成「零成本」。
+     后果：任何能在这台机器上操作 GUI 的人（或任何走社交工程让用户按 F12 的脚本）都能在
+     console 里 `__TAURI_INTERNALS__.invoke('save_settings'|'save_output'|'start_server', …)`，
+     而应用自定义命令不受 `capabilities/default.json` 约束——这正好把 2.2 的链条变成「零成本」。
 - 上游/对照依据：Tauri 官方文档对 `devtools` 特性的说明；社区惯例是
   `devtools = []` 放进 `[features]` 并 `default = []`，或在窗口配置里写 `"devtools": false`。
 - 建议：`tauri.conf.json` 的 `main` 窗口加 `"devtools": false`（一行，发布包即失效）；
@@ -432,7 +433,7 @@
   「取用」之间作者自己也担心过时序；改 `if let (Some(key), true) = (key, ...)` 就同时消掉
   TOCTOU 疑虑和 lint。`scanner.rs:300` 的 8 个参数正是 2.10/2.8 那类「walk 逻辑不断加参数」的产物，
   clippy 命中的是**结构已经开始腐化**的信号（`walk` 已经在传 `base/depth/skip/category_hint/
-  package_family/out/context`，再加就没人读得懂）。没有 CI 意味着这两条会一直存在，
+package_family/out/context`，再加就没人读得懂）。没有 CI 意味着这两条会一直存在，
   下一个改 `walk` 的人也不会收到任何提醒。
 - 建议：`-D warnings` 现在就成立（只差 2 处），先修这 2 处 + `cargo fmt`，再加
   `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` 到任意 CI
@@ -507,10 +508,10 @@
 - 级别：**P3**
 - 位置：`src-tauri/src/lib.rs:693-717`
 - 现状：`invoke_handler` 注册了 **23** 个命令（不是 22：`start_server, inspect_server,
-  preflight_server, stop_server, server_status, scan_models, detect_family, load_settings,
-  save_settings, pick_folder, pick_file, save_output, save_as, parse_png_metadata,
-  list_output_files, read_file_b64, read_thumbnail, delete_output_file, sdcpp_capabilities,
-  sdcpp_submit, sdcpp_job, sdcpp_cancel, sdcpp_upscale`）。grep 全前端：
+preflight_server, stop_server, server_status, scan_models, detect_family, load_settings,
+save_settings, pick_folder, pick_file, save_output, save_as, parse_png_metadata,
+list_output_files, read_file_b64, read_thumbnail, delete_output_file, sdcpp_capabilities,
+sdcpp_submit, sdcpp_job, sdcpp_cancel, sdcpp_upscale`）。grep 全前端：
   `parsePngMetadata` 只在 `src/api.ts:98` 定义，**没有任何调用方**（画廊用的是
   `listOutputFiles` 里内联返回的 `metadata`）。
 - 问题：一条「读任意文件 + 解析」的命令长期无调用方，是纯粹的攻击面与维护负担
@@ -610,14 +611,14 @@
 
 ## 4. 与其它组可能重叠的点（Lead 合并用）
 
-| 本报告条目 | 可能重叠的组 | 建议归属 |
-|---|---|---|
-| 2.1 `-l` 绕过监听守卫 | **cli-families**（附加启动参数的校验归属） | Rust 侧判定归我，但用户可见路径（extra_args 输入框、错误文案）归它 |
-| 2.2 `output_dir` 可被 webview 改写 / `save_as`、`pick_*`（Lead 第 5 条已核：三者都没有接收前端路径，`pick_folder`/`pick_file` 零参数、`save_as` 只用 rfd 返回值写盘，**不存在被前端绕过的问题**；唯一小瑕疵是 `save_as` 用 `fs::write` 覆盖写而 `save_output` 用 `create_new`，口径不一致） | **frontend-arch**（谁会调 `save_settings`）、**ux-a11y**（错误提示） | 安全边界归我 |
-| 2.3 settings 字段漂移 | **frontend-arch**（`types.ts` 与 `settings.rs` 双写）、**api-alignment** | 我给出「写前 merge + schemaVersion」的最小方案 |
-| 2.5 日志落盘 / 2.7 日志背压 | **frontend-arch**（`store.logs` 2000 行上限、日志面板渲染）、**ux-a11y**（「一键复制日志」按钮） | 后端管道归我 |
-| 2.6 心跳扫 LoRA / 2.8 画廊整读 | **frontend-arch**（`HistoryGallery` 刷新策略、3s 轮询） | 后端成本归我，轮询节奏归它 |
-| 2.11 devtools / 2.12 CSP | **build-test**（发布配置）、**ux-a11y**（若有 XSS 面） | 配置项归 build-test，风险链归我 |
-| 2.14 fmt/clippy/CI | **build-test**（工程化） | 我提供实跑输出，它负责落 CI |
-| 2.10 链接目录扫不到 | **cli-families**（模型发现与家族识别） | 归属模糊，建议给 cli-families，因为它更接近「模型目录布局」 |
-| 2.20 `refine_component_dirs` 的 `embd-dir` 收窄 | **cli-families**（上游 family 文档） | 上游语义它更熟 |
+| 本报告条目                                                                                                                                                                                                                                                                                  | 可能重叠的组                                                                                     | 建议归属                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| 2.1 `-l` 绕过监听守卫                                                                                                                                                                                                                                                                       | **cli-families**（附加启动参数的校验归属）                                                       | Rust 侧判定归我，但用户可见路径（extra_args 输入框、错误文案）归它 |
+| 2.2 `output_dir` 可被 webview 改写 / `save_as`、`pick_*`（Lead 第 5 条已核：三者都没有接收前端路径，`pick_folder`/`pick_file` 零参数、`save_as` 只用 rfd 返回值写盘，**不存在被前端绕过的问题**；唯一小瑕疵是 `save_as` 用 `fs::write` 覆盖写而 `save_output` 用 `create_new`，口径不一致） | **frontend-arch**（谁会调 `save_settings`）、**ux-a11y**（错误提示）                             | 安全边界归我                                                       |
+| 2.3 settings 字段漂移                                                                                                                                                                                                                                                                       | **frontend-arch**（`types.ts` 与 `settings.rs` 双写）、**api-alignment**                         | 我给出「写前 merge + schemaVersion」的最小方案                     |
+| 2.5 日志落盘 / 2.7 日志背压                                                                                                                                                                                                                                                                 | **frontend-arch**（`store.logs` 2000 行上限、日志面板渲染）、**ux-a11y**（「一键复制日志」按钮） | 后端管道归我                                                       |
+| 2.6 心跳扫 LoRA / 2.8 画廊整读                                                                                                                                                                                                                                                              | **frontend-arch**（`HistoryGallery` 刷新策略、3s 轮询）                                          | 后端成本归我，轮询节奏归它                                         |
+| 2.11 devtools / 2.12 CSP                                                                                                                                                                                                                                                                    | **build-test**（发布配置）、**ux-a11y**（若有 XSS 面）                                           | 配置项归 build-test，风险链归我                                    |
+| 2.14 fmt/clippy/CI                                                                                                                                                                                                                                                                          | **build-test**（工程化）                                                                         | 我提供实跑输出，它负责落 CI                                        |
+| 2.10 链接目录扫不到                                                                                                                                                                                                                                                                         | **cli-families**（模型发现与家族识别）                                                           | 归属模糊，建议给 cli-families，因为它更接近「模型目录布局」        |
+| 2.20 `refine_component_dirs` 的 `embd-dir` 收窄                                                                                                                                                                                                                                             | **cli-families**（上游 family 文档）                                                             | 上游语义它更熟                                                     |

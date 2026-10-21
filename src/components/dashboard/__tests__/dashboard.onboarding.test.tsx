@@ -1,11 +1,6 @@
 // 注意：本 import 必须排在 `../Dashboard` 之前——`vi.mock` 的工厂要读 kit 里的
 // `mocks`，而 Vite SSR 按 import 源码顺序求值，kit 必须先完成初始化。
-import {
-  mocks,
-  pickOption,
-  resetDashboard,
-  scanFor,
-} from "./dashboardTestKit";
+import { mocks, pickOption, resetDashboard, scanFor } from "./dashboardTestKit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../../store";
@@ -58,7 +53,7 @@ describe("Dashboard onboarding validation", () => {
     await pickOption("主模型", "main.safetensors (1.0 GB)");
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled(),
     );
   });
 
@@ -113,21 +108,13 @@ describe("Dashboard onboarding validation", () => {
     render(<Dashboard />);
 
     await pickOption("主模型", "main.safetensors (1.0 GB)");
-    fireEvent.click(
-      await screen.findByRole("button", { name: /切换到此模型/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /切换到此模型/ }));
 
     // 不直接切换,先在启动坞弹出影响确认条
     expect(mocks.switchModel).not.toHaveBeenCalled();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "尚未安全保存",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("尚未安全保存");
 
     fireEvent.click(screen.getByRole("button", { name: "确认切换" }));
-    await waitFor(() =>
-      expect(mocks.switchModel).toHaveBeenCalledWith(
-        "/models/main.safetensors",
-      ),
-    );
+    await waitFor(() => expect(mocks.switchModel).toHaveBeenCalledWith("/models/main.safetensors"));
   });
 });

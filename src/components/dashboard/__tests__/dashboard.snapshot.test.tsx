@@ -1,12 +1,6 @@
 // 注意：本 import 必须排在 `../Dashboard` 之前——`vi.mock` 的工厂要读 kit 里的
 // `mocks`，而 Vite SSR 按 import 源码顺序求值，kit 必须先完成初始化。
-import {
-  mocks,
-  pickOption,
-  resetDashboard,
-  scanFor,
-  settings,
-} from "./dashboardTestKit";
+import { mocks, pickOption, resetDashboard, scanFor, settings } from "./dashboardTestKit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../../store";
@@ -48,9 +42,7 @@ describe("Dashboard model snapshots", () => {
 
     await pickOption("主模型", "main.safetensors (1.0 GB)");
 
-    await waitFor(() =>
-      expect(screen.getByLabelText("自定义 --backend")).toHaveValue("cuda0")
-    );
+    await waitFor(() => expect(screen.getByLabelText("自定义 --backend")).toHaveValue("cuda0"));
     expect(screen.getByLabelText("CPU 卸载（--offload-to-cpu）")).toBeChecked();
     expect(screen.getByLabelText("加载时量化（--type）")).toHaveTextContent("Q8_0");
     expect(screen.getByLabelText("处理预设")).toHaveTextContent("Krea2 Edit 768");
@@ -62,13 +54,22 @@ describe("Dashboard model snapshots", () => {
     const base = scanFor("hidream").files[0];
     mocks.loadSettings.mockResolvedValue({
       ...settings,
-      modelSnapshots: { "/models/b.safetensors": {
-        familyOverride: "hidream", components: {}, backend: "", refImagePreset: "",
-        extraArgs: "", offloadCpu: false, quantType: "", maxQueueSize: 4,
-      } },
+      modelSnapshots: {
+        "/models/b.safetensors": {
+          familyOverride: "hidream",
+          components: {},
+          backend: "",
+          refImagePreset: "",
+          extraArgs: "",
+          offloadCpu: false,
+          quantType: "",
+          maxQueueSize: 4,
+        },
+      },
     });
     mocks.scanModels.mockResolvedValue({
-      ...scanFor("hidream"), count: 2,
+      ...scanFor("hidream"),
+      count: 2,
       families: { "/models/a.safetensors": "hidream", "/models/b.safetensors": "hidream" },
       files: [
         { ...base, name: "a.safetensors", path: "/models/a.safetensors" },
@@ -78,9 +79,16 @@ describe("Dashboard model snapshots", () => {
     render(<Dashboard />);
     await pickOption("主模型", "a.safetensors (1.0 GB)");
     fireEvent.click(screen.getByRole("button", { name: /诊断与数值稳定性/ }));
-    fireEvent.change(screen.getByLabelText("Linear 输入缩放（--linear-scale）"), { target: { value: "0.0078125" } });
+    fireEvent.change(screen.getByLabelText("Linear 输入缩放（--linear-scale）"), {
+      target: { value: "0.0078125" },
+    });
     await pickOption("日志等级（--log-level）", "debug · 最详细");
-    await waitFor(() => expect(useStore.getState().settings.modelSnapshots["/models/a.safetensors"]).toMatchObject({ linearScale: "0.0078125", logLevel: "debug" }));
+    await waitFor(() =>
+      expect(useStore.getState().settings.modelSnapshots["/models/a.safetensors"]).toMatchObject({
+        linearScale: "0.0078125",
+        logLevel: "debug",
+      }),
+    );
     expect(mocks.startServer).not.toHaveBeenCalled();
     await pickOption("主模型", "b.safetensors (1.0 GB)");
     expect(screen.getByLabelText("Linear 输入缩放（--linear-scale）")).toHaveValue("");
@@ -117,12 +125,9 @@ describe("Dashboard model snapshots", () => {
     expect(useStore.getState().components).toEqual({});
 
     // 用户在组件面板选择 VAE → 快照立即记录当前模型配置。
-    act(() =>
-      useStore.getState().setComponents(() => ({ vae: "/models/ae1.sft" }))
-    );
+    act(() => useStore.getState().setComponents(() => ({ vae: "/models/ae1.sft" })));
     await waitFor(() => {
-      const snap =
-        useStore.getState().settings.modelSnapshots["/models/a.safetensors"];
+      const snap = useStore.getState().settings.modelSnapshots["/models/a.safetensors"];
       expect(snap?.components).toEqual({ vae: "/models/ae1.sft" });
     });
 
@@ -130,8 +135,6 @@ describe("Dashboard model snapshots", () => {
     await pickOption("主模型", "b.safetensors (1.0 GB)");
     expect(useStore.getState().components).toEqual({});
     await pickOption("主模型", "a.safetensors (1.0 GB)");
-    await waitFor(() =>
-      expect(useStore.getState().components).toEqual({ vae: "/models/ae1.sft" })
-    );
+    await waitFor(() => expect(useStore.getState().components).toEqual({ vae: "/models/ae1.sft" }));
   });
 });

@@ -19,9 +19,7 @@ const baseProps = {
 
 function renderPanel(props: Record<string, unknown> = {}) {
   const onUpdate = vi.fn();
-  render(
-    <AdvancedSamplingPanel {...baseProps} {...props} onUpdate={onUpdate} />
-  );
+  render(<AdvancedSamplingPanel {...baseProps} {...props} onUpdate={onUpdate} />);
   return onUpdate;
 }
 
@@ -29,12 +27,7 @@ describe("F-18 缓存微调控件", () => {
   it("easycache 渲染上游该模式的 6 个键", () => {
     renderPanel({ cacheMode: "easycache" });
 
-    for (const name of [
-      /复用阈值（threshold）/,
-      /开始缓存/,
-      /停止缓存/,
-      /误差衰减（decay）/,
-    ]) {
+    for (const name of [/复用阈值（threshold）/, /开始缓存/, /停止缓存/, /误差衰减（decay）/]) {
       expect(screen.getByRole("slider", { name })).toBeTruthy();
     }
     expect(screen.getByRole("switch", { name: /按输出范数缩放阈值（relative）/ })).toBeTruthy();
@@ -67,7 +60,7 @@ describe("F-18 缓存微调控件", () => {
 
     expect(onUpdate).toHaveBeenCalledWith(
       "cache_options",
-      expect.objectContaining({ threshold: 0.05 })
+      expect.objectContaining({ threshold: 0.05 }),
     );
   });
 
@@ -77,9 +70,7 @@ describe("F-18 缓存微调控件", () => {
       cacheOptions: { relative: true },
     });
 
-    await userEvent.click(
-      screen.getByRole("switch", { name: /按输出范数缩放阈值（relative）/ })
-    );
+    await userEvent.click(screen.getByRole("switch", { name: /按输出范数缩放阈值（relative）/ }));
 
     expect(onUpdate).toHaveBeenCalledWith("cache_options", {
       relative: false,
@@ -170,7 +161,7 @@ describe("F-18 SLG 三参数", () => {
 
     expect(onUpdate).toHaveBeenCalledWith(
       "sample_params.guidance.slg",
-      expect.objectContaining({ scale: 2, layer_start: 0.05 })
+      expect.objectContaining({ scale: 2, layer_start: 0.05 }),
     );
   });
 
@@ -189,7 +180,7 @@ describe("F-18 SLG 三参数", () => {
 
     expect(onUpdate).toHaveBeenCalledWith(
       "sample_params.guidance.slg",
-      expect.objectContaining({ layers: undefined })
+      expect.objectContaining({ layers: undefined }),
     );
   });
 
@@ -217,7 +208,7 @@ describe("F-18 SLG 三参数", () => {
 
     expect(onUpdate).toHaveBeenLastCalledWith(
       "sample_params.guidance.slg",
-      expect.objectContaining({ layers: [7, 8] })
+      expect.objectContaining({ layers: [7, 8] }),
     );
   });
 });

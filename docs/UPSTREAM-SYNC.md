@@ -1,7 +1,7 @@
 # 同步上游 checklist
 
-上游 `stable-diffusion.cpp` 的 README 自己写着 *"API and command-line option may
-change frequently"*，实测一天 3 个提交。Lumina 的价值（60 个家族的必需组件、默认
+上游 `stable-diffusion.cpp` 的 README 自己写着 _"API and command-line option may
+change frequently"_，实测一天 3 个提交。Lumina 的价值（60 个家族的必需组件、默认
 参数、尺寸对齐、CLI 门控）全都是手工跟随的，所以每次同步按这张单子走一遍，不要凭记忆。
 
 ## 机器先跑

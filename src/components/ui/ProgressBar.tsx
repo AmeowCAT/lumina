@@ -32,9 +32,7 @@ export function ProgressBar() {
         aria-valuemin={0}
         aria-valuemax={total}
         aria-valuenow={Math.min(step, total)}
-        aria-valuetext={`第 ${step} 步，共 ${total} 步，${pct}%${
-          eta ? `，预计剩余 ${eta}` : ""
-        }`}
+        aria-valuetext={`第 ${step} 步，共 ${total} 步，${pct}%${eta ? `，预计剩余 ${eta}` : ""}`}
       >
         <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
       </div>

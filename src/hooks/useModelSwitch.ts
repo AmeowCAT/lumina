@@ -2,12 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { FAMILY_CONFIG, type FamilyConfig } from "../config/families";
-import type {
-  Capabilities,
-  GenMode,
-  ModelConfigSnapshot,
-  ServerArgs,
-} from "../types";
+import type { Capabilities, GenMode, ModelConfigSnapshot, ServerArgs } from "../types";
 import { formatError, normalizeSdPort } from "../lib/utils";
 import { diagnosticsFor } from "../lib/diagnostics";
 import {
@@ -38,10 +33,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const normalizedPath = (path: string) => path.replace(/\\/g, "/").toLowerCase();
 
-export function capabilitiesMatchModel(
-  capabilities: Capabilities,
-  expectedPath: string
-): boolean {
+export function capabilitiesMatchModel(capabilities: Capabilities, expectedPath: string): boolean {
   const reportedPath = capabilities.model?.path?.trim();
   if (!reportedPath) return true;
   const actual = normalizedPath(reportedPath);
@@ -65,7 +57,7 @@ export function useModelSwitch() {
   const buildLaunchConfig = async (
     modelPath: string,
     source?: LaunchSource,
-    inferLegacyPidFormat = false
+    inferLegacyPidFormat = false,
   ): Promise<LaunchConfig> => {
     const family = source?.familyOverride || (await api.detectFamily(modelPath));
     const familyConfig = FAMILY_CONFIG[family];
@@ -125,7 +117,7 @@ export function useModelSwitch() {
       config.familyConfig.name,
       config.mode,
       config.args,
-      normalizeSdPort(settings.sdPort)
+      normalizeSdPort(settings.sdPort),
     );
     setPhase("loading");
     return waitUntilReady(config.modelPath);
@@ -163,7 +155,7 @@ export function useModelSwitch() {
       const preflight = await api.preflightServer(
         settings.exeDir || "sd-server",
         nextConfig.args,
-        normalizeSdPort(settings.sdPort)
+        normalizeSdPort(settings.sdPort),
       );
       if (preflight.warnings.length) toast(preflight.warnings.join("；"));
       if (previousPath && previousPath !== modelPath) {
@@ -178,7 +170,7 @@ export function useModelSwitch() {
           // （eslint preserve-caught-error）。
           throw new Error(
             `无法准备当前模型的回滚配置，已保留运行中的模型：${formatError(error)}。请检查旧模型配置；如需放弃自动回滚，请先手动停止服务再启动目标模型。`,
-            { cause: error }
+            { cause: error },
           );
         }
       }
@@ -206,7 +198,7 @@ export function useModelSwitch() {
         } catch (rollbackError) {
           toast(
             `切换失败且无法恢复上一个模型：${switchError}；恢复错误：${formatError(rollbackError)}`,
-            true
+            true,
           );
           return undefined;
         }

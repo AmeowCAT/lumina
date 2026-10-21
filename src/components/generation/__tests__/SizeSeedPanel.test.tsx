@@ -28,7 +28,7 @@ function renderPanel(overrides: Record<string, unknown> = {}) {
       onSeedEdit={vi.fn()}
       onRandomSeed={vi.fn()}
       {...overrides}
-    />
+    />,
   );
   return { onUpdate, onSizeStep };
 }

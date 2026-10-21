@@ -70,10 +70,7 @@ export function scanFor(family: string): ScanResult {
 // 150ms（审查 60-build §2.13）。
 const user = userEvent.setup({ delay: null });
 
-export async function pickOption(
-  label: string,
-  optionName: string | RegExp
-): Promise<void> {
+export async function pickOption(label: string, optionName: string | RegExp): Promise<void> {
   await user.click(await screen.findByLabelText(label));
   await user.click(await screen.findByRole("option", { name: optionName }));
 }

@@ -14,15 +14,12 @@ describe("HiresPanel", () => {
         }}
         upscalers={[]}
         onUpdate={vi.fn()}
-      />
+      />,
     );
 
-    expect(screen.getByRole("slider", { name: /放大分块/ })).toHaveAttribute(
-      "aria-valuemin",
-      "32"
-    );
+    expect(screen.getByRole("slider", { name: /放大分块/ })).toHaveAttribute("aria-valuemin", "32");
     expect(
-      screen.getByText("宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）")
+      screen.getByText("宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）"),
     ).toBeTruthy();
   });
 });

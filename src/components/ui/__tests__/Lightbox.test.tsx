@@ -14,42 +14,28 @@ const items = [
 
 describe("Lightbox", () => {
   it("双击图片本身放大到 250%", () => {
-    render(
-      <Lightbox items={items} index={0} onClose={vi.fn()} onNavigate={vi.fn()} />
-    );
+    render(<Lightbox items={items} index={0} onClose={vi.fn()} onNavigate={vi.fn()} />);
     fireEvent.dblClick(screen.getByRole("img"));
-    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe(
-      "250%"
-    );
+    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe("250%");
   });
 
   it("快速双击导航按钮不会放大(翻页防误触)", () => {
-    render(
-      <Lightbox items={items} index={0} onClose={vi.fn()} onNavigate={vi.fn()} />
-    );
+    render(<Lightbox items={items} index={0} onClose={vi.fn()} onNavigate={vi.fn()} />);
     const next = screen.getAllByRole("button", { name: "下一张" })[0];
     fireEvent.click(next);
     fireEvent.dblClick(next);
-    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe(
-      "100%"
-    );
+    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe("100%");
   });
 
   it("切换到另一张图时同步重置缩放", () => {
     const { rerender } = render(
-      <Lightbox items={items} index={0} onClose={vi.fn()} onNavigate={vi.fn()} />
+      <Lightbox items={items} index={0} onClose={vi.fn()} onNavigate={vi.fn()} />,
     );
     fireEvent.dblClick(screen.getByRole("img"));
-    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe(
-      "250%"
-    );
+    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe("250%");
 
-    rerender(
-      <Lightbox items={items} index={1} onClose={vi.fn()} onNavigate={vi.fn()} />
-    );
-    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe(
-      "100%"
-    );
+    rerender(<Lightbox items={items} index={1} onClose={vi.fn()} onNavigate={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "重置图片缩放" }).textContent).toBe("100%");
   });
 });
 
@@ -69,18 +55,14 @@ describe("Lightbox 容器判定（审查 §2.2）", () => {
   });
 
   it("video/* 容器仍然渲染可播放的 <video>", () => {
-    const video: LightboxItem[] = [
-      { type: "video", src: "blob:webm", mime: "video/webm" },
-    ];
+    const video: LightboxItem[] = [{ type: "video", src: "blob:webm", mime: "video/webm" }];
     render(<Lightbox items={video} index={0} onClose={vi.fn()} />);
     expect(document.querySelector("video")).toHaveAttribute("src", "blob:webm");
     expect(screen.queryByRole("note")).toBeNull();
   });
 
   it("AVI/MJPG 给可读提示，不再塞进必然黑屏的 <video>", () => {
-    const avi: LightboxItem[] = [
-      { type: "video", src: "blob:avi", mime: "video/x-msvideo" },
-    ];
+    const avi: LightboxItem[] = [{ type: "video", src: "blob:avi", mime: "video/x-msvideo" }];
     render(<Lightbox items={avi} index={0} onClose={vi.fn()} />);
     expect(screen.getByRole("note").textContent).toContain(UNPLAYABLE_VIDEO_HINT);
     expect(screen.getByRole("note").textContent).toContain("video/x-msvideo");

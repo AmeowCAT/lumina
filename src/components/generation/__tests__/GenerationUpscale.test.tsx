@@ -80,7 +80,7 @@ async function openUpscaleDialog() {
   render(
     <div className="app-view">
       <GenerationUI />
-    </div>
+    </div>,
   );
   await screen.findByLabelText("正向提示词");
   fireEvent.click(screen.getByLabelText("放大此图片"));
@@ -134,7 +134,7 @@ describe("独立放大的模态隔离", () => {
     const { container } = render(
       <div className="app-view">
         <GenerationUI />
-      </div>
+      </div>,
     );
     await screen.findByLabelText("正向提示词");
     const view = container.querySelector(".app-view")!;
@@ -149,7 +149,7 @@ describe("独立放大的模态隔离", () => {
     const first = render(
       <div className="app-view">
         <GenerationUI />
-      </div>
+      </div>,
     );
     await screen.findByLabelText("正向提示词");
     fireEvent.click(screen.getByLabelText("放大此图片"));
@@ -164,7 +164,7 @@ describe("独立放大的模态隔离", () => {
     render(
       <div className="app-view">
         <GenerationUI />
-      </div>
+      </div>,
     );
     await screen.findByLabelText("正向提示词");
     fireEvent.click(screen.getByLabelText("放大此图片"));
@@ -176,9 +176,7 @@ describe("独立放大的模态隔离", () => {
   it("busy 时 Tab 不会把焦点留在对话框之外", async () => {
     await openUpscaleDialog();
     const dialog = screen.getByRole("dialog", { name: "图像放大" });
-    await waitFor(() =>
-      expect(dialog.contains(document.activeElement)).toBe(true)
-    );
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
 
     const submit = screen.getByRole("button", { name: "开始放大" });
     submit.focus();

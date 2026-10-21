@@ -61,21 +61,21 @@ function MultiImageRow({
                   ? `${f.name}（非图片格式）`
                   : f.size > MAX_UPLOAD_BYTES
                     ? `${f.name}（超过 100MB）`
-                    : null
+                    : null,
               )
               .filter((x): x is string => !!x);
             if (invalid.length) {
               toast(`已跳过 ${invalid.length} 个无效文件：${invalid.join("、")}`, true);
             }
             const valid = files.filter(
-              (f) => f.type.startsWith("image/") && f.size <= MAX_UPLOAD_BYTES
+              (f) => f.type.startsWith("image/") && f.size <= MAX_UPLOAD_BYTES,
             );
             if (!valid.length) return;
             // 条件帧顺序即上游条件帧顺序：显式按文件名排序，
             // 不依赖浏览器的 FileList 顺序。
             valid.sort((a, b) => a.name.localeCompare(b.name));
             Promise.all(valid.map(readFileAsDataUrl)).then((urls) =>
-              onChange((p) => [...p, ...urls])
+              onChange((p) => [...p, ...urls]),
             );
             // 文件对话框是原生模态：关闭后把焦点还给追加按钮
             requestAnimationFrame(() => addBtnRef.current?.focus());
@@ -117,13 +117,8 @@ interface Props {
   txtCfg: number | undefined;
   onUpdate: (path: string, v: unknown) => void;
   onSetImage: (
-    which:
-      | "initImage"
-      | "maskImage"
-      | "controlImage"
-      | "ipAdapterImage"
-      | "endImage",
-    v: string | null
+    which: "initImage" | "maskImage" | "controlImage" | "ipAdapterImage" | "endImage",
+    v: string | null,
   ) => void;
   onSetRefImages: (updater: (r: string[]) => string[]) => void;
   onSetControlFrames: (updater: (r: string[]) => string[]) => void;
@@ -166,11 +161,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
         />
       )}
       {featureEnabled(features, "mask_image") && mode === "img_gen" && (
-        <ImageUpload
-          label="蒙版"
-          value={maskImage}
-          onChange={(v) => onSetImage("maskImage", v)}
-        />
+        <ImageUpload label="蒙版" value={maskImage} onChange={(v) => onSetImage("maskImage", v)} />
       )}
       {featureEnabled(features, "control_image") && mode === "img_gen" && (
         <ImageUpload
@@ -187,43 +178,38 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
         />
       )}
       {featureEnabled(features, "end_image") && mode === "vid_gen" && (
-        <ImageUpload
-          label="结束帧"
-          value={endImage}
-          onChange={(v) => onSetImage("endImage", v)}
-        />
+        <ImageUpload label="结束帧" value={endImage} onChange={(v) => onSetImage("endImage", v)} />
       )}
-      {(featureEnabled(features, "init_image") || featureEnabled(features, "control_image")) && mode === "img_gen" && (
-        <>
-          <Slider
-            label="重绘强度"
-            value={strength ?? 0.75}
-            onChange={(v) => onUpdate("strength", v)}
-            min={0}
-            max={1}
-            step={0.05}
-          />
-          <Slider
-            label="Control 强度"
-            value={controlStrength ?? 0.9}
-            onChange={(v) => onUpdate("control_strength", v)}
-            min={0}
-            max={1}
-            step={0.05}
-          />
-          <Slider
-            label="CFG (图像)"
-            value={imgCfg}
-            onChange={(v) => onUpdate("sample_params.guidance.img_cfg", v)}
-            min={0}
-            max={30}
-            step={0.5}
-            hint={
-              imgCfg != null ? undefined : `未设置，跟随文本 CFG (${txtCfg ?? 0})`
-            }
-          />
-        </>
-      )}
+      {(featureEnabled(features, "init_image") || featureEnabled(features, "control_image")) &&
+        mode === "img_gen" && (
+          <>
+            <Slider
+              label="重绘强度"
+              value={strength ?? 0.75}
+              onChange={(v) => onUpdate("strength", v)}
+              min={0}
+              max={1}
+              step={0.05}
+            />
+            <Slider
+              label="Control 强度"
+              value={controlStrength ?? 0.9}
+              onChange={(v) => onUpdate("control_strength", v)}
+              min={0}
+              max={1}
+              step={0.05}
+            />
+            <Slider
+              label="CFG (图像)"
+              value={imgCfg}
+              onChange={(v) => onUpdate("sample_params.guidance.img_cfg", v)}
+              min={0}
+              max={30}
+              step={0.5}
+              hint={imgCfg != null ? undefined : `未设置，跟随文本 CFG (${txtCfg ?? 0})`}
+            />
+          </>
+        )}
       {featureEnabled(features, "ip_adapter_image") && mode === "img_gen" && (
         <Slider
           label="IP-Adapter 强度"
@@ -249,9 +235,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
         <MultiImageRow
           label={
             "参考图片" +
-            (FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes(
-              "ref_images"
-            )
+            (FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images")
               ? "（必需）"
               : "")
           }

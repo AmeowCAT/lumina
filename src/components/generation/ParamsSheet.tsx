@@ -56,12 +56,7 @@ export function ParamsSheet({
           <h3>生成参数</h3>
           <span className="kbd">⌘,</span>
           <div className="header-spacer" />
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="关闭参数面板"
-            onClick={onClose}
-          >
+          <button type="button" className="icon-btn" aria-label="关闭参数面板" onClick={onClose}>
             <X size={13} aria-hidden="true" />
           </button>
         </div>

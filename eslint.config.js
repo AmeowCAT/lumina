@@ -59,5 +59,5 @@ export default tseslint.config(
       // 测试里 mock 的存根函数返回 `any` 是常态。
       "@typescript-eslint/no-unsafe-function-type": "off",
     },
-  }
+  },
 );

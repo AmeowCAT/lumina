@@ -12,7 +12,8 @@ const baseProps = {
   extraSampleArgs: undefined,
 };
 
-describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes 里相对尺寸优先于绝对尺寸：改绝对值却不清掉相对值，
+describe("AdvancedSamplingPanel VAE 分块", () => {
+  // 上游 get_tile_sizes 里相对尺寸优先于绝对尺寸：改绝对值却不清掉相对值，
   // 用户会看到"输入的数字根本没生效"。
   it("编辑分块宽/高时清除该轴的相对尺寸覆盖", async () => {
     const onUpdate = vi.fn();
@@ -22,7 +23,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes �
         onUpdate={onUpdate}
         vaeTilingProtocol="pixels"
         vaeTilingParams={{ enabled: true, tile_size_w: 256, rel_size_w: 0.5 }}
-      />
+      />,
     );
 
     const width = screen.getByLabelText(/分块宽/);
@@ -31,7 +32,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes �
 
     expect(onUpdate).toHaveBeenCalledWith(
       "vae_tiling_params",
-      expect.objectContaining({ tile_size_w: 512, rel_size_w: 0 })
+      expect.objectContaining({ tile_size_w: 512, rel_size_w: 0 }),
     );
   });
 
@@ -43,7 +44,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes �
         onUpdate={onUpdate}
         vaeTilingProtocol="pixels"
         vaeTilingParams={{ enabled: true, tile_size_w: 256, rel_size_w: 0.5 }}
-      />
+      />,
     );
 
     expect(screen.getByText(/相对尺寸正在覆盖分块宽/)).toBeTruthy();
@@ -51,7 +52,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes �
 
     expect(onUpdate).toHaveBeenCalledWith(
       "vae_tiling_params",
-      expect.objectContaining({ rel_size_w: 0, rel_size_h: 0 })
+      expect.objectContaining({ rel_size_w: 0, rel_size_h: 0 }),
     );
   });
 
@@ -70,7 +71,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes �
           tile_size_x: 16,
           rel_size_y: 0,
         }}
-      />
+      />,
     );
 
     const alert = screen.getByRole("alert");
@@ -78,10 +79,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes �
 
     await userEvent.click(screen.getByRole("button", { name: "清除旧值" }));
 
-    const [path, value] = onUpdate.mock.calls[0] as [
-      string,
-      Record<string, unknown>,
-    ];
+    const [path, value] = onUpdate.mock.calls[0] as [string, Record<string, unknown>];
     expect(path).toBe("vae_tiling_params");
     expect(value.tile_size_x).toBeUndefined();
     // 像素值属于用户设置，清除旧值时不能被顺手抹掉。
@@ -96,7 +94,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {  // 上游 get_tile_sizes �
         onUpdate={vi.fn()}
         vaeTilingProtocol="latent"
         vaeTilingParams={{ enabled: true, tile_size_w: 512, tile_size_h: 512 }}
-      />
+      />,
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(/不会下发到该内核/);
@@ -113,7 +111,7 @@ describe("AdvancedSamplingPanel shifted timestep", () => {
         onUpdate={onUpdate}
         shiftedTimestep={0}
         vaeTilingParams={undefined}
-      />
+      />,
     );
 
     expect(screen.getByLabelText(/Shifted Timestep/)).toBeTruthy();

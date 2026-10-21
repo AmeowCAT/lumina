@@ -20,11 +20,7 @@ import { ByteBudgedCache } from "../../lib/byteCache";
 import { MEMORY_BUDGET } from "../../lib/memoryBudget";
 import { b64ByteLength, b64ToBlobUrl, formatError } from "../../lib/utils";
 import { cn } from "../ui/cn";
-import {
-  computeGridLayout,
-  computeVisibleRange,
-  tilePosition,
-} from "../../lib/virtualGrid";
+import { computeGridLayout, computeVisibleRange, tilePosition } from "../../lib/virtualGrid";
 
 interface OutputEntry {
   path: string;
@@ -79,7 +75,7 @@ function cacheSnapshot(cache: ByteBudgedCache<string>): Map<string, string> {
  * 该浪费被放大 3×N 次（审查 §2.5）。这里只在首次访问时构造一次。
  */
 function useLazyByteCache(
-  create: () => ByteBudgedCache<string>
+  create: () => ByteBudgedCache<string>,
 ): MutableRefObject<ByteBudgedCache<string>> {
   const ref = useRef<ByteBudgedCache<string> | null>(null);
   if (!ref.current) ref.current = create();
@@ -240,9 +236,7 @@ export const HistoryGallery = memo(function HistoryGallery({
   const THUMB_CACHE_BYTES = MEMORY_BUDGET.galleryThumbs;
   /** 并发读取上限：快速滚动时避免几十个解码/IPC 同时打满后端 */
   const THUMB_CONCURRENCY = 4;
-  const thumbSrcsRef = useLazyByteCache(
-    () => new ByteBudgedCache<string>(THUMB_CACHE_BYTES)
-  );
+  const thumbSrcsRef = useLazyByteCache(() => new ByteBudgedCache<string>(THUMB_CACHE_BYTES));
   const failedThumbs = useRef(new Set<string>());
   const pendingThumbs = useRef(new Set<string>());
   const thumbQueue = useRef<OutputEntry[]>([]);
@@ -272,14 +266,11 @@ export const HistoryGallery = memo(function HistoryGallery({
   const thumbSrcs = useMemo(
     () => cacheSnapshot(thumbSrcsRef.current),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [thumbVersion]
+    [thumbVersion],
   );
 
   const pumpThumbQueue = useCallback(() => {
-    while (
-      activeThumbReads.current < THUMB_CONCURRENCY &&
-      thumbQueue.current.length > 0
-    ) {
+    while (activeThumbReads.current < THUMB_CONCURRENCY && thumbQueue.current.length > 0) {
       const f = thumbQueue.current.shift()!;
       if (thumbSrcsRef.current.has(f.path)) {
         pendingThumbs.current.delete(f.path);
@@ -321,7 +312,7 @@ export const HistoryGallery = memo(function HistoryGallery({
       thumbQueue.current.push(f);
       pumpThumbQueue();
     },
-    [pumpThumbQueue]
+    [pumpThumbQueue],
   );
 
   // Lightbox 用原图（缩略图放大会糊）：按需读取 + 字节预算 + 并发闸——
@@ -331,17 +322,12 @@ export const HistoryGallery = memo(function HistoryGallery({
   const FULL_CACHE_BYTES = MEMORY_BUDGET.galleryFull;
   /** 原图并发读取上限:与缩略图 THUMB_CONCURRENCY 同构 */
   const FULL_CONCURRENCY = 2;
-  const fullSrcsRef = useLazyByteCache(
-    () => new ByteBudgedCache<string>(FULL_CACHE_BYTES)
-  );
+  const fullSrcsRef = useLazyByteCache(() => new ByteBudgedCache<string>(FULL_CACHE_BYTES));
   const pendingFull = useRef(new Set<string>());
   const fullQueue = useRef<OutputEntry[]>([]);
   const activeFullReads = useRef(0);
   const pumpFullQueue = useCallback(() => {
-    while (
-      activeFullReads.current < FULL_CONCURRENCY &&
-      fullQueue.current.length > 0
-    ) {
+    while (activeFullReads.current < FULL_CONCURRENCY && fullQueue.current.length > 0) {
       const f = fullQueue.current.shift()!;
       if (fullSrcsRef.current.has(f.path)) {
         pendingFull.current.delete(f.path);
@@ -372,13 +358,12 @@ export const HistoryGallery = memo(function HistoryGallery({
   }, []);
   const ensureFull = useCallback(
     (f: OutputEntry) => {
-      if (fullSrcsRef.current.has(f.path) || pendingFull.current.has(f.path))
-        return;
+      if (fullSrcsRef.current.has(f.path) || pendingFull.current.has(f.path)) return;
       pendingFull.current.add(f.path);
       fullQueue.current.push(f);
       pumpFullQueue();
     },
-    [pumpFullQueue]
+    [pumpFullQueue],
   );
 
   // 历史视频：整读 b64 → blob URL 供 <video> 流式播放。后端
@@ -387,18 +372,13 @@ export const HistoryGallery = memo(function HistoryGallery({
   // revoke 被挤出的 blob URL 释放解码缓冲。
   const VIDEO_CACHE_BYTES = MEMORY_BUDGET.galleryVideos;
   const VIDEO_CONCURRENCY = 1;
-  const videoSrcsRef = useLazyByteCache(
-    () => new ByteBudgedCache<string>(VIDEO_CACHE_BYTES)
-  );
+  const videoSrcsRef = useLazyByteCache(() => new ByteBudgedCache<string>(VIDEO_CACHE_BYTES));
   const failedVideos = useRef(new Set<string>());
   const pendingVideos = useRef(new Set<string>());
   const videoQueue = useRef<OutputEntry[]>([]);
   const activeVideoReads = useRef(0);
   const pumpVideoQueue = useCallback(() => {
-    while (
-      activeVideoReads.current < VIDEO_CONCURRENCY &&
-      videoQueue.current.length > 0
-    ) {
+    while (activeVideoReads.current < VIDEO_CONCURRENCY && videoQueue.current.length > 0) {
       const f = videoQueue.current.shift()!;
       if (videoSrcsRef.current.has(f.path)) {
         pendingVideos.current.delete(f.path);
@@ -413,11 +393,7 @@ export const HistoryGallery = memo(function HistoryGallery({
           if (disposed.current) return;
           if (videoSrcsRef.current.has(f.path)) return;
           const url = b64ToBlobUrl(b64, videoMime(f.ext));
-          const evicted = videoSrcsRef.current.set(
-            f.path,
-            url,
-            b64ByteLength(b64)
-          );
+          const evicted = videoSrcsRef.current.set(f.path, url, b64ByteLength(b64));
           for (const [, oldUrl] of evicted) URL.revokeObjectURL(oldUrl);
           scheduleThumbVersion();
         })
@@ -443,7 +419,7 @@ export const HistoryGallery = memo(function HistoryGallery({
       videoQueue.current.push(f);
       pumpVideoQueue();
     },
-    [pumpVideoQueue]
+    [pumpVideoQueue],
   );
 
   // 卸载清理：history 的三类缓存都要释放。
@@ -491,22 +467,20 @@ export const HistoryGallery = memo(function HistoryGallery({
           f.metadata ? JSON.stringify(f.metadata) : "",
         ]
           .join(" ")
-          .toLocaleLowerCase()
+          .toLocaleLowerCase(),
       );
     }
     return m;
   }, [files]);
 
   const mediaFiles = useMemo(
-    () =>
-      files.filter((f) => IMAGE_EXTS.has(f.ext) || VIDEO_EXTS.has(f.ext)),
-    [files]
+    () => files.filter((f) => IMAGE_EXTS.has(f.ext) || VIDEO_EXTS.has(f.ext)),
+    [files],
   );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredFiles = normalizedQuery
     ? mediaFiles.filter((file) => {
-        const searchable =
-          searchIndex.get(file.path) || file.name.toLocaleLowerCase();
+        const searchable = searchIndex.get(file.path) || file.name.toLocaleLowerCase();
         return searchable.includes(normalizedQuery);
       })
     : mediaFiles;
@@ -521,10 +495,9 @@ export const HistoryGallery = memo(function HistoryGallery({
   // 虚拟布局
   const layout = useMemo(
     () => computeGridLayout(gridWidth, sortedFiles.length),
-    [gridWidth, sortedFiles.length]
+    [gridWidth, sortedFiles.length],
   );
-  const virtualize =
-    sortedFiles.length > VIRTUALIZE_AT && gridWidth > 0 && layout.cols > 0;
+  const virtualize = sortedFiles.length > VIRTUALIZE_AT && gridWidth > 0 && layout.cols > 0;
   const range = computeVisibleRange(layout, scroll.top, scroll.height);
   const startIdx = virtualize ? range.start * layout.cols : 0;
   const endIdx = virtualize
@@ -564,7 +537,7 @@ export const HistoryGallery = memo(function HistoryGallery({
       event.preventDefault();
       scrollByPage(target);
     },
-    [scrollByPage, virtualize]
+    [scrollByPage, virtualize],
   );
 
   // 网格挂载后:量宽(ResizeObserver) + 挂滚动监听(rAF 节流)
@@ -615,7 +588,7 @@ export const HistoryGallery = memo(function HistoryGallery({
           title: f.name,
         };
       }),
-    [sortedFiles, thumbSrcs]
+    [sortedFiles, thumbSrcs],
   );
 
   // Lightbox 当前项拉原图/视频，相邻项预取缩略图/视频：虚拟滚动下导航
@@ -647,7 +620,7 @@ export const HistoryGallery = memo(function HistoryGallery({
       const idx = sortedFiles.findIndex((f) => f.path === file.path);
       if (idx >= 0) setLightboxIndex(idx);
     },
-    [sortedFiles, ensureThumb, ensureVideo]
+    [sortedFiles, ensureThumb, ensureVideo],
   );
 
   const onRestore = useCallback(
@@ -667,7 +640,7 @@ export const HistoryGallery = memo(function HistoryGallery({
         return false;
       }
     },
-    [onRestoreParams, toast]
+    [onRestoreParams, toast],
   );
 
   const applyAsInitialImage = useCallback(
@@ -683,7 +656,7 @@ export const HistoryGallery = memo(function HistoryGallery({
         return false;
       }
     },
-    [onUseAsInit, toast]
+    [onUseAsInit, toast],
   );
 
   // 删除磁盘文件(不可逆,由两段式按钮确认)。成功后从列表移除、
@@ -708,7 +681,7 @@ export const HistoryGallery = memo(function HistoryGallery({
         toast("删除失败: " + formatError(e), true);
       }
     },
-    [toast]
+    [toast],
   );
 
   return (
@@ -718,9 +691,7 @@ export const HistoryGallery = memo(function HistoryGallery({
       ) : loading ? (
         <span className="spinner block mx-auto my-2" />
       ) : mediaFiles.length === 0 ? (
-        <p className="text-muted text-xs py-1">
-          {vostok ? "暂无回传记录" : "暂无历史记录"}
-        </p>
+        <p className="text-muted text-xs py-1">{vostok ? "暂无回传记录" : "暂无历史记录"}</p>
       ) : (
         <>
           <div className="flex items-end gap-2">
@@ -788,9 +759,7 @@ export const HistoryGallery = memo(function HistoryGallery({
                     videoUrl={videoSrcsRef.current.get(file.path) || ""}
                     retryToken={retryToken}
                     onOpen={openTile}
-                    onNeedSrc={() =>
-                      isVideoFile(file) ? ensureVideo(file) : ensureThumb(file)
-                    }
+                    onNeedSrc={() => (isVideoFile(file) ? ensureVideo(file) : ensureThumb(file))}
                     style={{
                       position: "absolute",
                       left: pos.left,
@@ -812,9 +781,7 @@ export const HistoryGallery = memo(function HistoryGallery({
                   videoUrl={videoSrcsRef.current.get(f.path) || ""}
                   retryToken={retryToken}
                   onOpen={openTile}
-                  onNeedSrc={() =>
-                    isVideoFile(f) ? ensureVideo(f) : ensureThumb(f)
-                  }
+                  onNeedSrc={() => (isVideoFile(f) ? ensureVideo(f) : ensureThumb(f))}
                 />
               ))}
             </div>
@@ -888,5 +855,3 @@ export const HistoryGallery = memo(function HistoryGallery({
     </Panel>
   );
 });
-
-

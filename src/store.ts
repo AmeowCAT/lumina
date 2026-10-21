@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import { DEFAULT_SD_PORT, DEFAULT_SIZE_STEP, normalizeSizeStep, trimJobsToBudget } from "./lib/utils";
+import {
+  DEFAULT_SD_PORT,
+  DEFAULT_SIZE_STEP,
+  normalizeSizeStep,
+  trimJobsToBudget,
+} from "./lib/utils";
 import type {
   Capabilities,
   GenMode,
@@ -101,13 +106,8 @@ interface StoreState {
   refImages: string[];
   controlFrames: string[];
   setImage: (
-    which:
-      | "initImage"
-      | "maskImage"
-      | "controlImage"
-      | "ipAdapterImage"
-      | "endImage",
-    v: string | null
+    which: "initImage" | "maskImage" | "controlImage" | "ipAdapterImage" | "endImage",
+    v: string | null,
   ) => void;
   setRefImages: (updater: (r: string[]) => string[]) => void;
   setControlFrames: (updater: (r: string[]) => string[]) => void;
@@ -155,10 +155,7 @@ const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const MAX_TOASTS = 3;
 
 function scheduleToastDismiss(id: number, error: boolean) {
-  const t = setTimeout(
-    () => useStore.getState().dismissToast(id),
-    error ? 12_000 : 4_000
-  );
+  const t = setTimeout(() => useStore.getState().dismissToast(id), error ? 12_000 : 4_000);
   toastTimers.set(id, t);
 }
 
@@ -177,7 +174,7 @@ function parseStepProgress(text: string): { step: number; total: number } | null
 function mergeProgressLine(
   logs: LogLine[],
   lastProgress: boolean,
-  text: string
+  text: string,
 ): { logs: LogLine[]; lastProgress: boolean } {
   if (lastProgress && logs.length > 0) {
     const next = logs.slice();
@@ -205,7 +202,7 @@ export const useStore = create<StoreState>((set, get) => ({
       scheduleToastDismiss(existing.id, error);
       set((s) => ({
         toasts: s.toasts.map((t) =>
-          t.id === existing.id ? { ...t, count: (t.count ?? 1) + 1 } : t
+          t.id === existing.id ? { ...t, count: (t.count ?? 1) + 1 } : t,
         ),
       }));
       return;
@@ -277,8 +274,7 @@ export const useStore = create<StoreState>((set, get) => ({
   familyOverride: "",
   setFamilyOverride: (f) => set({ familyOverride: f }),
   components: {},
-  setComponents: (updater) =>
-    set((s) => ({ components: updater(s.components) })),
+  setComponents: (updater) => set((s) => ({ components: updater(s.components) })),
 
   caps: null,
   setCaps: (c) => set({ caps: c }),
@@ -323,10 +319,8 @@ export const useStore = create<StoreState>((set, get) => ({
   refImages: [],
   controlFrames: [],
   setImage: (which, v) => set({ [which]: v } as Partial<StoreState>),
-  setRefImages: (updater) =>
-    set((s) => ({ refImages: updater(s.refImages) })),
-  setControlFrames: (updater) =>
-    set((s) => ({ controlFrames: updater(s.controlFrames) })),
+  setRefImages: (updater) => set((s) => ({ refImages: updater(s.refImages) })),
+  setControlFrames: (updater) => set((s) => ({ controlFrames: updater(s.controlFrames) })),
   seedRandom: true,
   setSeedRandom: (v) => set({ seedRandom: v }),
   sizeStep: DEFAULT_SIZE_STEP,
@@ -356,9 +350,7 @@ export const useStore = create<StoreState>((set, get) => ({
       if (parsed) {
         const now = Date.now();
         const startedAt =
-          parsed.step <= 1 ||
-          s.progressTotal !== parsed.total ||
-          s.progressStartedAt <= 0
+          parsed.step <= 1 || s.progressTotal !== parsed.total || s.progressStartedAt <= 0
             ? now
             : s.progressStartedAt;
         const merged = mergeProgressLine(s.logs, s.lastProgress, text);
@@ -396,9 +388,7 @@ export const useStore = create<StoreState>((set, get) => ({
         if (parsed) {
           const now = Date.now();
           progressStartedAt =
-            parsed.step <= 1 ||
-            progressTotal !== parsed.total ||
-            progressStartedAt <= 0
+            parsed.step <= 1 || progressTotal !== parsed.total || progressStartedAt <= 0
               ? now
               : progressStartedAt;
           progressStep = parsed.step;
@@ -422,8 +412,7 @@ export const useStore = create<StoreState>((set, get) => ({
   progressStartedAt: 0,
   setProgress: (step, total, startedAt) =>
     set({ progressStep: step, progressTotal: total, progressStartedAt: startedAt }),
-  clearProgress: () =>
-    set({ progressStep: 0, progressTotal: 0, progressStartedAt: 0 }),
+  clearProgress: () => set({ progressStep: 0, progressTotal: 0, progressStartedAt: 0 }),
 }));
 
 // Persist seedRandom to mirror the webui behaviour.

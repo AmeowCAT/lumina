@@ -3,11 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Sparkles } from "lucide-react";
 import type { ImageSaveState, ResultEntry } from "../../store";
 import type { JobConfig, JobResult } from "../../types";
-import {
-  UNPLAYABLE_VIDEO_HINT,
-  isUnplayableVideoMime,
-  type LightboxItem,
-} from "../ui/Lightbox";
+import { UNPLAYABLE_VIDEO_HINT, isUnplayableVideoMime, type LightboxItem } from "../ui/Lightbox";
 import { useVideoPoster } from "../../hooks/useVideoPoster";
 import { useTheme } from "../../lib/theme";
 import { cn } from "../ui/cn";
@@ -16,13 +12,7 @@ import { TwoTapButton } from "../ui/TwoTapButton";
 import { VostokPoster } from "../ui/VostokArt";
 
 /** 视频瓦片:首帧 poster(加载前不再黑屏),展示属性按场景传入 */
-function VideoTile({
-  url,
-  autoplay,
-}: {
-  url: string;
-  autoplay?: boolean;
-}) {
+function VideoTile({ url, autoplay }: { url: string; autoplay?: boolean }) {
   const poster = useVideoPoster(url);
   return autoplay ? (
     <video src={url} controls autoPlay loop muted poster={poster ?? undefined} />
@@ -200,7 +190,7 @@ function elapsedLabel(created?: number, completedAt?: number): string {
 function buildLightboxItems(
   results: ResultEntry[],
   getImageUrl: (b64: string, fmt: string) => string,
-  getVideoUrl: (jobId: string, b64: string, mime: string) => string
+  getVideoUrl: (jobId: string, b64: string, mime: string) => string,
 ): { items: LightboxItem[]; indexOf: Map<string, number> } {
   const items: LightboxItem[] = [];
   const indexOf = new Map<string, number>();
@@ -258,8 +248,7 @@ const cardMotion = {
 } as const;
 
 /** 图片的保存键:与 ingest 时相同,index 缺省按渲染顺序 */
-const imageKey = (imgIndex: number | undefined, ii: number) =>
-  String(imgIndex ?? ii);
+const imageKey = (imgIndex: number | undefined, ii: number) => String(imgIndex ?? ii);
 
 /** 保存到输出目录的图标按钮(与"下载"弹窗选路径区分) */
 function SaveToDirButton({
@@ -330,7 +319,7 @@ function FeaturedResult({
   if (images.length > 0) {
     const fmt = entry.result?.output_format || "png";
     const allSaved = images.every(
-      (img, ii) => entry.saves?.[imageKey(img.index, ii)]?.status === "saved"
+      (img, ii) => entry.saves?.[imageKey(img.index, ii)]?.status === "saved",
     );
     return (
       <motion.section
@@ -344,14 +333,10 @@ function FeaturedResult({
             const src = getImageUrl(img.b64_json, fmt);
             const seedInfo = seedLabel(entry.config, img.index ?? ii);
             const key = imageKey(img.index, ii);
-            const lbIndex =
-              indexOf.get(`${entry.jobId}:${img.index ?? ii}`) ?? 0;
+            const lbIndex = indexOf.get(`${entry.jobId}:${img.index ?? ii}`) ?? 0;
             const saveState = entry.saves?.[key];
             return (
-              <figure
-                key={`${entry.jobId}-${img.index ?? ii}`}
-                className="featured-item"
-              >
+              <figure key={`${entry.jobId}-${img.index ?? ii}`} className="featured-item">
                 <button
                   type="button"
                   className="featured-preview-button"
@@ -390,9 +375,7 @@ function FeaturedResult({
                     className="btn btn-sm"
                     title={
                       entry.config && entry.config.params.seed >= 0
-                        ? `应用此配置（种子 ${
-                            entry.config.params.seed + (img.index ?? ii)
-                          }）`
+                        ? `应用此配置（种子 ${entry.config.params.seed + (img.index ?? ii)}）`
                         : "应用此配置"
                     }
                     aria-label="应用此图片的生成配置"
@@ -408,10 +391,9 @@ function FeaturedResult({
                         img.b64_json,
                         fmt,
                         undefined,
-                        entry.config?.params?.seed != null &&
-                          entry.config.params.seed >= 0
+                        entry.config?.params?.seed != null && entry.config.params.seed >= 0
                           ? entry.config.params.seed + (img.index ?? ii)
-                          : undefined
+                          : undefined,
                       )
                     }
                   >
@@ -460,9 +442,7 @@ function FeaturedResult({
               className="btn btn-sm"
               title="把本批全部图片保存到输出目录"
               onClick={() =>
-                images.forEach((img, ii) =>
-                  onSaveImage(entry.jobId, imageKey(img.index, ii))
-                )
+                images.forEach((img, ii) => onSaveImage(entry.jobId, imageKey(img.index, ii)))
               }
             >
               {IC.save} 保存整批
@@ -535,9 +515,7 @@ function FeaturedResult({
             <button
               className="btn btn-sm"
               aria-label={animated ? "下载动图" : "下载视频"}
-              onClick={() =>
-                onDownload(b64, entry.result!.output_format, mime)
-              }
+              onClick={() => onDownload(b64, entry.result!.output_format, mime)}
             >
               {IC.dl} 下载
             </button>
@@ -602,7 +580,7 @@ export const ResultsGrid = memo(function ResultsGrid({
   // 生成过程中 previewSrc 每 2 秒变一次就会触发一轮，实测 4.8ms/轮（审查 §2.10）。
   const { items, indexOf } = useMemo(
     () => buildLightboxItems(results, getImageUrl, getVideoUrl),
-    [results, getImageUrl, getVideoUrl]
+    [results, getImageUrl, getVideoUrl],
   );
 
   // 新结果落地时回到顶部聚焦区，保证新图一出现就在眼前。
@@ -634,7 +612,7 @@ export const ResultsGrid = memo(function ResultsGrid({
             "empty-state",
             "empty-state-hero",
             "vostok-hero",
-            generating && "generating"
+            generating && "generating",
           )}
         >
           <div className="vostok-hero-art">
@@ -691,9 +669,7 @@ export const ResultsGrid = memo(function ResultsGrid({
 
   return (
     <div className="results-workspace" ref={wrapRef}>
-      {livePreviewSrc && (
-        <LivePreviewFrame src={livePreviewSrc} label={previewLabel} />
-      )}
+      {livePreviewSrc && <LivePreviewFrame src={livePreviewSrc} label={previewLabel} />}
       <FeaturedResult
         entry={featured}
         items={items}
@@ -723,8 +699,7 @@ export const ResultsGrid = memo(function ResultsGrid({
                     const key = imageKey(img.index, ii);
                     const saveState = r.saves?.[key];
                     const savedInfo = partSaveLabel(saveState);
-                    const lbIndex =
-                      indexOf.get(`${r.jobId}:${img.index ?? ii}`) ?? 0;
+                    const lbIndex = indexOf.get(`${r.jobId}:${img.index ?? ii}`) ?? 0;
                     return (
                       <motion.div
                         key={`${r.jobId}-${img.index ?? ii}`}
@@ -790,20 +765,14 @@ export const ResultsGrid = memo(function ResultsGrid({
                               aria-label="放大此图片"
                               onClick={() => onUpscale(img.b64_json, fmt)}
                             >
-                              <Sparkles
-                                size={13}
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
+                              <Sparkles size={13} strokeWidth={2} aria-hidden="true" />
                             </button>
                           )}
                           <button
                             className="btn btn-sm"
                             title={
                               r.config && r.config.params.seed >= 0
-                                ? `应用此配置（种子 ${
-                                    r.config.params.seed + (img.index ?? ii)
-                                  }）`
+                                ? `应用此配置（种子 ${r.config.params.seed + (img.index ?? ii)}）`
                                 : "应用此配置"
                             }
                             aria-label="应用此图片的生成配置"
@@ -819,10 +788,9 @@ export const ResultsGrid = memo(function ResultsGrid({
                                 img.b64_json,
                                 fmt,
                                 undefined,
-                                r.config?.params?.seed != null &&
-                                  r.config.params.seed >= 0
+                                r.config?.params?.seed != null && r.config.params.seed >= 0
                                   ? r.config.params.seed + (img.index ?? ii)
-                                  : undefined
+                                  : undefined,
                               )
                             }
                           >
@@ -871,9 +839,7 @@ export const ResultsGrid = memo(function ResultsGrid({
                       <div className="result-meta">
                         <span>{r.result.fps} FPS</span>
                         <span>{r.result.frame_count} 帧</span>
-                        <span>
-                          {(r.result.output_format || "webm").toUpperCase()}
-                        </span>
+                        <span>{(r.result.output_format || "webm").toUpperCase()}</span>
                         {savedInfo && (
                           <span
                             className={`meta-save ${savedInfo.className}`}
@@ -896,9 +862,7 @@ export const ResultsGrid = memo(function ResultsGrid({
                       <div className="result-card-actions">
                         <SaveToDirButton
                           state={saveState}
-                          ariaLabel={
-                            animated ? "保存动图到输出目录" : "保存视频到输出目录"
-                          }
+                          ariaLabel={animated ? "保存动图到输出目录" : "保存视频到输出目录"}
                           onSave={() => onSaveImage(r.jobId, "v")}
                         />
                         <button
@@ -912,9 +876,7 @@ export const ResultsGrid = memo(function ResultsGrid({
                         <button
                           className="btn btn-sm"
                           title="应用此配置"
-                          aria-label={
-                            animated ? "应用此动图的生成配置" : "应用此视频的生成配置"
-                          }
+                          aria-label={animated ? "应用此动图的生成配置" : "应用此视频的生成配置"}
                           onClick={() => onApplyConfig(r.config)}
                         >
                           {IC.refresh}
@@ -922,9 +884,7 @@ export const ResultsGrid = memo(function ResultsGrid({
                         <button
                           className="btn btn-sm"
                           aria-label={animated ? "下载动图" : "下载视频"}
-                          onClick={() =>
-                            onDownload(b64, r.result!.output_format, mime)
-                          }
+                          onClick={() => onDownload(b64, r.result!.output_format, mime)}
                         >
                           {IC.dl} 下载
                         </button>

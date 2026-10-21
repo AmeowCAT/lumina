@@ -118,9 +118,7 @@ describe("App 阶段机", () => {
 
     render(<App />);
 
-    expect(
-      screen.getByText(/正在检查启动器和服务器状态/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/正在检查启动器和服务器状态/)).toBeInTheDocument();
     expect(screen.queryByTestId("generation-ui")).not.toBeInTheDocument();
     expect(screen.queryByTestId("dashboard")).not.toBeInTheDocument();
   });
@@ -148,7 +146,7 @@ describe("App 阶段机", () => {
   it("在工作室里失联 → 报「连接已断开」并清空能力信息", async () => {
     useStore.setState({ caps: caps(), dashboardOpen: false });
     mocks.serverStatus.mockResolvedValue(
-      status({ running: false, reachable: false, external: false, phase: "stopped" })
+      status({ running: false, reachable: false, external: false, phase: "stopped" }),
     );
 
     render(<App />);
@@ -162,7 +160,7 @@ describe("App 阶段机", () => {
   it("在控制台里切模型导致的不可达 → 静默清空能力，不弹假错误（§2.7 回归）", async () => {
     useStore.setState({ caps: caps(), dashboardOpen: true });
     mocks.serverStatus.mockResolvedValue(
-      status({ running: false, reachable: false, external: false, phase: "stopped" })
+      status({ running: false, reachable: false, external: false, phase: "stopped" }),
     );
 
     render(<App />);
@@ -223,7 +221,7 @@ describe("App 阶段机", () => {
 
   it("失联后恢复（可达 + 能力就绪）→ 回到生成界面", async () => {
     mocks.serverStatus.mockResolvedValue(
-      status({ running: false, reachable: false, external: false, phase: "stopped" })
+      status({ running: false, reachable: false, external: false, phase: "stopped" }),
     );
 
     render(<App />);

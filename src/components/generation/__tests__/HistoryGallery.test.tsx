@@ -32,9 +32,7 @@ vi.mock("../../../api", () => ({
 import { useStore } from "../../../store";
 import { HistoryGallery } from "../HistoryGallery";
 
-const mockState = (
-  useStore as unknown as { __state: { settings: { outputDir: string } } }
-).__state;
+const mockState = (useStore as unknown as { __state: { settings: { outputDir: string } } }).__state;
 
 describe("HistoryGallery", () => {
   beforeEach(() => {
@@ -62,7 +60,7 @@ describe("HistoryGallery", () => {
     fireEvent.click(
       await screen.findByRole("button", {
         name: "查看历史图片 result.png（含生成参数）",
-      })
+      }),
     );
 
     // 统一 Lightbox:aria-label 即文件名,自带滚轮缩放与导航
@@ -72,8 +70,8 @@ describe("HistoryGallery", () => {
     await waitFor(() =>
       expect(onRestoreParams).toHaveBeenCalledWith(
         { prompt: "mountains", seed: 42 },
-        "data:image/png;base64,aW1hZ2U="
-      )
+        "data:image/png;base64,aW1hZ2U=",
+      ),
     );
   });
 
@@ -83,7 +81,7 @@ describe("HistoryGallery", () => {
     fireEvent.click(
       await screen.findByRole("button", {
         name: "查看历史图片 result.png（含生成参数）",
-      })
+      }),
     );
 
     const dialog = screen.getByRole("dialog", { name: "result.png" });
@@ -96,7 +94,7 @@ describe("HistoryGallery", () => {
     fireEvent.click(
       await screen.findByRole("button", {
         name: "查看历史图片 result.png（含生成参数）",
-      })
+      }),
     );
 
     // 第一击只武装,不执行删除
@@ -106,37 +104,26 @@ describe("HistoryGallery", () => {
     // 第二击确认:调用后端删除、关闭预览、从列表移除
     fireEvent.click(screen.getByRole("button", { name: "确认删除该文件" }));
     await waitFor(() =>
-      expect(mocks.deleteOutputFile).toHaveBeenCalledWith("C:/output/result.png")
+      expect(mocks.deleteOutputFile).toHaveBeenCalledWith("C:/output/result.png"),
     );
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "result.png" })).toBeNull()
-    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "result.png" })).toBeNull());
     expect(screen.getByText("暂无历史记录")).toBeTruthy();
   });
 
   it("searches embedded prompts and can use a history item as the initial image", async () => {
     const onUseAsInit = vi.fn();
-    render(
-      <HistoryGallery
-        onRestoreParams={vi.fn()}
-        onUseAsInit={onUseAsInit}
-      />
-    );
+    render(<HistoryGallery onRestoreParams={vi.fn()} onUseAsInit={onUseAsInit} />);
 
     const search = await screen.findByLabelText("搜索历史");
     fireEvent.change(search, { target: { value: "mountains" } });
     fireEvent.click(
       screen.getByRole("button", {
         name: "查看历史图片 result.png（含生成参数）",
-      })
+      }),
     );
     fireEvent.click(screen.getByRole("button", { name: "用作初始图片" }));
 
-    await waitFor(() =>
-      expect(onUseAsInit).toHaveBeenCalledWith(
-        "data:image/png;base64,aW1hZ2U="
-      )
-    );
+    await waitFor(() => expect(onUseAsInit).toHaveBeenCalledWith("data:image/png;base64,aW1hZ2U="));
   });
 
   it("shows saved videos as tiles and plays them in the Lightbox", async () => {
@@ -157,16 +144,12 @@ describe("HistoryGallery", () => {
 
     render(<HistoryGallery onRestoreParams={vi.fn()} />);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "查看历史视频 clip.webm" })
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "查看历史视频 clip.webm" }));
 
     const dialog = screen.getByRole("dialog", { name: "clip.webm" });
     expect(dialog.querySelector("video")).toBeTruthy();
     // 视频条目不用图片动作（无法作为初始图片/恢复参数）
-    expect(
-      screen.queryByRole("button", { name: "用作初始图片" })
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "用作初始图片" })).toBeNull();
     await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
 
     URL.createObjectURL = origCreate;
@@ -184,7 +167,7 @@ describe("HistoryGallery", () => {
     const slowOld = deferred();
     const fastNew = deferred();
     mocks.listOutputFiles.mockImplementation((dir: string) =>
-      dir === "C:/output" ? slowOld.promise : fastNew.promise
+      dir === "C:/output" ? slowOld.promise : fastNew.promise,
     );
 
     const { rerender } = render(<HistoryGallery onRestoreParams={vi.fn()} />);
@@ -214,13 +197,9 @@ describe("HistoryGallery", () => {
       },
     ]);
     await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "查看历史图片 old.png" })
-      ).toBeNull()
+      expect(screen.queryByRole("button", { name: "查看历史图片 old.png" })).toBeNull(),
     );
-    expect(
-      screen.getByRole("button", { name: "查看历史图片 new.png" })
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "查看历史图片 new.png" })).toBeTruthy();
   });
 });
 
@@ -237,9 +216,7 @@ describe("HistoryGallery 缓存释放与容器判定", () => {
     mockState.settings.outputDir = "C:/output";
     mocks.readFileB64.mockResolvedValue("AAAA");
     mocks.readThumbnail.mockResolvedValue({ b64: "aW1hZ2U=", mime: "image/jpeg" });
-    createSpy = vi
-      .spyOn(URL, "createObjectURL")
-      .mockReturnValue("blob:mock-video");
+    createSpy = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock-video");
     revokeSpy = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   });
 
@@ -274,7 +251,7 @@ describe("HistoryGallery 缓存释放与容器判定", () => {
     mocks.readFileB64.mockReturnValue(
       new Promise<string>((resolve) => {
         resolveRead = resolve;
-      })
+      }),
     );
 
     const { unmount } = render(<HistoryGallery onRestoreParams={vi.fn()} />);
@@ -300,9 +277,7 @@ describe("HistoryGallery 缓存释放与容器判定", () => {
     ]);
     render(<HistoryGallery onRestoreParams={vi.fn()} />);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "查看历史视频 clip.avi" })
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "查看历史视频 clip.avi" }));
 
     const dialog = screen.getByRole("dialog", { name: "clip.avi" });
     expect(screen.getByRole("note").textContent).toContain("AVI");

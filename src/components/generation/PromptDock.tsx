@@ -51,12 +51,9 @@ function useActiveFamily(enabled: boolean): string {
   const caps = useStore((s) => s.caps);
   const modelPath = caps?.model?.path || caps?.model?.name || "";
   const overrideActive =
-    enabled &&
-    !!override &&
-    !!FAMILY_CONFIG[override] &&
-    sameModelPath(modelPath, mainModel);
+    enabled && !!override && !!FAMILY_CONFIG[override] && sameModelPath(modelPath, mainModel);
   const [detected, setDetected] = useState(
-    () => (enabled && modelPath && familyByPath.get(modelPath)) || ""
+    () => (enabled && modelPath && familyByPath.get(modelPath)) || "",
   );
 
   useEffect(() => {
@@ -200,9 +197,7 @@ export const PromptDock = memo(function PromptDock({
       ? `估算 ≈${tokenCount} / ${tokenLimit} tokens（${familyName}上限，含模板后缀）；按字符数/3.5 粗估，超出部分会被内核截断。`
       : `按字符数/3.5 粗估；${familyName}没有已知的提示词上限。`;
   const tokenText =
-    tokenLimit != null
-      ? `≈${tokenCount} / ${tokenLimit} tokens`
-      : `≈${tokenCount} tokens`;
+    tokenLimit != null ? `≈${tokenCount} / ${tokenLimit} tokens` : `≈${tokenCount} tokens`;
   const showTokenCount = tokenLimit != null || tokenCount > 0;
   return (
     <div className="prompt-dock">
@@ -322,11 +317,7 @@ export const PromptDock = memo(function PromptDock({
             step={0.5}
           />
         </ChipEditor>
-        <button
-          className="btn btn-primary generate-btn"
-          onClick={onGenerate}
-          disabled={disabled}
-        >
+        <button className="btn btn-primary generate-btn" onClick={onGenerate} disabled={disabled}>
           {submitting ? (
             <>
               <span className="spinner" /> 提交中
@@ -355,9 +346,7 @@ export const PromptDock = memo(function PromptDock({
             idle={"插入 LingBot JSON 模板"}
             armed={"确认替换?"}
           />
-          <span className="field-hint">
-            也可继续使用普通文本；以 JSON 开头时会在提交前校验格式
-          </span>
+          <span className="field-hint">也可继续使用普通文本；以 JSON 开头时会在提交前校验格式</span>
         </div>
       )}
     </div>

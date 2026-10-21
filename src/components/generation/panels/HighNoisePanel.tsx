@@ -161,9 +161,7 @@ export const HighNoisePanel = memo(function HighNoisePanel({
         <Slider
           label="蒸馏 CFG (高噪)"
           value={hsp?.guidance?.distilled_guidance ?? 0}
-          onChange={(v) =>
-            onUpdate("high_noise_sample_params.guidance.distilled_guidance", v)
-          }
+          onChange={(v) => onUpdate("high_noise_sample_params.guidance.distilled_guidance", v)}
           min={0}
           max={30}
           step={0.5}
@@ -203,9 +201,7 @@ export const HighNoisePanel = memo(function HighNoisePanel({
           className="input"
           type="text"
           value={hsp?.extra_sample_args ?? ""}
-          onChange={(e) =>
-            onUpdate("high_noise_sample_params.extra_sample_args", e.target.value)
-          }
+          onChange={(e) => onUpdate("high_noise_sample_params.extra_sample_args", e.target.value)}
           placeholder="例如 gamma=3,apg_eta=0.8"
         />
         <div className="field-hint field-hint-flush mt-0.5">

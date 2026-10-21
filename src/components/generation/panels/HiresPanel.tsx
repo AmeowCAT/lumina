@@ -13,14 +13,11 @@ interface Props {
   onUpdate: (path: string, v: unknown) => void;
 }
 
-export const HiresPanel = memo(function HiresPanel({
-  hires,
-  upscalers,
-  onUpdate,
-}: Props) {
-  const options = (upscalers.length ? upscalers : BUILTIN_UPSCALERS).map(
-    (u) => ({ value: u, label: u })
-  );
+export const HiresPanel = memo(function HiresPanel({ hires, upscalers, onUpdate }: Props) {
+  const options = (upscalers.length ? upscalers : BUILTIN_UPSCALERS).map((u) => ({
+    value: u,
+    label: u,
+  }));
   return (
     <Panel title="高清修复" collapsed>
       <Toggle
@@ -59,9 +56,7 @@ export const HiresPanel = memo(function HiresPanel({
           <Slider
             label="降噪"
             value={hires.denoising_strength ?? 0.7}
-            onChange={(v) =>
-              onUpdate("hires", { ...hires, denoising_strength: v })
-            }
+            onChange={(v) => onUpdate("hires", { ...hires, denoising_strength: v })}
             min={0}
             max={1}
             step={0.05}
@@ -96,9 +91,7 @@ export const HiresPanel = memo(function HiresPanel({
           <Slider
             label="放大分块"
             value={hires.upscale_tile_size ?? 128}
-            onChange={(v) =>
-              onUpdate("hires", { ...hires, upscale_tile_size: v })
-            }
+            onChange={(v) => onUpdate("hires", { ...hires, upscale_tile_size: v })}
             min={32}
             max={1024}
             step={32}

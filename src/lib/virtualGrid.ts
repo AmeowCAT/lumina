@@ -27,7 +27,7 @@ export interface GridLayout {
 export function computeGridLayout(
   width: number,
   count: number,
-  opts: GridLayoutOpts = {}
+  opts: GridLayoutOpts = {},
 ): GridLayout {
   const minTile = opts.minTile ?? 88;
   const gap = opts.gap ?? 6;
@@ -51,16 +51,13 @@ export function computeVisibleRange(
   layout: GridLayout,
   scrollTop: number,
   viewportHeight: number,
-  overscanRows = 2
+  overscanRows = 2,
 ): VisibleRange {
   if (layout.rows === 0 || layout.rowH <= 0) return { start: 0, end: 0 };
-  const firstRow = Math.max(
-    0,
-    Math.floor(scrollTop / layout.rowH) - overscanRows
-  );
+  const firstRow = Math.max(0, Math.floor(scrollTop / layout.rowH) - overscanRows);
   const lastRow = Math.min(
     layout.rows - 1,
-    Math.ceil((scrollTop + viewportHeight) / layout.rowH) + overscanRows
+    Math.ceil((scrollTop + viewportHeight) / layout.rowH) + overscanRows,
   );
   // 滚过内容底部时把 start 也钉在末行,保持 start <= end 不变量
   const start = Math.min(firstRow, lastRow);

@@ -72,10 +72,7 @@ export function UpscaleDialog({
       return;
     }
     const startedAt = Date.now();
-    const iv = setInterval(
-      () => setElapsed(Math.floor((Date.now() - startedAt) / 1000)),
-      1000
-    );
+    const iv = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
     return () => clearInterval(iv);
   }, [busy]);
 
@@ -216,12 +213,7 @@ export function UpscaleDialog({
             </div>
           )}
           <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={onClose}
-              disabled={busy}
-            >
+            <button type="button" className="btn btn-sm" onClick={onClose} disabled={busy}>
               取消
             </button>
             <div className="header-spacer flex-1" />
@@ -238,11 +230,7 @@ export function UpscaleDialog({
                 })
               }
             >
-              {busy
-                ? elapsed > 0
-                  ? `放大中… ${elapsed}s`
-                  : "放大中…"
-                : "开始放大"}
+              {busy ? (elapsed > 0 ? `放大中… ${elapsed}s` : "放大中…") : "开始放大"}
             </button>
           </div>
         </div>

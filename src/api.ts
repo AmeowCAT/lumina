@@ -23,7 +23,7 @@ export const api = {
     modelName: string,
     mode: GenMode | null,
     args: ServerArgs,
-    port: number
+    port: number,
   ) =>
     invoke<{ pid: number; sdPort: number }>("start_server", {
       exePath,
@@ -34,12 +34,9 @@ export const api = {
     }),
 
   stopServer: () =>
-    invoke<{ stopped: boolean; alreadyStopped: boolean; pid?: number | null }>(
-      "stop_server"
-    ),
+    invoke<{ stopped: boolean; alreadyStopped: boolean; pid?: number | null }>("stop_server"),
   serverStatus: () => invoke<ServerStatus>("server_status"),
-  inspectServer: (exePath: string) =>
-    invoke<CliCapabilities>("inspect_server", { exePath }),
+  inspectServer: (exePath: string) => invoke<CliCapabilities>("inspect_server", { exePath }),
   preflightServer: (exePath: string, args: ServerArgs, port: number) =>
     invoke<CliCapabilities>("preflight_server", { exePath, args, port }),
   scanModels: (dir: string) => invoke<ScanResult>("scan_models", { dir }),
@@ -82,21 +79,26 @@ export const api = {
     invoke<{ status: number; body: Job | ApiErrorBody }>("sdcpp_job", {
       id,
     }),
-  sdcppCancel: (id: string) =>
-    invoke<{ status: number; body: unknown }>("sdcpp_cancel", { id }),
+  sdcppCancel: (id: string) => invoke<{ status: number; body: unknown }>("sdcpp_cancel", { id }),
 
   /**
    * 独立放大（上游 #2026）：**同步**接口，服务端不创建任务，成功时结果图
    * 直接在响应体里返回，因此没有可轮询的 job id。失败仍是 `{error: string}`。
    */
   sdcppUpscale: (body: UpscaleRequest) =>
-    invoke<{ status: number; body: UpscaleResponse | ApiErrorBody }>(
-      "sdcpp_upscale",
-      { body }
-    ),
+    invoke<{ status: number; body: UpscaleResponse | ApiErrorBody }>("sdcpp_upscale", { body }),
 
   listOutputFiles: (dir: string) =>
-    invoke<{ path: string; name: string; size: number; modified: number; ext: string; metadata?: Record<string, unknown> }[]>("list_output_files", { dir }),
+    invoke<
+      {
+        path: string;
+        name: string;
+        size: number;
+        modified: number;
+        ext: string;
+        metadata?: Record<string, unknown>;
+      }[]
+    >("list_output_files", { dir }),
 
   readFileB64: (path: string) => invoke<string>("read_file_b64", { path }),
 

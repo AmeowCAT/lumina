@@ -65,7 +65,7 @@ export function findModelField(config: FamilyConfig) {
 
 function runtimeValue<K extends keyof LaunchRuntime>(
   runtime: LaunchRuntime | ModelConfigSnapshot,
-  key: K
+  key: K,
 ): LaunchRuntime[K] {
   // 快照不携带本机硬件字段（threads / paramsBackend / rpcServers）——它们只存在
   // 于全局设置。宽转换只为统一取值路径；快照缺这些键时运行时就是 undefined，
@@ -104,9 +104,7 @@ export function hasMainTokenizerSlot(raw: string): boolean {
   const value = raw.trim();
   if (!value) return false;
   if (!value.includes("=")) return true;
-  return value
-    .split(",")
-    .some((entry) => entry.slice(0, entry.indexOf("=")).trim() === "main");
+  return value.split(",").some((entry) => entry.slice(0, entry.indexOf("=")).trim() === "main");
 }
 
 /** Build the exact sd-server CLI argument map used for a model launch. */
@@ -147,9 +145,7 @@ export function buildLaunchConfig({
   const paramsBackend = (runtimeValue(runtime, "paramsBackend") || "").trim();
   const rpcServers = (runtimeValue(runtime, "rpcServers") || "").trim();
   const tokenizer = (runtimeValue(runtime, "tokenizer") || "").trim();
-  const conditioningCacheSize = (
-    runtimeValue(runtime, "conditioningCacheSize") || ""
-  ).trim();
+  const conditioningCacheSize = (runtimeValue(runtime, "conditioningCacheSize") || "").trim();
 
   if (modelDir) {
     args["lora-model-dir"] = modelDir;
@@ -217,9 +213,7 @@ export function buildLaunchConfig({
   }
 
   if (family === "pid") {
-    const validVaeFormat = PID_VAE_FORMATS.some(
-      (option) => option.value === vaeFormat
-    );
+    const validVaeFormat = PID_VAE_FORMATS.some((option) => option.value === vaeFormat);
     if (validVaeFormat) {
       args["vae-format"] = vaeFormat as string;
     } else {
@@ -278,7 +272,7 @@ export function persistFamilyDefaults(config: FamilyConfig, storage?: Storage) {
           prompt: typeof previous.prompt === "string" ? previous.prompt : "",
           negative_prompt:
             typeof previous.negative_prompt === "string" ? previous.negative_prompt : "",
-        })
+        }),
       );
     } catch {
       // Parameter persistence is best-effort; launching the server still succeeds.
@@ -451,12 +445,10 @@ export function requiredInputLabel(input: RequiredInput): string {
 export function missingRequiredInputs(
   config: FamilyConfig | undefined,
   mode: GenMode,
-  images: GenImages
+  images: GenImages,
 ): string[] {
   const required = config?.requiredInputsByMode?.[mode] || [];
-  return required
-    .filter((input) => !hasInput(images, input))
-    .map(requiredInputLabel);
+  return required.filter((input) => !hasInput(images, input)).map(requiredInputLabel);
 }
 
 /** 某个必需输入位是否已经有图片。 */
@@ -474,7 +466,7 @@ function hasInput(images: GenImages, input: RequiredInput): boolean {
  */
 export function exclusiveInputConflicts(
   config: FamilyConfig | undefined,
-  images: GenImages
+  images: GenImages,
 ): string[] {
   const conflicts: string[] = [];
   const seen = new Set<string>();

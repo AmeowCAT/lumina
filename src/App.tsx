@@ -17,7 +17,7 @@ import { useTheme } from "./lib/theme";
 const Dashboard = lazy(() =>
   import("./components/dashboard/Dashboard").then((m) => ({
     default: m.Dashboard,
-  }))
+  })),
 );
 
 type Phase = "checking" | "dashboard" | "running";
@@ -64,11 +64,11 @@ export default function App() {
           prev.running !== s.running ||
           prev.reachable !== s.reachable ||
           prev.external !== s.external ||
-           prev.pid !== s.pid ||
-           prev.model !== s.model ||
-           prev.phase !== s.phase ||
-           prev.lastError !== s.lastError ||
-           prev.startedAt !== s.startedAt
+          prev.pid !== s.pid ||
+          prev.model !== s.model ||
+          prev.phase !== s.phase ||
+          prev.lastError !== s.lastError ||
+          prev.startedAt !== s.startedAt
         ) {
           setServerStatus(s);
         }
@@ -94,10 +94,8 @@ export default function App() {
               // 外部 sd-server 没有 startedAt（不是我们 spawn 的），同端口
               // 换外部实例时 identityChanged 检测不到；用 caps 里的模型名
               // 兜底识别切换（对抗性审查 M6）。
-              const capsIdentityChanged =
-                hadCaps && prevCapsModel !== c.model?.name;
-              const freshIdentity =
-                !hadCaps || identityChanged || capsIdentityChanged;
+              const capsIdentityChanged = hadCaps && prevCapsModel !== c.model?.name;
+              const freshIdentity = !hadCaps || identityChanged || capsIdentityChanged;
               setCaps(c);
               lastCapsSync.current = Date.now();
               // current_mode 是服务器启动时的静态默认值（上游 routes_sdcpp.cpp），
@@ -180,9 +178,7 @@ export default function App() {
     listen<{ type: string; text: string }>("server-log", (e) => {
       const p = e.payload;
       pendingEvents.push(
-        p.type === "progress"
-          ? { type: "progress", text: p.text }
-          : { type: "line", text: p.text }
+        p.type === "progress" ? { type: "progress", text: p.text } : { type: "line", text: p.text },
       );
       if (rafId == null) rafId = requestAnimationFrame(flush);
     }).then((f) => {
@@ -209,12 +205,7 @@ export default function App() {
   // 不能据此切回首页——否则接管外部 sd-server 时会和 check() 的
   // setPhase("running") 每 3 秒来回震荡。
   useEffect(() => {
-    if (
-      serverStatus &&
-      !serverStatus.running &&
-      !serverStatus.external &&
-      phase === "running"
-    ) {
+    if (serverStatus && !serverStatus.running && !serverStatus.external && phase === "running") {
       setPhase("dashboard");
     }
   }, [serverStatus, phase]);
@@ -258,16 +249,47 @@ export default function App() {
                 <path id="vostok-patch-bot" d="M 102,74 A 44,44 0 0 1 18,74" fill="none" />
               </defs>
               <circle cx="60" cy="60" r="58" fill="#110e0b" stroke="#eeead8" strokeWidth="1.6" />
-              <circle cx="60" cy="60" r="50" fill="none" stroke="#eeead8" strokeOpacity="0.35" strokeWidth="0.8" />
-              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.6" fill="#eeead8">
-                <textPath href="#vostok-patch-top" startOffset="6%">LUMINA STUDIO</textPath>
+              <circle
+                cx="60"
+                cy="60"
+                r="50"
+                fill="none"
+                stroke="#eeead8"
+                strokeOpacity="0.35"
+                strokeWidth="0.8"
+              />
+              <text
+                fontFamily="JetBrains Mono, monospace"
+                fontSize="8.4"
+                letterSpacing="2.6"
+                fill="#eeead8"
+              >
+                <textPath href="#vostok-patch-top" startOffset="6%">
+                  LUMINA STUDIO
+                </textPath>
               </text>
-              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.2" fill="#eeead8">
-                <textPath href="#vostok-patch-bot" startOffset="4%">ВОСТОК · 东方号</textPath>
+              <text
+                fontFamily="JetBrains Mono, monospace"
+                fontSize="8.4"
+                letterSpacing="2.2"
+                fill="#eeead8"
+              >
+                <textPath href="#vostok-patch-bot" startOffset="4%">
+                  ВОСТОК · 东方号
+                </textPath>
               </text>
               <polygon points="60,26 74,86 46,86" fill="#cf3616" />
               <circle cx="60" cy="26" r="6.5" fill="#eeead8" />
-              <ellipse cx="60" cy="60" rx="34" ry="9" fill="none" stroke="#50afb9" strokeWidth="1.4" transform="rotate(-18 60 60)" />
+              <ellipse
+                cx="60"
+                cy="60"
+                rx="34"
+                ry="9"
+                fill="none"
+                stroke="#50afb9"
+                strokeWidth="1.4"
+                transform="rotate(-18 60 60)"
+              />
               <circle cx="88" cy="44" r="2.2" fill="#eeead8" />
             </svg>
           </div>

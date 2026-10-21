@@ -27,13 +27,13 @@ describe("Dashboard launch arguments", () => {
 
     await waitFor(() => {
       const list = document.getElementById(
-        "dashboard-extra-arg-options"
+        "dashboard-extra-arg-options",
       ) as HTMLDataListElement | null;
       expect(list).toBeTruthy();
       expect([...list!.options].map((o) => o.value)).toContain("--threads");
     });
     expect(screen.getByLabelText("附加启动参数").getAttribute("list")).toBe(
-      "dashboard-extra-arg-options"
+      "dashboard-extra-arg-options",
     );
   });
 
@@ -70,7 +70,7 @@ describe("Dashboard launch arguments", () => {
     await pickOption("主模型", "main.safetensors (1.0 GB)");
     await pickOption(
       "AnimateDiff Motion Module (可选，仅 SD 1.5)",
-      "mm_sd15_v3.safetensors (836 MB)"
+      "mm_sd15_v3.safetensors (836 MB)",
     );
     await pickOption("处理预设", "Flux Kontext");
     fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
@@ -85,8 +85,8 @@ describe("Dashboard launch arguments", () => {
           "motion-module": "/models/mm_sd15_v3.safetensors",
           "ref-image-args": "preset=flux_kontext",
         }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -123,8 +123,8 @@ describe("Dashboard launch arguments", () => {
         "SD 1.x / 2.x",
         null,
         expect.objectContaining({ taesd: "/models/taesd.safetensors" }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -149,8 +149,8 @@ describe("Dashboard launch arguments", () => {
         "SD 1.x / 2.x",
         null,
         expect.objectContaining({ model: "/models/main.safetensors" }),
-        8188
-      )
+        8188,
+      ),
     );
   });
 
@@ -179,7 +179,7 @@ describe("Dashboard launch arguments", () => {
     // 联动输入框与模式下拉必须在同一行（同一 flex 父容器）——此前各自块级
     // 换行 + margin 造成异常缩进的回归守卫。
     expect(budget.parentElement).toBe(
-      screen.getByLabelText("显存预算（--max-vram）").parentElement
+      screen.getByLabelText("显存预算（--max-vram）").parentElement,
     );
     await userEvent.clear(budget);
     await userEvent.type(budget, "7.5");
@@ -194,8 +194,8 @@ describe("Dashboard launch arguments", () => {
         "HiDream-O1",
         null,
         expect.objectContaining({ "max-vram": "7.5" }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -221,8 +221,8 @@ describe("Dashboard launch arguments", () => {
         "HiDream-O1",
         null,
         expect.objectContaining({ "max-vram": "-3" }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -245,8 +245,8 @@ describe("Dashboard launch arguments", () => {
         "HiDream-O1",
         null,
         expect.objectContaining({ "max-vram": "cuda0=6,vulkan0=4" }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -273,8 +273,8 @@ describe("Dashboard launch arguments", () => {
         "SD 1.x / 2.x",
         null,
         expect.anything(),
-        1024
-      )
+        1024,
+      ),
     );
   });
 
@@ -307,7 +307,7 @@ describe("Dashboard launch arguments", () => {
         dir: "/models",
         ext: "safetensors",
         category: "llm",
-      }
+      },
     );
     scan.count = scan.files.length;
     mocks.scanModels.mockResolvedValue(scan);
@@ -330,7 +330,7 @@ describe("Dashboard launch arguments", () => {
       target: { value: "/models/tokenizer_gemma2.json" },
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled(),
     );
     fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
 
@@ -346,8 +346,8 @@ describe("Dashboard launch arguments", () => {
           tokenizer: "/models/tokenizer_gemma2.json",
           "vae-format": "flux",
         }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -390,7 +390,7 @@ describe("Dashboard launch arguments", () => {
         dir: "/models",
         ext: "safetensors",
         category: "t5xxl",
-      }
+      },
     );
     scan.count = scan.files.length;
     mocks.scanModels.mockResolvedValue(scan);
@@ -412,8 +412,8 @@ describe("Dashboard launch arguments", () => {
           t5xxl: "/models/byt5_small_glyphxl_fp16.safetensors",
           "flash-attn": "off,diffusion=on",
         }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -440,8 +440,8 @@ describe("Dashboard launch arguments", () => {
         "HiDream-O1",
         null,
         expect.objectContaining({ threads: 8 }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -469,13 +469,11 @@ describe("Dashboard launch arguments", () => {
     // 上游 --params-backend 明确不接受 `&` 设备列表（docs/backend.md），
     // 拦在 GO/NO-GO 而不是让 sd-server 启动即退。
     fireEvent.change(paramsBackend, { target: { value: "te=cpu&cuda0" } });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled()
-    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled());
 
     fireEvent.change(paramsBackend, { target: { value: "te=cpu,vae=cpu" } });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled(),
     );
     fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
 
@@ -485,8 +483,8 @@ describe("Dashboard launch arguments", () => {
         "HiDream-O1",
         null,
         expect.objectContaining({ "params-backend": "te=cpu,vae=cpu" }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 
@@ -500,15 +498,13 @@ describe("Dashboard launch arguments", () => {
     const rpcServers = screen.getByLabelText("RPC 服务器（--rpc-servers）");
     // 上游对连不上的端点只打日志、不中止启动，写错端口表现为"多机显卡没出现"。
     fireEvent.change(rpcServers, { target: { value: "127.0.0.1" } });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled()
-    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /启动服务器/ })).toBeDisabled());
 
     fireEvent.change(rpcServers, {
       target: { value: "127.0.0.1:50052,192.168.1.10:50052" },
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: /启动服务器/ })).not.toBeDisabled(),
     );
     fireEvent.click(screen.getByRole("button", { name: /启动服务器/ }));
 
@@ -520,8 +516,8 @@ describe("Dashboard launch arguments", () => {
         expect.objectContaining({
           "rpc-servers": "127.0.0.1:50052,192.168.1.10:50052",
         }),
-        1234
-      )
+        1234,
+      ),
     );
   });
 });

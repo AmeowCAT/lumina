@@ -24,7 +24,9 @@ export function CliCompatibility({
     setResult(null);
     setError("");
     setBusy(false);
-    return () => { ++request.current; };
+    return () => {
+      ++request.current;
+    };
   }, [exePath, argsKey, port]);
 
   const inspect = async () => {
@@ -52,15 +54,28 @@ export function CliCompatibility({
       <div className="field-hint field-hint-flush mt-1">
         只读取 --help / --version，不加载或停止模型。启动时还会自动校验；不会改写已保存参数。
       </div>
-      {error && <div role="alert" className="field-hint field-hint-flush mt-1">{error}</div>}
+      {error && (
+        <div role="alert" className="field-hint field-hint-flush mt-1">
+          {error}
+        </div>
+      )}
       {result && (
         <div role="status" className="field-hint field-hint-flush mt-1">
-          <div>{result.verified ? "已确认 CLI 能力" : "CLI 能力未确认"} · {result.version || "内核未报告版本"}</div>
+          <div>
+            {result.verified ? "已确认 CLI 能力" : "CLI 能力未确认"} ·{" "}
+            {result.version || "内核未报告版本"}
+          </div>
           {result.memoryMode === "automatic" && <div>自动分段内核：max-vram 0 不禁用分段。</div>}
-          {result.memoryMode === "legacy" && <div>旧版内核：保留 stream-layers 与旧版显存预算语义。</div>}
-          {result.autoFit === "on-off" && <div>auto-fit 使用 on/off；无手动设备/权重放置时默认开启。</div>}
+          {result.memoryMode === "legacy" && (
+            <div>旧版内核：保留 stream-layers 与旧版显存预算语义。</div>
+          )}
+          {result.autoFit === "on-off" && (
+            <div>auto-fit 使用 on/off；无手动设备/权重放置时默认开启。</div>
+          )}
           {result.autoFit === "flag" && <div>auto-fit 是旧版裸开关，不能附加 on/off。</div>}
-          {result.warnings.map((warning) => <div key={warning}>{warning}</div>)}
+          {result.warnings.map((warning) => (
+            <div key={warning}>{warning}</div>
+          ))}
         </div>
       )}
     </div>

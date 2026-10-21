@@ -2,12 +2,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { useStore, type ImageSaveState, type ResultEntry } from "../store";
 import type { Job } from "../types";
-import {
-  b64ByteLength,
-  extractApiError,
-  formatError,
-  MAX_RESULTS,
-} from "../lib/utils";
+import { b64ByteLength, extractApiError, formatError, MAX_RESULTS } from "../lib/utils";
 import { flashWindow, notifyIfUnfocused } from "../lib/systemIntegration";
 import { MEMORY_BUDGET } from "../lib/memoryBudget";
 
@@ -61,8 +56,7 @@ export function useJobPolling() {
     const iv = setInterval(async () => {
       if (pollBusy.current) return;
       const active = jobsRef.current.filter(
-        (j) =>
-          j.status === "queued" || j.status === "generating" || j.status === "unknown"
+        (j) => j.status === "queued" || j.status === "generating" || j.status === "unknown",
       );
       if (!active.length) return;
       pollBusy.current = true;
@@ -84,9 +78,14 @@ export function useJobPolling() {
               store.setJobs((j) =>
                 j.map((x) =>
                   x.id === job.id
-                    ? { ...x, status: "failed", preview: undefined, error: { message: "任务已失效（服务器重启或任务过期）" } }
-                    : x
-                )
+                    ? {
+                        ...x,
+                        status: "failed",
+                        preview: undefined,
+                        error: { message: "任务已失效（服务器重启或任务过期）" },
+                      }
+                    : x,
+                ),
               );
               continue;
             }
@@ -110,8 +109,8 @@ export function useJobPolling() {
                       pollFailures: 0,
                       lastPollSuccess: Date.now(),
                     }
-                  : x
-              )
+                  : x,
+              ),
             );
             ingestCompletedJob(d);
             if (d.status === "failed") {
@@ -128,12 +127,7 @@ export function useJobPolling() {
         pollBusy.current = false;
       }
       if (expired.length > 0) {
-        useStore
-          .getState()
-          .toast(
-            `${expired.length} 个任务已失效（服务器重启或任务过期）`,
-            true
-          );
+        useStore.getState().toast(`${expired.length} 个任务已失效（服务器重启或任务过期）`, true);
       }
     }, 2000);
     return () => clearInterval(iv);
@@ -159,7 +153,7 @@ function recordPollFailure(id: string, message: string) {
           message: `连续 ${failures} 次无法查询任务状态：${message}`,
         },
       };
-    })
+    }),
   );
 }
 
@@ -171,7 +165,7 @@ function recordPollFailure(id: string, message: string) {
 export async function saveEntryPart(
   jobId: string,
   key: string,
-  opts?: { silent?: boolean }
+  opts?: { silent?: boolean },
 ): Promise<boolean> {
   const silent = opts?.silent === true;
   const store = useStore.getState();
@@ -201,17 +195,14 @@ export async function saveEntryPart(
     return false;
   }
   const name = key === "v" ? `sdcpp_${jobId}` : `sdcpp_${jobId}_${key}`;
-  const mark = (
-    status: ImageSaveState["status"],
-    extra?: Partial<ImageSaveState>
-  ) =>
-    useStore.getState().setResults((rs) =>
-      rs.map((r) =>
-        r.jobId === jobId
-          ? { ...r, saves: { ...r.saves, [key]: { status, ...extra } } }
-          : r
-      )
-    );
+  const mark = (status: ImageSaveState["status"], extra?: Partial<ImageSaveState>) =>
+    useStore
+      .getState()
+      .setResults((rs) =>
+        rs.map((r) =>
+          r.jobId === jobId ? { ...r, saves: { ...r.saves, [key]: { status, ...extra } } } : r,
+        ),
+      );
   mark("saving");
   try {
     const saved = await api.saveOutput(b64, ext, name, dir);
@@ -323,7 +314,7 @@ export const MAX_RESULTS_BYTES = MEMORY_BUDGET.results;
 export function trimResultsToBudget(
   next: ResultEntry[],
   countCap: number,
-  byteCap: number
+  byteCap: number,
 ): ResultEntry[] {
   let totalBytes = next.reduce((acc, e) => acc + resultEntryBytes(e), 0);
   let end = next.length;
