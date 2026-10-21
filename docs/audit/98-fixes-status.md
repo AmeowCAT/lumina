@@ -175,28 +175,30 @@
 |---|---|---|
 | 50-ux F-18 `shifted_timestep` | ✅ | `AdvancedSamplingPanel` 新增「Shifted Timestep」滑杆（0–1000、步进 10、0 = 内核默认），写 `sample_params.shifted_timestep`；`GenerationParamsSheet` 传入 `sp?.shifted_timestep`；+1 测试。该字段一直随请求体发送（`utils.ts:1011`），此前界面无处可改 |
 
-## 剩余（下一轮起）
+## 第二十二轮（剩余项清零：拆分、三控件、F-18、类型门禁）
 
-**Rust（`10-backend-rust.md`）**
-- 无剩余 P2（§2.22 已在第七/八轮拆成 `log_pipe.rs` + `args.rs`，`server.rs` 2209 → 1307 行）
+| 项 | 状态 | 证据 |
+|---|---|---|
+| 60-build §2.13 `Dashboard.test.tsx` 拆分 | ✅ | 712 行 / 20 例拆成 `dashboardTestKit` + `onboarding` / `args` / `snapshot` 三文件，用例名与断言逐字保留（20 = 20）；dashboard 目录 16.83s → **10.87s（−35%）**；全量 408 → 447 例时单文件瓶颈已被并行摊平 |
+| 40-cli §2.9 `--threads` 控件 | ✅ | `Settings.threads`（0 = 不传）+ `args.rs` 映射 + 「运行后端」面板 `NumberInput`（0–256）+ `launchConfig` 只发正数；上游语义：threads ≤ 0 取 CPU 物理核数 |
+| 40-cli §2.9 `--params-backend` 控件 | ✅ | `Settings.paramsBackend` + `params_backend_spec_error`（拦空模块/空后端与 `&` 设备列表，`disk` 合法）+ 面板输入框 + 4 条测试（含 Rust 正反例） |
+| 40-cli §2.9 `--rpc-servers` 控件 | ✅ | `Settings.rpcServers` + `rpc_servers_spec_error`（`host:port`、端口 1–65535、`[::1]` 写法）+ 面板输入框 + 测试；上游连不上只打日志，所以形状必须在 GUI 侧拦 |
+| 三者只存全局设置 | ✅ | `ModelConfigSnapshot` 不含这三项（本机硬件配置，不该随模型切换漂移）；`settings.rs` 单测断言快照里没有它们 |
+| 30-api §2.9 / 50-ux F-18 `cache_option` | ✅ | 按 `cache_mode` 渲染 3–7 个结构化子控件，spec 顺序即拼串顺序（输出与键序无关）；切模式裁剪草稿，`threshold`/`warmup` 按「实际写入的上游字段」判断（EasyCache↔UCache 保留、跨组丢弃） |
+| F-18 `scm_mask` | ✅ | 仅块级三种模式显示，`^[01](,[01])*$` 之外 `role="alert"` + **永不下发**；上游 `parse_scm_mask` 的 `std::stoi` 无 try/catch 且在 worker 线程 → 坏掩码会让 sd-server `terminate`（语义见 [95-f18-semantics.md](./95-f18-semantics.md)） |
+| F-18 SLG 细项 | ✅ | 补 `layers` / `layer_start` / `layer_end`；`layers` 空串时**省略该键**（原实现硬塞 `[7,8,9]` 会顶掉服务端 `--skip-layers`）；高噪段不再恒发 `{scale:0}` |
+| 20-frontend §2.12 生命周期/订阅测试 | ✅ | 3 个新文件 31 例：`useBlobUrlCache`（卸载/剪枝撤销时机）、`useKeyboardShortcuts`（CapsLock/非美式布局/`isComposing`/`blockBackgroundShortcuts`）、App 阶段机（骨架/就绪/失联、控制台切模型不弹假错误） |
+| 60-build §2.11 `scripts/*.mjs` 类型检查 | ✅ | `tsconfig.node.json` 加 `allowJs` + `checkJs` 并入 `check:types`；首次运行 20 条 error 全修（隐式 any ×18、索引签名、外部 JSON `@typedef` 收窄）；负向验证：写错 `devDependencys` 报 TS2551 |
+| 60-build §2.7 Prettier | ✅ | 独立 commit：`.prettierrc` + `.prettierignore` + `npm run format` / `format:check`，全库格式化与其余改动分离，便于 review |
+| `.gitattributes` 花括号模式失效 | ✅ | `*.{ts,tsx}` 在 gitattributes 里不展开，实际只有 `* text=auto` 生效；逐条展开 + 索引里 8 个 CRLF blob 归一为 LF（`git diff --ignore-cr-at-eol` 为空），终结「整文件重写」式换行噪音 |
+| `upstream-diff.mjs` 退出码竞态 | ✅ | `process.exit()` 与 undici 收尾在 Windows + Node 24 上触发 libuv 断言（0xC0000409），改 `process.exitCode` 后 `--coverage` 正常退出 0 |
+| `check-version.mjs` 漏查 lockfile | ✅ | 补 `package-lock.json`（`sync-version.mjs` 本就会同步它）；「5 处」文案改为由检查清单推导，不再与文件列表矛盾 |
 
-**前端（`20-frontend-arch.md`）**
-- §2.12 生命周期/订阅层测试缺口（`useBlobUrlCache`、App 阶段机、快捷键）
+## 剩余（需要产品决策，不做）
 
-**协议（`30-api-alignment.md`）**
-- §2.9 余项：`cache_option` / `scm_mask` 控件（需要先确认上游语义，见缓存文档）
-
-**CLI / 家族（`40-cli-families.md`）**
-- §2.9 `--threads` / `--params-backend` / `--rpc-servers` 无控件（extraArgs 补全已在第十九轮完成）
-
-**体验（`50-ux-a11y.md`）**
-- F-18 余项：`cache_option` / `scm_mask`（需先核上游语义）、SLG 细项（`shifted_timestep` 已补）
-- F-22 i18n（需先做"Rust 错误码化"这一层，属于产品级决策，单独立项）
-
-**工程化（`60-build-test.md`）**
-- §2.7 Prettier（需一次全库格式化，单独 commit；已接入的 ESLint 不启用格式规则）
-- §2.11 余项：`scripts/*.mjs` 无类型检查（目前靠 `--check` dry-run 兜底）
-- §2.13 `Dashboard.test.tsx` 17s（瓶颈已定位：19 个用例各渲染整个 Dashboard；正解是按 describe 拆文件并行跑）
-- §2.14 `webviewInstallMode`（离线安装）
+| 项 | 决策 | 理由 |
+|---|---|---|
+| 50-ux F-22 i18n | **本轮不做**（用户确认） | 前提是把 20+ 条命令的错误从「直接返回中文字符串」改成 `AppError { code, message }`，属于跨前后端的破坏性契约改动；没有真实二语需求时收益低。将来要做，第一步就是 Rust 错误码化 |
+| 60-build §2.14 `webviewInstallMode` | **保持 `downloadBootstrapper`**（用户确认） | 改 `offlineInstaller` 会让每个安装包 +100 MB 左右；Win10+ 多数机器已自带 WebView2，离线场景在文档里写「先装运行时」即可 |
 
 
