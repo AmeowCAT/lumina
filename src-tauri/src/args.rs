@@ -470,6 +470,81 @@ pub(crate) fn backend_spec_static_error(spec: &str) -> Option<String> {
     None
 }
 
+/// 结构性校验 `--params-backend`（上游 `sd_parse_backend_assignment`，
+/// ggml_extend_backend.cpp）：逗号分段的 `[模块=]后端`。模块名交给上游判定
+/// （与 `--backend` 同口径，见 [`backend_spec_tokens`] 的注释），这里只拦上游
+/// 必然拒绝的形状——空模块/空后端，以及该参数明确不接受的 `&` 设备列表
+/// （上游 docs/backend.md："`--params-backend` accepts no device lists"）。
+/// `disk` 是这个参数独有的合法值，因此**不能**复用
+/// [`backend_spec_static_error`]（那里 disk 是错误）。
+pub(crate) fn params_backend_spec_error(spec: &str) -> Option<String> {
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if part.contains('&') {
+            return Some(format!(
+                "--params-backend 不接受设备列表（& 分隔），只能写单个后端：{}",
+                part
+            ));
+        }
+        if let Some((key, value)) = part.split_once('=') {
+            if key.trim().is_empty() || value.trim().is_empty() {
+                return Some(format!(
+                    "--params-backend 应为 模块=后端 或单个后端名：{}",
+                    part
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// 校验 `--rpc-servers` 的 `host:port` 形状。上游 `add_rpc_devices`
+/// （ggml_extend_backend.cpp）把每一项原样交给 `ggml_backend_rpc_add_server`：
+/// 连不上只打日志、不中止启动，写错的端口表现成“多机显卡没出现”，很难自查。
+/// 端口范围与 `server::validate_port` 一致。
+pub(crate) fn rpc_servers_spec_error(spec: &str) -> Option<String> {
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let malformed = || {
+            Some(format!(
+                "--rpc-servers 应为 host:port，如 localhost:50052：{}",
+                part
+            ))
+        };
+        let (host, port) = match part.strip_prefix('[') {
+            Some(rest) => match rest.split_once("]:") {
+                Some((host, port)) => (host, port),
+                None => return malformed(),
+            },
+            None => match part.rsplit_once(':') {
+                Some((host, port)) => (host, port),
+                None => return malformed(),
+            },
+        };
+        if host.is_empty()
+            || part.chars().any(char::is_whitespace)
+            // 非方括号写法里出现冒号说明是 IPv6 却没加方括号。
+            || (host.contains(':') && !part.starts_with('['))
+        {
+            return malformed();
+        }
+        let ok = !port.is_empty()
+            && port.len() <= 5
+            && port.chars().all(|c| c.is_ascii_digit())
+            && port.parse::<u16>().map(|p| p > 0).unwrap_or(false);
+        if !ok {
+            return Some(format!("--rpc-servers 端口必须在 1–65535 之间：{}", part));
+        }
+    }
+    None
+}
+
 /// extra_args 中某个“取值型”参数的全部出现值（可能出现多次，逐次校验）。
 /// 识别 `--key value`、`--key=value` 两种形式，以及 `-b` / `-b=value` 短
 /// 别名（上游 ArgOptions 的 `-m`/`--model` 模式）。布尔 flag（无值）与

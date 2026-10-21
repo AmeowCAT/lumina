@@ -591,6 +591,29 @@ impl ServerManager {
             validate_max_vram_spec(max_vram)
                 .map_err(|e| anyhow!("显存预算（--max-vram）格式无效：{}", e))?;
         }
+        // 结构化 --params-backend / --rpc-servers 与附加启动参数同口径预检：
+        // 前者形状错误会让内核启动即退，后者写错的端口不报错、只是加不上设备
+        // （上游 add_rpc_devices 只打日志），GUI 侧提前给出可读错误。
+        if let Some(spec) = args_json.get("params-backend").and_then(|v| v.as_str()) {
+            if let Some(error) = params_backend_spec_error(spec) {
+                anyhow::bail!(error);
+            }
+        }
+        if let Some(spec) = args_json.get("rpc-servers").and_then(|v| v.as_str()) {
+            if let Some(error) = rpc_servers_spec_error(spec) {
+                anyhow::bail!(error);
+            }
+        }
+        for spec in extra_arg_values(&extra_tokens, &["params-backend"]) {
+            if let Some(error) = params_backend_spec_error(&spec) {
+                anyhow::bail!("附加启动参数中的 {}", error);
+            }
+        }
+        for spec in extra_arg_values(&extra_tokens, &["rpc-servers"]) {
+            if let Some(error) = rpc_servers_spec_error(&spec) {
+                anyhow::bail!("附加启动参数中的 {}", error);
+            }
+        }
         for spec in &extra_backend_specs {
             if let Some(error) = backend_spec_static_error(spec) {
                 anyhow::bail!("附加启动参数中的 --backend 无效：{}", error);
@@ -1205,6 +1228,46 @@ mod tests {
         assert!(!backend_spec_needs_probe("gpu"));
         assert!(!backend_spec_needs_probe("all=metal,te=cpu"));
         assert!(backend_spec_needs_probe("all=cuda0,te=cpu"));
+    }
+
+    /// 审查 §2.9：`--params-backend` 与 `--backend` 共享语法但取值约束不同——
+    /// 这里 disk 是**合法**的（backend_spec_static_error 里它是错误），而 `&`
+    /// 设备列表在 params 侧被上游明确拒绝（docs/backend.md）。
+    #[test]
+    fn params_backend_accepts_disk_and_rejects_device_lists() {
+        assert!(params_backend_spec_error("").is_none());
+        assert!(params_backend_spec_error("   ").is_none());
+        assert!(params_backend_spec_error("disk").is_none());
+        assert!(params_backend_spec_error("cpu").is_none());
+        assert!(params_backend_spec_error("te=cpu,vae=cpu").is_none());
+        assert!(params_backend_spec_error("diffusion=disk,clip=cpu").is_none());
+        // 与 --backend 同口径：模块名交给上游判定，不在这里误杀。
+        assert!(params_backend_spec_error("unknown-module=cpu").is_none());
+        // 上游必然拒绝的形状。
+        assert!(params_backend_spec_error("te=cpu&cuda0").is_some());
+        assert!(params_backend_spec_error("=cpu").is_some());
+        assert!(params_backend_spec_error("te=").is_some());
+    }
+
+    /// 审查 §2.9：`--rpc-servers` 写错端口在上游只打日志不中止，表现为
+    /// “多机显卡没出现”，所以形状必须在 GUI 侧拦下。
+    #[test]
+    fn rpc_servers_requires_host_port_endpoints() {
+        assert!(rpc_servers_spec_error("").is_none());
+        assert!(rpc_servers_spec_error("  ").is_none());
+        assert!(rpc_servers_spec_error("localhost:50052").is_none());
+        assert!(rpc_servers_spec_error("127.0.0.1:50052,192.168.1.10:50053").is_none());
+        assert!(rpc_servers_spec_error("[::1]:50052").is_none());
+        assert!(rpc_servers_spec_error("gpu-host:1").is_none());
+        // 缺端口 / 端口越界 / 缺 host / 未加方括号的 IPv6 / 混入空格。
+        assert!(rpc_servers_spec_error("localhost").is_some());
+        assert!(rpc_servers_spec_error("localhost:0").is_some());
+        assert!(rpc_servers_spec_error("localhost:65536").is_some());
+        assert!(rpc_servers_spec_error("localhost:port").is_some());
+        assert!(rpc_servers_spec_error(":50052").is_some());
+        assert!(rpc_servers_spec_error("::1:50052").is_some());
+        assert!(rpc_servers_spec_error("host name:50052").is_some());
+        assert!(rpc_servers_spec_error("ok:50052,bad").is_some());
     }
 
     #[test]

@@ -68,6 +68,18 @@ pub struct Settings {
     /// 只属于全局行为，`ModelConfigSnapshot` 是「每个模型的启动配置」，不包含该项。
     #[serde(default)]
     pub auto_save_results: bool,
+    /// 计算线程数（--threads）；0 = 不传，由内核按 CPU 物理核数决定（上游
+    /// help：threads <= 0 时取物理核数）。属于本机硬件配置，与 `sd_port`
+    /// 一样只存全局设置、不进 `ModelConfigSnapshot`。
+    #[serde(default)]
+    pub threads: u32,
+    /// 参数驻留后端（--params-backend），如 `disk` / `cpu` / `te=cpu,vae=cpu`。
+    /// 空 = 交给 auto-fit 决定。与 `backend`（计算设备）是两套分配。
+    #[serde(default)]
+    pub params_backend: String,
+    /// RPC 服务器列表（--rpc-servers），`host:port` 逗号分隔；空 = 不传。
+    #[serde(default)]
+    pub rpc_servers: String,
 }
 
 /// Hand-written so that `Settings::default()` (used on a corrupt/missing file)
@@ -97,6 +109,9 @@ impl Default for Settings {
             model_snapshots: HashMap::new(),
             schema_version: 0,
             auto_save_results: false,
+            threads: 0,
+            params_backend: String::new(),
+            rpc_servers: String::new(),
         }
     }
 }
@@ -797,6 +812,48 @@ mod tests {
         let reparsed = load_file(&path).unwrap();
         assert!(reparsed.auto_save_results);
         assert_eq!(reparsed.schema_version, 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 审查 §2.9：`--threads` / `--params-backend` / `--rpc-servers` 三个结构化
+    /// 控件必须能落盘往返。它们和 `sd_port` 一样是「本机硬件配置」，只存全局
+    /// 设置——`ModelConfigSnapshot` 里不该出现，否则切模型会把线程数/多机端点
+    /// 按模型改掉。旧配置文件缺这三个键时仍是「不传」语义。
+    #[test]
+    fn threads_params_backend_and_rpc_servers_round_trip_as_global_only() {
+        let legacy: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.threads, 0, "缺键 = 0 = 启动时不传 --threads");
+        assert!(legacy.params_backend.is_empty());
+        assert!(legacy.rpc_servers.is_empty());
+        let defaults = Settings::default();
+        assert_eq!(defaults.threads, 0);
+        assert!(defaults.params_backend.is_empty());
+        assert!(defaults.rpc_servers.is_empty());
+
+        let configured: Settings = serde_json::from_str(
+            r#"{"threads":12,"paramsBackend":"te=cpu,vae=cpu","rpcServers":"127.0.0.1:50052,192.168.1.10:50052"}"#,
+        )
+        .unwrap();
+        assert_eq!(configured.threads, 12);
+        assert_eq!(configured.params_backend, "te=cpu,vae=cpu");
+        assert_eq!(configured.rpc_servers, "127.0.0.1:50052,192.168.1.10:50052");
+
+        let encoded = serde_json::to_value(&configured).unwrap();
+        assert_eq!(encoded["threads"], 12);
+        assert_eq!(encoded["paramsBackend"], "te=cpu,vae=cpu");
+
+        let dir = test_dir("engine-knobs");
+        let path = dir.join("settings.json");
+        save_to(&configured, &path).unwrap();
+        let reparsed = load_file(&path).unwrap();
+        assert_eq!(reparsed.threads, 12);
+        assert_eq!(reparsed.params_backend, "te=cpu,vae=cpu");
+        assert_eq!(reparsed.rpc_servers, configured.rpc_servers);
+        // 只属于全局设置：模型快照不携带这三项（snapshot 结构里没有它们）。
+        let snapshot = serde_json::to_value(ModelConfigSnapshot::default()).unwrap();
+        assert!(snapshot.get("threads").is_none());
+        assert!(snapshot.get("paramsBackend").is_none());
+        assert!(snapshot.get("rpcServers").is_none());
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -199,6 +199,13 @@ fn parse_help(help: &str) -> CliCapabilities {
         "--flash-attn",
         "--conv-direct",
         "--batched-cfg",
+        // 审查 §2.9 补的三个结构化控件同样是取值型：--threads（含短别名 -t）、
+        // --params-backend、--rpc-servers。漏登记会把紧随其后的取值当成开关，
+        // 导致"未知参数"假警报或漏掉真问题。
+        "--threads",
+        "-t",
+        "--params-backend",
+        "--rpc-servers",
     ] {
         value_options.insert(name.into());
     }
@@ -570,6 +577,37 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     }
                 }
             }
+            // 审查 §2.9 新增的三个结构化控件：形状校验放在这里，能力校验按长名
+            // 查（-t 是 --threads 的短别名，help 里只有长名）。
+            "--threads" | "-t" => {
+                if caps.supports("--threads") == Some(false) {
+                    bail!("所选 sd-server 不支持 --threads；请清空“计算线程数”或升级内核。");
+                }
+                let value = value.ok_or_else(|| anyhow!("{} 缺少取值。", name))?;
+                if value.parse::<i64>().is_err() {
+                    bail!("{} 必须为整数（<= 0 表示按 CPU 物理核数自动决定）。", name);
+                }
+            }
+            "--params-backend" => {
+                if caps.supports(name) == Some(false) {
+                    bail!(
+                        "所选 sd-server 不支持 --params-backend；请清空“参数驻留后端”或升级内核。"
+                    );
+                }
+                let value = value.ok_or_else(|| anyhow!("{} 缺少取值。", name))?;
+                if let Some(error) = crate::args::params_backend_spec_error(value) {
+                    bail!("{}", error);
+                }
+            }
+            "--rpc-servers" => {
+                if caps.supports(name) == Some(false) {
+                    bail!("所选 sd-server 不支持 --rpc-servers；请清空“RPC 服务器”或升级内核。");
+                }
+                let value = value.ok_or_else(|| anyhow!("{} 缺少取值。", name))?;
+                if let Some(error) = crate::args::rpc_servers_spec_error(value) {
+                    bail!("{}", error);
+                }
+            }
             _ => {}
         }
         // Typed value options must consume their value even if it starts with
@@ -596,6 +634,9 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     | "--flash-attn"
                     | "--conv-direct"
                     | "--batched-cfg"
+                    | "--threads"
+                    | "-t"
+                    | "--rpc-servers"
             )
             || name == "--auto-fit"
                 && (caps.auto_fit == AutoFitSyntax::OnOff
@@ -638,7 +679,7 @@ mod tests {
         parse_help(&help("  --stream-layers       stream weights\n  --auto-fit            pick placements\n  -v, --verbose         print extra info\n"))
     }
     fn new() -> CliCapabilities {
-        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --conditioning-cache-size <int>   conditioning cache capacity\n  --flash-attn          on|off|auto or module assignments (default: auto)\n  --conv-direct         on|off|auto or diffusion/vae/controlnet assignments\n  --batched-cfg         on|off (default: on)\n"))
+        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --conditioning-cache-size <int>   conditioning cache capacity\n  --flash-attn          on|off|auto or module assignments (default: auto)\n  --conv-direct         on|off|auto or diffusion/vae/controlnet assignments\n  --batched-cfg         on|off (default: on)\n  --params-backend      disk, cpu, or module=backend assignments\n  --rpc-servers         host:port list\n  -t, --threads <int>   thread count (<=0 uses physical cores)\n"))
     }
     fn argv(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| (*s).into()).collect()
