@@ -1,0 +1,15 @@
+{
+  "// 说明": "构建/测试配置的类型检查（审查 60-build-test §2.11）：根 tsconfig 只 include src，vite.config.ts / vitest.config.ts 此前不在任何 project 里，改配置写错类型不会有任何提示。",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["vite.config.ts", "vitest.config.ts"]
+}
