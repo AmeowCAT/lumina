@@ -1291,6 +1291,70 @@ export function Dashboard() {
 							按模型上下文缓存条件结果，与 --cache-mode 的步间缓存无关；0 表示关闭。
 						</div>
 					</div>
+					<div className="form-row mt-2">
+						<label className="form-label" htmlFor="dashboard-threads">
+							计算线程数（--threads）
+						</label>
+						<NumberInput
+							id="dashboard-threads"
+							className="w-20"
+							value={settings.threads ?? 0}
+							min={0}
+							max={256}
+							onChange={(value) =>
+								setSettings((s) => ({ ...s, threads: value }))
+							}
+							ariaLabel="计算线程数"
+						/>
+						<div className="field-hint field-hint-flush mt-0.5">
+							0 = 不传该参数，由内核按 CPU 物理核数决定（弱核 CPU 上这是性能调优第一步）；留 0 或正整数，不要填逻辑核数。
+						</div>
+					</div>
+					<div className="form-row mt-2">
+						<label
+							className="form-label"
+							htmlFor="dashboard-params-backend"
+						>
+							参数驻留后端（--params-backend）
+						</label>
+						<input
+							id="dashboard-params-backend"
+							className="input"
+							type="text"
+							value={settings.paramsBackend || ""}
+							onChange={(e) =>
+								setSettings((s) => ({
+									...s,
+									paramsBackend: e.target.value,
+								}))
+							}
+							placeholder="例如 cpu / disk / te=cpu,vae=cpu"
+						/>
+						<div className="field-hint field-hint-flush mt-0.5">
+							决定权重放在哪里（与上面 --backend 决定"在哪算"是两套分配）。显式填写会关闭新版 auto-fit；只接受单个后端，不能写 &amp; 设备列表；disk 表示直接从磁盘读，仅此参数支持。小显存卡把文本编码器放到 cpu 是常见做法。
+						</div>
+					</div>
+					<div className="form-row mt-2">
+						<label className="form-label" htmlFor="dashboard-rpc-servers">
+							RPC 服务器（--rpc-servers）
+						</label>
+						<input
+							id="dashboard-rpc-servers"
+							className="input"
+							type="text"
+							value={settings.rpcServers || ""}
+							onChange={(e) =>
+								setSettings((s) => ({
+									...s,
+									rpcServers: e.target.value,
+								}))
+							}
+							placeholder="例如 127.0.0.1:50052,192.168.1.10:50052"
+						/>
+						<div className="field-hint field-hint-flush mt-0.5">
+							多机拆卡的 RPC 端点，host:port 逗号分隔。连上后仍需在 --backend 里用 RPC 设备名（如 RPC0）指定计算设备，否则显存不会参与计算。
+						</div>
+					</div>
 					<CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
 				</Panel>
 

@@ -14,9 +14,17 @@ import {
   buildLaunchConfig as buildLaunchArgs,
   inferPidVaeFormat,
   persistFamilyDefaults,
+  type LaunchRuntime,
 } from "../lib/launchConfig";
 
 type SwitchPhase = "idle" | "preflight" | "stopping" | "starting" | "loading" | "rollback";
+
+/**
+ * 启动配置来源：全局 `Settings`（全部 LaunchRuntime 字段）+ 可选的模型快照
+ * 字段（familyOverride / components）。`threads` / `paramsBackend` /
+ * `rpcServers` 只存在于全局设置（本机硬件配置），快照里没有它们。
+ */
+type LaunchSource = LaunchRuntime & Partial<ModelConfigSnapshot>;
 
 interface LaunchConfig {
   family: string;
@@ -56,23 +64,23 @@ export function useModelSwitch() {
 
   const buildLaunchConfig = async (
     modelPath: string,
-    snapshot?: ModelConfigSnapshot,
+    source?: LaunchSource,
     inferLegacyPidFormat = false
   ): Promise<LaunchConfig> => {
-    const family = snapshot?.familyOverride || (await api.detectFamily(modelPath));
+    const family = source?.familyOverride || (await api.detectFamily(modelPath));
     const familyConfig = FAMILY_CONFIG[family];
     if (!familyConfig) throw new Error("无法识别模型类型");
     if (familyConfig.unsupported) {
       throw new Error(familyConfig.unsupported);
     }
-    let runtime = snapshot || settings;
+    let runtime = source || settings;
     if (inferLegacyPidFormat && family === "pid" && !runtime.vaeFormat) {
       runtime = { ...runtime, vaeFormat: inferPidVaeFormat(modelPath) };
     }
     const built = buildLaunchArgs({
       family,
       modelPath,
-      components: snapshot?.components || components,
+      components: source?.components || components,
       runtime,
       modelDir: settings.modelDir,
     });
@@ -144,6 +152,9 @@ export function useModelSwitch() {
         offloadCpu: settings.offloadCpu,
         quantType: settings.quantType,
         maxVram: settings.maxVram,
+        threads: settings.threads,
+        paramsBackend: settings.paramsBackend,
+        rpcServers: settings.rpcServers,
         ...diagnosticsFor(settings),
         maxQueueSize: settings.maxQueueSize,
       });

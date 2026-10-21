@@ -1,4 +1,5 @@
 import type {
+  CacheOptionDraft,
   Capabilities,
   Features,
   GenImages,
@@ -536,6 +537,517 @@ export function setTilingArgValue(
   return kept.join(",");
 }
 
+// ── 缓存微调（cache_option）/ SCM 步掩码 / SLG 层索引（审查 F-18）────────
+//
+// 语义依据见 docs/audit/95-f18-semantics.md，全部来自上游源码：
+//  · `cache_option` 是 `key=value` 逗号串，不是枚举；**同名键在不同
+//    cache_mode 下写不同字段**（`threshold` → easycache/ucache 的
+//    reuse_threshold、其余模式的 residual_diff_threshold；`warmup` →
+//    spectrum_warmup_steps / max_warmup_steps），未知键直接 400
+//    （examples/common/common.cpp:2434-2494）。
+//  · `scm_mask` 是逗号分隔 0/1，按**步索引**逐位生效，仅 dbcache/
+//    taylorseer/cache-dit 消费（src/runtime/sample-cache.cpp:122）。
+//  · SLG 的 `layers` 写进独立的 skip_layers，**空数组等于关闭**
+//    （src/pipeline/diffusion_engine.cpp:2490）。
+
+/** 缓存模式分组：同名参数在不同分组下写入不同上游字段。 */
+export type CacheModeGroup = "easy" | "ucache" | "block" | "spectrum";
+
+export interface CacheOptionFieldSpec {
+  /** 上游键名（必须逐字符一致）。 */
+  key: keyof CacheOptionDraft;
+  label: string;
+  kind: "float" | "int" | "toggle";
+  min: number;
+  max: number;
+  step: number;
+  /** 上游默认值（`INFINITY` 哨兵按模式解析后的实际值，见 stable-diffusion.cpp:286 与
+   *  src/runtime/sample-cache.cpp:5-15）。仅用于控件占位，不会自动发送。 */
+  defaultValue: number | boolean;
+  hint?: string;
+}
+
+/**
+ * 上游每个缓存模式认哪些键。数组顺序 **就是** 拼串顺序，保证同一份草稿永远
+ * 得到同一个字符串（快照/测试不随对象键序抖动）。
+ */
+const EASY_FIELDS: CacheOptionFieldSpec[] = [
+  {
+    key: "threshold",
+    label: "复用阈值",
+    kind: "float",
+    min: 0,
+    max: 3,
+    step: 0.05,
+    defaultValue: 0.2,
+    hint: "输入变化低于该阈值就复用上一步；上游 EasyCache 默认 0.2",
+  },
+  {
+    key: "start",
+    label: "开始缓存（步数比例）",
+    kind: "float",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultValue: 0.15,
+    hint: "0.15 = 从 15% 步开始缓存",
+  },
+  {
+    key: "end",
+    label: "停止缓存（步数比例）",
+    kind: "float",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultValue: 0.95,
+    hint: "需要大于开始比例，否则上游静默禁用缓存",
+  },
+  {
+    key: "decay",
+    label: "误差衰减",
+    kind: "float",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    defaultValue: 1,
+  },
+  {
+    key: "relative",
+    label: "按输出范数缩放阈值",
+    kind: "toggle",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: true,
+  },
+  {
+    key: "reset",
+    label: "每步计算后重置误差",
+    kind: "toggle",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: true,
+  },
+];
+
+const UCACHE_FIELDS: CacheOptionFieldSpec[] = [
+  {
+    // UCache 的阈值语义与 EasyCache 相同（都写 reuse_threshold），但默认值不同，
+    // 且取值范围更大（文档示例 threshold=1.5）。
+    key: "threshold",
+    label: "复用阈值",
+    kind: "float",
+    min: 0,
+    max: 5,
+    step: 0.05,
+    defaultValue: 1,
+    hint: "上游 UCache 默认 1.0，文档示例 1.5",
+  },
+  ...EASY_FIELDS.slice(1),
+];
+
+const BLOCK_FIELDS: CacheOptionFieldSpec[] = [
+  {
+    key: "Fn",
+    label: "前段强制计算块数",
+    kind: "int",
+    min: 0,
+    max: 32,
+    step: 1,
+    defaultValue: 8,
+    hint: "Fn；默认 8",
+  },
+  {
+    key: "Bn",
+    label: "后段强制计算块数",
+    kind: "int",
+    min: 0,
+    max: 32,
+    step: 1,
+    defaultValue: 0,
+    hint: "Bn；默认 0",
+  },
+  {
+    key: "threshold",
+    label: "残差阈值",
+    kind: "float",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultValue: 0.08,
+    hint: "L1 残差低于该值就复用；与 EasyCache 的同名键不是同一个字段",
+  },
+  {
+    key: "warmup",
+    label: "预热步数",
+    kind: "int",
+    min: 0,
+    max: 32,
+    step: 1,
+    defaultValue: 8,
+    hint: "前 N 步始终计算；默认 8",
+  },
+];
+
+const SPECTRUM_FIELDS: CacheOptionFieldSpec[] = [
+  {
+    key: "w",
+    label: "Chebyshev/Taylor 权重",
+    kind: "float",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultValue: 0.4,
+    hint: "0 = 只用 Taylor，1 = 只用 Chebyshev；默认 0.40",
+  },
+  {
+    key: "m",
+    label: "Chebyshev 阶数",
+    kind: "int",
+    min: 1,
+    max: 8,
+    step: 1,
+    defaultValue: 3,
+  },
+  {
+    key: "lam",
+    label: "岭回归正则",
+    kind: "float",
+    min: 0.01,
+    max: 10,
+    step: 0.01,
+    defaultValue: 1,
+  },
+  {
+    key: "window",
+    label: "初始窗口",
+    kind: "int",
+    min: 1,
+    max: 16,
+    step: 1,
+    defaultValue: 2,
+    hint: "每 N 步计算一次；默认 2",
+  },
+  {
+    key: "flex",
+    label: "窗口增长步长",
+    kind: "float",
+    min: 0,
+    max: 2,
+    step: 0.05,
+    defaultValue: 0.5,
+  },
+  {
+    key: "warmup",
+    label: "预热步数",
+    kind: "int",
+    min: 0,
+    max: 32,
+    step: 1,
+    defaultValue: 4,
+    hint: "Spectrum 默认 4（其余缓存模式是 8）",
+  },
+  {
+    key: "stop",
+    label: "停止缓存（步数比例）",
+    kind: "float",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    defaultValue: 0.9,
+  },
+];
+
+/** 上游 6 个非 disabled 缓存模式对应的界面分组；`disabled`/未知值返回 null。 */
+export function cacheModeGroup(mode: string | undefined): CacheModeGroup | null {
+  switch (mode) {
+    case "easycache":
+      return "easy";
+    case "ucache":
+      return "ucache";
+    case "dbcache":
+    case "taylorseer":
+    case "cache-dit":
+      return "block";
+    case "spectrum":
+      return "spectrum";
+    default:
+      return null;
+  }
+}
+
+/** 当前模式可调的缓存键（顺序即拼串顺序）；关闭/未知模式返回空数组。 */
+export function cacheOptionFields(
+  mode: string | undefined
+): CacheOptionFieldSpec[] {
+  switch (cacheModeGroup(mode)) {
+    case "easy":
+      return EASY_FIELDS;
+    case "ucache":
+      return UCACHE_FIELDS;
+    case "block":
+      return BLOCK_FIELDS;
+    case "spectrum":
+      return SPECTRUM_FIELDS;
+    default:
+      return [];
+  }
+}
+
+/** 上游解析器接受的**全部**缓存键（跨模式并集），用于区分「未知键」与「本模式不适用」。 */
+const CACHE_OPTION_ALL_KEYS = new Set<string>([
+  ...EASY_FIELDS.map((f) => f.key as string),
+  ...BLOCK_FIELDS.map((f) => f.key as string),
+  ...SPECTRUM_FIELDS.map((f) => f.key as string),
+]);
+
+/** 全部键的类型表（解析原始串时判断 toggle/数值）。 */
+const CACHE_OPTION_KEY_KIND = new Map<string, CacheOptionFieldSpec["kind"]>();
+for (const spec of [...EASY_FIELDS, ...BLOCK_FIELDS, ...SPECTRUM_FIELDS]) {
+  CACHE_OPTION_KEY_KIND.set(spec.key as string, spec.kind);
+}
+
+/** 数值格式化：收窄浮点尾数，且保证不出现空格（上游 `=` 两侧有空格会被当未知键）。 */
+function formatOptionNumber(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return String(Math.round(value * 10000) / 10000);
+}
+
+/**
+ * 结构化草稿 → `cache_option` 串（固定键序）。
+ *
+ * 规则：
+ *  - 只拼**当前模式合法**的键，顺序 = spec 顺序；
+ *  - 草稿里未设置的键**不拼**（`undefined` = 用内核默认，与「显式等于默认值」不同）；
+ *  - 数值按 spec 的 `min/max` 夹取、`int` 截断，toggle 拼成 `0/1`；
+ *  - `raw` 里界面不认识的键原样追加在已知键之后（保留旧内核/其它工具写入的
+ *    参数，避免「恢复元数据 → 再生成」丢设置）。
+ */
+export function buildCacheOption(
+  mode: string | undefined,
+  draft: CacheOptionDraft | undefined,
+  raw?: string
+): string | undefined {
+  const parts: string[] = [];
+  for (const spec of cacheOptionFields(mode)) {
+    const value = draft?.[spec.key];
+    if (value === undefined || value === null) continue;
+    if (spec.kind === "toggle") {
+      if (typeof value !== "boolean") continue;
+      parts.push(`${spec.key}=${value ? 1 : 0}`);
+      continue;
+    }
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    const clamped = Math.min(
+      spec.max,
+      Math.max(spec.min, spec.kind === "int" ? Math.trunc(value) : value)
+    );
+    parts.push(`${spec.key}=${formatOptionNumber(clamped)}`);
+  }
+  for (const pair of parseCacheOption(raw).unknownPairs) {
+    if (!CACHE_OPTION_ALL_KEYS.has(pair.key)) {
+      parts.push(`${pair.key}=${pair.value}`);
+    }
+  }
+  return parts.length ? parts.join(",") : undefined;
+}
+
+/**
+ * `cache_option` 串 → 结构化草稿 + 未知键对。
+ *
+ * 上游按**逗号**切分（不含分号），缺 `=` 的段会直接 400，这里直接丢弃；
+ * 未知键保留在 `unknownPairs` 里，由 `buildCacheOption` 原样带回。
+ */
+export function parseCacheOption(raw?: string): {
+  draft: CacheOptionDraft;
+  unknownPairs: { key: string; value: string }[];
+} {
+  const draft: CacheOptionDraft = {};
+  const unknownPairs: { key: string; value: string }[] = [];
+  if (!raw) return { draft, unknownPairs };
+  for (const part of raw.split(",")) {
+    const token = part.trim();
+    if (!token) continue;
+    const eq = token.indexOf("=");
+    if (eq <= 0) continue;
+    const key = token.slice(0, eq).trim();
+    const value = token.slice(eq + 1).trim();
+    if (!key || !value) continue;
+    const kind = CACHE_OPTION_KEY_KIND.get(key);
+    if (!kind) {
+      unknownPairs.push({ key, value });
+      continue;
+    }
+    const num = Number(value);
+    if (!Number.isFinite(num)) continue;
+    if (kind === "toggle") draft[key as "relative" | "reset"] = num !== 0;
+    else draft[key as keyof CacheOptionDraft] = num as never;
+  }
+  return { draft, unknownPairs };
+}
+
+/**
+ * 切换 `cache_mode` 时裁剪草稿：丢掉新模式不认的键（上游对「本模式不适用的
+ * 合法键」不报错但也不生效，留着只会让人以为设置生效了）。
+ *
+ * `threshold` / `warmup` 是**跨模式同名键**，命中不同的上游字段
+ * （`common.cpp:2446-2471`）：目标的语义变了就一起丢掉，否则会把 EasyCache 的
+ * 0.2 当成 dbcache 的残差阈值（EasyCache↔UCache 之间可以保留，两者都写
+ * `reuse_threshold`）。
+ */
+export function sanitizeCacheOptionsForMode(
+  nextMode: string | undefined,
+  draft: CacheOptionDraft | undefined,
+  prevMode?: string | undefined
+): CacheOptionDraft {
+  if (!draft) return {};
+  const allowed = new Set(cacheOptionFields(nextMode).map((f) => f.key as string));
+  const prevGroup = cacheModeGroup(prevMode);
+  const nextGroup = cacheModeGroup(nextMode);
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(draft)) {
+    if (value === undefined || value === null) continue;
+    if (!allowed.has(key)) continue;
+    if (
+      (key === "threshold" || key === "warmup") &&
+      cacheOptionTarget(key, prevGroup) !== cacheOptionTarget(key, nextGroup)
+    ) {
+      continue;
+    }
+    next[key] = value;
+  }
+  return next as CacheOptionDraft;
+}
+
+/** 同名缓存键在各模式下真正写入的上游字段（语义漂移的判据）。 */
+function cacheOptionTarget(
+  key: "threshold" | "warmup",
+  group: CacheModeGroup | null
+): string {
+  if (key === "threshold") {
+    return group === "easy" || group === "ucache"
+      ? "reuse_threshold"
+      : "residual_diff_threshold";
+  }
+  return group === "spectrum" ? "spectrum_warmup_steps" : "max_warmup_steps";
+}
+
+/**
+ * 请求体里最终要发的 `cache_option`。
+ *
+ * 结构化草稿存在（界面改过）时以草稿为准；否则沿用原始串（旧版本设置、
+ * PNG 元数据恢复）。两者都没有则不发送，让内核用启动参数/默认值。
+ */
+export function resolveCacheOption(
+  params: Pick<GenParams, "cache_mode" | "cache_option" | "cache_options">
+): string | undefined {
+  if (!params.cache_options) {
+    const raw = (params.cache_option || "").trim();
+    return raw || undefined;
+  }
+  return buildCacheOption(
+    params.cache_mode,
+    params.cache_options,
+    params.cache_option
+  );
+}
+
+/** SCM 步掩码只在块级缓存（dbcache/taylorseer/cache-dit）下有意义。 */
+export const SCM_MASK_MODES = ["dbcache", "taylorseer", "cache-dit"] as const;
+
+/** 当前缓存模式是否消费 `scm_mask`（上游 src/runtime/sample-cache.cpp:122 只走 CACHEDIT 路径）。 */
+export function scmMaskAppliesToMode(mode: string | undefined): boolean {
+  return !!mode && (SCM_MASK_MODES as readonly string[]).includes(mode);
+}
+
+/** 合法掩码：逗号分隔的 0/1，空串视为未设置。 */
+export const SCM_MASK_PATTERN = /^[01](,[01])*$/;
+
+/**
+ * 校验 SCM 掩码，返回可读错误（null = 合法/未设置）。
+ *
+ * **这条校验是安全边界，不是体验优化**：上游 `parse_scm_mask`
+ * （src/runtime/cache_dit.hpp:558-575）对每段直接 `std::stoi` 且没有 try/catch，
+ * 非数字或空段（如 `1,,0`）会抛 `std::invalid_argument`；该代码跑在 sd-server 的
+ * 工作线程里（examples/server/main.cpp:119，且 examples/server/async_jobs.cpp
+ * 全文没有 try/catch），异常逸出即 `std::terminate()` —— 内核整个进程消失。
+ * 所以非法值一律**不下发**，而不是等 400（这个场景等不到 400）。
+ */
+export function validateScmMask(value: string | undefined): string | null {
+  const text = (value ?? "").trim();
+  if (!text) return null;
+  if (!SCM_MASK_PATTERN.test(text)) {
+    return "只允许 0/1，用逗号分隔（如 1,1,1,0,0,1）。非法掩码会让 sd-server 崩溃，已阻止下发。";
+  }
+  return null;
+}
+
+/** 只在合法时返回要下发的掩码串；非法/空 → undefined（= 不发该键）。 */
+export function normalizeScmMask(value: string | undefined): string | undefined {
+  if (validateScmMask(value) !== null) return undefined;
+  const text = (value ?? "").trim();
+  return text || undefined;
+}
+
+/** 跳层索引上限：上游按 block 索引使用，超过 255 一定是误填。 */
+const MAX_SKIP_LAYER = 255;
+
+/** 跳层索引数组 → 输入框文本（空数组/未设置 → 空串）。 */
+export function formatLayerList(layers: number[] | undefined): string {
+  if (!layers?.length) return "";
+  return layers
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= MAX_SKIP_LAYER)
+    .join(",");
+}
+
+export type LayerListParseResult =
+  | { ok: true; layers?: number[] }
+  | { ok: false; error: string };
+
+/**
+ * 输入框文本 → 跳层索引数组。
+ *
+ * 空串 = **未设置**（`layers` 不下发，沿用服务端 `--skip-layers`）；注意空数组在
+ * 上游等于关闭 SLG（diffusion_engine.cpp:2490），所以这里绝不返回 `[]`。
+ */
+export function parseLayerList(text: string): LayerListParseResult {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return { ok: true };
+  const layers: number[] = [];
+  for (const part of trimmed.split(",")) {
+    const token = part.trim();
+    if (!token) return { ok: false, error: "有空项：请用逗号分隔整数，如 7,8,9" };
+    if (!/^\d+$/.test(token)) return { ok: false, error: `「${token}」不是非负整数` };
+    const value = Number(token);
+    if (!Number.isSafeInteger(value) || value > MAX_SKIP_LAYER) {
+      return { ok: false, error: `层索引需在 0–255 之间：${token}` };
+    }
+    layers.push(value);
+  }
+  return { ok: true, layers: [...new Set(layers)] };
+}
+
+/**
+ * SLG 生效窗口校验（0–1 的总步数分数）。
+ *
+ * 上游按 `int(start*N) < step < int(end*N)` 判断（src/runtime/guidance.cpp:313-315），
+ * `start >= end` 时窗口为空、SLG 永远不生效且**没有任何报错**——必须在界面上说清。
+ */
+export function validateSlgWindow(
+  start?: number,
+  end?: number
+): string | null {
+  if (start == null || end == null) return null;
+  if (!(start >= 0 && start <= 1) || !(end >= 0 && end <= 1)) {
+    return "SLG 起止比例需要在 0–1 之间（总步数的分数）";
+  }
+  if (start >= end) {
+    return "起始比例必须小于结束比例，否则 SLG 永远不会生效（上游静默跳过）";
+  }
+  return null;
+}
+
 /**
  * 统一的能力开关判定（审查 30-api §2.5）。
  *
@@ -821,7 +1333,15 @@ export function sdcppMetadataToGenParams(
   }
   if (cache) {
     out.cache_mode = metaStr(cache.requested_mode);
-    out.cache_option = metaStr(cache.requested_option);
+    const rawCacheOption = metaStr(cache.requested_option);
+    out.cache_option = rawCacheOption;
+    // 结构化草稿同步回填（F-18）：控件读的是 `cache_options`，只回填原始串的话
+    // 「从历史恢复参数」看起来像没生效（界面上全是默认值）。未知键仍留在
+    // `cache_option` 原文里，下次发送由 buildCacheOption 原样带回。
+    if (rawCacheOption) {
+      const parsed = parseCacheOption(rawCacheOption);
+      if (Object.keys(parsed.draft).length) out.cache_options = parsed.draft;
+    }
     out.scm_mask = metaStr(cache.scm_mask);
     out.scm_policy_dynamic = metaBool(cache.scm_policy_dynamic);
   }
@@ -1015,12 +1535,15 @@ export function buildRequestBody(
       sp.guidance.img_cfg;
   const slg = sp?.guidance?.slg;
   if (slg && slg.scale > 0) {
-    (sampleParams.guidance as Record<string, unknown>).slg = {
-      layers: slg.layers || [7, 8, 9],
-      layer_start: slg.layer_start ?? 0.01,
-      layer_end: slg.layer_end ?? 0.2,
-      scale: slg.scale,
-    };
+    // 只发用户真正设置过的子项：`layers` 缺省时**省略该键**，让服务端沿用
+    // `--skip-layers`（capabilities 的默认值里带着启动参数的真实取值，硬塞
+    // [7,8,9] 会把它顶掉）。空数组在上游等于关闭 SLG（diffusion_engine.cpp:2490），
+    // 所以也绝不能发 `layers: []`。
+    const slgBody: Record<string, unknown> = { scale: slg.scale };
+    if (slg.layers?.length) slgBody.layers = slg.layers;
+    if (slg.layer_start != null) slgBody.layer_start = slg.layer_start;
+    if (slg.layer_end != null) slgBody.layer_end = slg.layer_end;
+    (sampleParams.guidance as Record<string, unknown>).slg = slgBody;
   } else {
     // 显式发 scale:0 关闭：请求体是在服务端 default_gen_params 之上合并
     // （routes_sdcpp.cpp），省略字段会沿用服务端默认——外部 server 若默认
@@ -1065,8 +1588,14 @@ export function buildRequestBody(
 
   if (params.cache_mode && params.cache_mode !== "disabled") {
     b.cache_mode = params.cache_mode;
-    if (params.cache_option) b.cache_option = params.cache_option;
-    if (params.scm_mask) b.scm_mask = params.scm_mask;
+    // cache_option：结构化草稿优先（固定键序、按模式裁剪），否则沿用原始串
+    // （旧设置 / PNG 元数据恢复）。见 docs/audit/95-f18-semantics.md §2。
+    const cacheOption = resolveCacheOption(params);
+    if (cacheOption) b.cache_option = cacheOption;
+    // scm_mask：**非法内容一律不下发**。上游解析器无 try/catch 且跑在 worker
+    // 线程，坏掩码会让 sd-server terminate（见 validateScmMask 注释）。
+    const scmMask = normalizeScmMask(params.scm_mask);
+    if (scmMask) b.scm_mask = scmMask;
     // scm_policy_dynamic 不发送：上游 from_json_str（common.cpp）只解析
     // cache_mode/cache_option/scm_mask，该键在请求体中会被静默忽略——
     // 真正的开关是服务端启动参数 --scm-policy。capabilities 的默认值里
@@ -1100,14 +1629,17 @@ export function buildRequestBody(
     if (h.shifted_timestep != null) hn.shifted_timestep = h.shifted_timestep;
     if (h.guidance?.img_cfg != null)
       (hn.guidance as Record<string, unknown>).img_cfg = h.guidance.img_cfg;
-    if ((h.guidance?.slg?.scale ?? 0) > 0)
-      (hn.guidance as Record<string, unknown>).slg = { ...h.guidance?.slg };
-    else
-      // 与主采样 SLG 对等（见上方 sampleParams.guidance.slg）：显式发
-      // scale:0 关闭——请求体在服务端默认值之上合并，省略会沿用服务端
-      // 默认，外部 server 默认开启 SLG 时高噪声阶段无法真正关闭（审查 L3
-      // 的对称缺口）。
-      (hn.guidance as Record<string, unknown>).slg = { scale: 0 };
+    // 高噪段 SLG 只在真的开启时发送（审查 95 §5.3）。此前恒发 `{scale:0}`，
+    // 会把服务端启动参数 `--high-noise-slg-scale` 每条请求都打回关闭；
+    // 「要关掉服务端默认」只能靠启动参数表达，不能靠恒发 0 去猜。
+    const hnSlg = h.guidance?.slg;
+    if (hnSlg && hnSlg.scale > 0) {
+      const hnSlgBody: Record<string, unknown> = { scale: hnSlg.scale };
+      if (hnSlg.layers?.length) hnSlgBody.layers = hnSlg.layers;
+      if (hnSlg.layer_start != null) hnSlgBody.layer_start = hnSlg.layer_start;
+      if (hnSlg.layer_end != null) hnSlgBody.layer_end = hnSlg.layer_end;
+      (hn.guidance as Record<string, unknown>).slg = hnSlgBody;
+    }
     const hnExtraArgs = buildExtraSampleArgs(h);
     if (hnExtraArgs) hn.extra_sample_args = hnExtraArgs;
     b.high_noise_sample_params = hn;

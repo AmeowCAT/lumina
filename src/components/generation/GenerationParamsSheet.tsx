@@ -213,6 +213,9 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         vaeTilingProtocol={vaeTilingProtocol}
         mode={mode}
         cacheMode={params.cache_mode}
+        cacheOptions={params.cache_options}
+        cacheOption={params.cache_option}
+        scmMask={params.scm_mask}
         clipSkip={params.clip_skip}
         extraSampleArgs={sp?.extra_sample_args}
         onUpdate={onUpdate}

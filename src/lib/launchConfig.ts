@@ -29,6 +29,9 @@ export type LaunchRuntime = Pick<
   | "offloadCpu"
   | "quantType"
   | "maxVram"
+  | "threads"
+  | "paramsBackend"
+  | "rpcServers"
   | "logLevel"
   | "linearScale"
   | "attnScale"
@@ -64,7 +67,10 @@ function runtimeValue<K extends keyof LaunchRuntime>(
   runtime: LaunchRuntime | ModelConfigSnapshot,
   key: K
 ): LaunchRuntime[K] {
-  return runtime[key] as LaunchRuntime[K];
+  // 快照不携带本机硬件字段（threads / paramsBackend / rpcServers）——它们只存在
+  // 于全局设置。宽转换只为统一取值路径；快照缺这些键时运行时就是 undefined，
+  // 与"未配置"同义。
+  return (runtime as LaunchRuntime)[key];
 }
 
 /**
@@ -137,6 +143,9 @@ export function buildLaunchConfig({
   const extraArgs = runtimeValue(runtime, "extraArgs");
   const quantType = runtimeValue(runtime, "quantType");
   const maxVram = runtimeValue(runtime, "maxVram");
+  const threads = Number(runtimeValue(runtime, "threads") || 0);
+  const paramsBackend = (runtimeValue(runtime, "paramsBackend") || "").trim();
+  const rpcServers = (runtimeValue(runtime, "rpcServers") || "").trim();
   const tokenizer = (runtimeValue(runtime, "tokenizer") || "").trim();
   const conditioningCacheSize = (
     runtimeValue(runtime, "conditioningCacheSize") || ""
@@ -165,6 +174,29 @@ export function buildLaunchConfig({
     }
   }
   if (extraArgs) args.extra_args = extraArgs;
+  // --threads：0/未设置 = 不传。上游 help 明确 threads <= 0 时取 CPU 物理核数，
+  // 因此"内核默认"就是省略该参数，不必传 0（旧内核也不一定接受显式 0）。
+  if (Number.isFinite(threads) && threads > 0) {
+    args.threads = Math.trunc(threads);
+  }
+  // --params-backend：权重驻留位置，与 --backend（计算设备）是两套分配。
+  // 形状不合法时进 missing（拦在 GO/NO-GO），而不是静默丢弃让用户以为生效了。
+  if (paramsBackend) {
+    const paramsBackendError = validateParamsBackendSpec(paramsBackend);
+    if (paramsBackendError) {
+      missing.push(`参数后端（--params-backend）：${paramsBackendError}`);
+    } else {
+      args["params-backend"] = paramsBackend;
+    }
+  }
+  if (rpcServers) {
+    const rpcServersError = validateRpcServersSpec(rpcServers);
+    if (rpcServersError) {
+      missing.push(`RPC 服务器（--rpc-servers）：${rpcServersError}`);
+    } else {
+      args["rpc-servers"] = rpcServers;
+    }
+  }
   const diagnostics = buildDiagnosticArgs(runtime);
   Object.assign(args, diagnostics.args);
   missing.push(...diagnostics.errors);
@@ -328,6 +360,57 @@ export function validateMaxVramSpec(raw: string): string | null {
     }
     if (!isFiniteC99Float(value)) {
       return `设备 ${device} 的预算数值超出可表示范围（溢出为 inf）`;
+    }
+  }
+  return null;
+}
+
+/**
+ * 预校验 --params-backend（上游 `sd_parse_backend_assignment`，ggml_extend_backend.cpp）：
+ * 逗号分段的 `[模块=]后端`，无 `=` 的段是默认后端名（`disk` 是这里独有的合法值）。
+ * 模块名交给上游判定——与 `--backend` 同口径（args.rs 已明确"key 侧的非法模块名由
+ * 上游启动时报出"），避免内核新增模块时 GUI 反而误杀合法配置。
+ * 这里只拦上游必然拒绝的形状：空模块/空后端，以及 `--params-backend` 明确不接受的
+ * `&` 设备列表（backend.md："accepts no device lists"）。返回错误消息或 null。
+ */
+export function validateParamsBackendSpec(raw: string): string | null {
+  const spec = raw.trim();
+  if (!spec) return null;
+  for (const part of spec.split(",")) {
+    const p = part.trim();
+    if (!p) continue; // 上游跳过空段
+    if (p.includes("&")) {
+      return `不接受设备列表（& 分隔），只能写单个后端：${p}`;
+    }
+    const eq = p.indexOf("=");
+    if (eq < 0) continue; // 单个默认后端名，含 disk / cpu
+    const key = p.slice(0, eq).trim();
+    const value = p.slice(eq + 1).trim();
+    if (!key || !value) return `应为 模块=后端 或单个后端名：${p}`;
+  }
+  return null;
+}
+
+/** `host:port`，host 允许 IPv6 方括号写法。 */
+const RPC_ENDPOINT_RE = /^(\[[0-9A-Fa-f:.]+\]|[^\s:,]+):(\d{1,5})$/;
+
+/**
+ * 预校验 --rpc-servers。上游 `add_rpc_devices` 把每一项原样交给
+ * `ggml_backend_rpc_add_server`，连不上时只打日志、不中止启动——写错的端口表现
+ * 为"多机显卡没出现"，很难自查。所以端口形状在这里就拦下，范围与
+ * `validate_port`（1–65535）一致。返回错误消息或 null。
+ */
+export function validateRpcServersSpec(raw: string): string | null {
+  const spec = raw.trim();
+  if (!spec) return null;
+  for (const part of spec.split(",")) {
+    const p = part.trim();
+    if (!p) continue;
+    const match = RPC_ENDPOINT_RE.exec(p);
+    if (!match) return `应为 host:port，如 localhost:50052：${p}`;
+    const port = Number(match[2]);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return `端口必须在 1–65535 之间：${p}`;
     }
   }
   return null;
