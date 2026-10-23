@@ -7,6 +7,11 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // 单例默认 5s 对重组件偏紧：渲染整个 Dashboard 的用例本地约 1–2s，
+    // CI 的 Windows runner 约慢 45%（实测同一文件 12.3s → 17.9s），再叠加
+    // 首次动态导入就可能越过 5s。放宽到 20s 只影响"慢"，不影响"错"。
+    testTimeout: 20000,
+    hookTimeout: 20000,
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "lcov"],
