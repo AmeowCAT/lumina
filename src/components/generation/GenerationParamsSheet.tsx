@@ -1,12 +1,11 @@
 import { useMemo } from "react";
-import type {
-  Capabilities,
-  Features,
-  GenMode,
-  GenParams,
-} from "../../types";
+import type { Capabilities, Features, GenMode, GenParams } from "../../types";
 import { FAMILY_CONFIG, SIZE_PRESETS, VIDEO_FRAME_PRESETS } from "../../config/families";
-import { previewModesFromCapabilities, vaeTilingProtocolFromCapabilities } from "../../lib/utils";
+import {
+  featureEnabled,
+  previewModesFromCapabilities,
+  vaeTilingProtocolFromCapabilities,
+} from "../../lib/utils";
 import { ParamsSheet } from "./ParamsSheet";
 import { Panel } from "../ui/Panel";
 import { ImageInputsPanel } from "./panels/ImageInputsPanel";
@@ -53,13 +52,8 @@ export interface GenerationParamsSheetProps {
   sheetTarget: "size" | "sampling" | null;
   onUpdate: (path: string, val: unknown) => void;
   onSetImage: (
-    which:
-      | "initImage"
-      | "maskImage"
-      | "controlImage"
-      | "ipAdapterImage"
-      | "endImage",
-    v: string | null
+    which: "initImage" | "maskImage" | "controlImage" | "ipAdapterImage" | "endImage",
+    v: string | null,
   ) => void;
   onSetRefImages: (updater: (r: string[]) => string[]) => void;
   onSetControlFrames: (updater: (r: string[]) => string[]) => void;
@@ -111,24 +105,18 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
   const hsp = params.high_noise_sample_params;
   const sizePresets = useMemo(
     () => FAMILY_CONFIG[family]?.sizePresetsByMode?.[mode] || SIZE_PRESETS[mode],
-    [family, mode]
+    [family, mode],
   );
-  const framePresets = useMemo(
-    () => VIDEO_FRAME_PRESETS[family],
-    [family]
-  );
-  const vaeTilingProtocol = useMemo(
-    () => vaeTilingProtocolFromCapabilities(caps),
-    [caps]
-  );
+  const framePresets = useMemo(() => VIDEO_FRAME_PRESETS[family], [family]);
+  const vaeTilingProtocol = useMemo(() => vaeTilingProtocolFromCapabilities(caps), [caps]);
 
   return (
     <ParamsSheet open={open} onClose={onClose}>
-      {(features.init_image ||
-        features.mask_image ||
-        features.control_image ||
-        features.ip_adapter_image ||
-        features.end_image ||
+      {(featureEnabled(features, "init_image") ||
+        featureEnabled(features, "mask_image") ||
+        featureEnabled(features, "control_image") ||
+        featureEnabled(features, "ip_adapter_image") ||
+        featureEnabled(features, "end_image") ||
         refImagesSupported ||
         controlFramesSupported) && (
         <ImageInputsPanel
@@ -147,6 +135,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           strength={params.strength}
           controlStrength={params.control_strength}
           ipAdapterStrength={params.ip_adapter_strength}
+          vaceStrength={params.vace_strength}
           imgCfg={sp?.guidance?.img_cfg}
           txtCfg={sp?.guidance?.txt_cfg}
           onUpdate={onUpdate}
@@ -205,21 +194,26 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
       <AdvancedSamplingPanel
         eta={sp?.eta}
         flowShift={sp?.flow_shift}
+        shiftedTimestep={sp?.shifted_timestep}
         slg={sp?.guidance?.slg}
         vaeTilingParams={params.vae_tiling_params}
-        showVaeTiling={features.vae_tiling !== false}
+        showVaeTiling={featureEnabled(features, "vae_tiling", true)}
         vaeTilingProtocol={vaeTilingProtocol}
+        mode={mode}
         cacheMode={params.cache_mode}
+        cacheOptions={params.cache_options}
+        cacheOption={params.cache_option}
+        scmMask={params.scm_mask}
         clipSkip={params.clip_skip}
         extraSampleArgs={sp?.extra_sample_args}
         onUpdate={onUpdate}
       />
-      {(features.init_image !== false ||
-        features.ref_images !== false ||
-        features.control_image !== false) && (
+      {(featureEnabled(features, "init_image") ||
+        featureEnabled(features, "ref_images") ||
+        featureEnabled(features, "control_image")) && (
         <ImagePreprocessPanel
           rules={params.image_preprocess}
-          hasRefImages={features.ref_images !== false}
+          hasRefImages={featureEnabled(features, "ref_images")}
           onUpdate={onUpdate}
         />
       )}
@@ -237,14 +231,10 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           onUpdate={onUpdate}
         />
       )}
-      {features.lora && (
-        <LoraPanel
-          loras={params.lora || []}
-          available={caps.loras || []}
-          onUpdate={onUpdate}
-        />
+      {featureEnabled(features, "lora") && (
+        <LoraPanel loras={params.lora || []} available={caps.loras || []} onUpdate={onUpdate} />
       )}
-      {features.hires && (
+      {featureEnabled(features, "hires") && (
         <HiresPanel
           hires={params.hires}
           upscalers={(caps.upscalers || []).map((u) => u.name)}
@@ -256,6 +246,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         outputFormat={params.output_format}
         formats={caps.output_formats_by_mode?.[mode] || ["png"]}
         compression={params.output_compression}
+        embedMetadata={params.embed_image_metadata}
         onUpdate={onUpdate}
       />
       {/* 家族使用提示：默认折叠并置于末尾。它不是当前任务的必读信息，

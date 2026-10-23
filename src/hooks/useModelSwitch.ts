@@ -2,21 +2,24 @@ import { useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { FAMILY_CONFIG, type FamilyConfig } from "../config/families";
-import type {
-  Capabilities,
-  GenMode,
-  ModelConfigSnapshot,
-  ServerArgs,
-} from "../types";
+import type { Capabilities, GenMode, ModelConfigSnapshot, ServerArgs } from "../types";
 import { formatError, normalizeSdPort } from "../lib/utils";
 import { diagnosticsFor } from "../lib/diagnostics";
 import {
   buildLaunchConfig as buildLaunchArgs,
   inferPidVaeFormat,
   persistFamilyDefaults,
+  type LaunchRuntime,
 } from "../lib/launchConfig";
 
 type SwitchPhase = "idle" | "preflight" | "stopping" | "starting" | "loading" | "rollback";
+
+/**
+ * 启动配置来源：全局 `Settings`（全部 LaunchRuntime 字段）+ 可选的模型快照
+ * 字段（familyOverride / components）。`threads` / `paramsBackend` /
+ * `rpcServers` 只存在于全局设置（本机硬件配置），快照里没有它们。
+ */
+type LaunchSource = LaunchRuntime & Partial<ModelConfigSnapshot>;
 
 interface LaunchConfig {
   family: string;
@@ -30,10 +33,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const normalizedPath = (path: string) => path.replace(/\\/g, "/").toLowerCase();
 
-export function capabilitiesMatchModel(
-  capabilities: Capabilities,
-  expectedPath: string
-): boolean {
+export function capabilitiesMatchModel(capabilities: Capabilities, expectedPath: string): boolean {
   const reportedPath = capabilities.model?.path?.trim();
   if (!reportedPath) return true;
   const actual = normalizedPath(reportedPath);
@@ -56,23 +56,23 @@ export function useModelSwitch() {
 
   const buildLaunchConfig = async (
     modelPath: string,
-    snapshot?: ModelConfigSnapshot,
-    inferLegacyPidFormat = false
+    source?: LaunchSource,
+    inferLegacyPidFormat = false,
   ): Promise<LaunchConfig> => {
-    const family = snapshot?.familyOverride || (await api.detectFamily(modelPath));
+    const family = source?.familyOverride || (await api.detectFamily(modelPath));
     const familyConfig = FAMILY_CONFIG[family];
     if (!familyConfig) throw new Error("无法识别模型类型");
     if (familyConfig.unsupported) {
       throw new Error(familyConfig.unsupported);
     }
-    let runtime = snapshot || settings;
+    let runtime = source || settings;
     if (inferLegacyPidFormat && family === "pid" && !runtime.vaeFormat) {
       runtime = { ...runtime, vaeFormat: inferPidVaeFormat(modelPath) };
     }
     const built = buildLaunchArgs({
       family,
       modelPath,
-      components: snapshot?.components || components,
+      components: source?.components || components,
       runtime,
       modelDir: settings.modelDir,
     });
@@ -117,7 +117,7 @@ export function useModelSwitch() {
       config.familyConfig.name,
       config.mode,
       config.args,
-      normalizeSdPort(settings.sdPort)
+      normalizeSdPort(settings.sdPort),
     );
     setPhase("loading");
     return waitUntilReady(config.modelPath);
@@ -144,6 +144,9 @@ export function useModelSwitch() {
         offloadCpu: settings.offloadCpu,
         quantType: settings.quantType,
         maxVram: settings.maxVram,
+        threads: settings.threads,
+        paramsBackend: settings.paramsBackend,
+        rpcServers: settings.rpcServers,
         ...diagnosticsFor(settings),
         maxQueueSize: settings.maxQueueSize,
       });
@@ -152,7 +155,7 @@ export function useModelSwitch() {
       const preflight = await api.preflightServer(
         settings.exeDir || "sd-server",
         nextConfig.args,
-        normalizeSdPort(settings.sdPort)
+        normalizeSdPort(settings.sdPort),
       );
       if (preflight.warnings.length) toast(preflight.warnings.join("；"));
       if (previousPath && previousPath !== modelPath) {
@@ -163,8 +166,11 @@ export function useModelSwitch() {
           if (!snapshot) throw new Error("缺少当前模型的启动快照");
           previousConfig = await buildLaunchConfig(previousPath, snapshot, true);
         } catch (error) {
+          // 附上 cause：面板只展示这句人话，控制台/日志里还能看到原始堆栈
+          // （eslint preserve-caught-error）。
           throw new Error(
-            `无法准备当前模型的回滚配置，已保留运行中的模型：${formatError(error)}。请检查旧模型配置；如需放弃自动回滚，请先手动停止服务再启动目标模型。`
+            `无法准备当前模型的回滚配置，已保留运行中的模型：${formatError(error)}。请检查旧模型配置；如需放弃自动回滚，请先手动停止服务再启动目标模型。`,
+            { cause: error },
           );
         }
       }
@@ -192,7 +198,7 @@ export function useModelSwitch() {
         } catch (rollbackError) {
           toast(
             `切换失败且无法恢复上一个模型：${switchError}；恢复错误：${formatError(rollbackError)}`,
-            true
+            true,
           );
           return undefined;
         }

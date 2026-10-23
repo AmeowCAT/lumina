@@ -45,20 +45,19 @@ export const ImagePreprocessPanel = memo(function ImagePreprocessPanel({
             onUpdate(
               "image_preprocess",
               // Preserve draft whitespace/newlines; normalize only on submission.
-              e.target.value.split("\n")
+              e.target.value.split("\n"),
             )
           }
           placeholder={PLACEHOLDER}
         />
         <div className="field-hint field-hint-flush mt-0.5">
-          每行一条 key=value 规则，作用于生成前的输入图像几何（不影响
-          VAE / CLIP / ControlNet 的内部预处理）。必需键 target：
-          init · end · mask · control ·{hasRefImages ? " ref ·" : ""} ip-adapter ·
-          id · control-frame；可用 mode=auto|none|stretch|crop|crop-resize|fit-pad、
+          每行一条 key=value 规则，作用于生成前的输入图像几何（不影响 VAE / CLIP / ControlNet
+          的内部预处理）。必需键 target： init · end · mask · control ·
+          {hasRefImages ? " ref ·" : ""} ip-adapter · id · control-frame；可用
+          mode=auto|none|stretch|crop|crop-resize|fit-pad、
           filter=auto|nearest|nearest-exact|bilinear|bicubic|lanczos、
-          antialias、width/height、anchor、pad_color、canny=true。
-          ref / id / control-frame 支持 index=N（0 起）单条覆盖。
-          留空表示沿用各输入的默认几何。参考图是否在 VAE 编码前缩放由
+          antialias、width/height、anchor、pad_color、canny=true。 ref / id / control-frame 支持
+          index=N（0 起）单条覆盖。 留空表示沿用各输入的默认几何。参考图是否在 VAE 编码前缩放由
           --ref-image-args 单独控制。
         </div>
       </div>

@@ -2,6 +2,7 @@ import { memo } from "react";
 import type { Capabilities, GenMode, Job, JobConfig } from "../../types";
 import { useStore } from "../../store";
 import { useTheme } from "../../lib/theme";
+import { jobElapsed } from "../../lib/utils";
 import { IC } from "../ui/Icons";
 
 interface Props {
@@ -20,7 +21,7 @@ interface Props {
     fmt?: string,
     mime?: string,
     seed?: number,
-    suffix?: string
+    suffix?: string,
   ) => Promise<void>;
 }
 
@@ -48,16 +49,19 @@ function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
 }
 
-function elapsedLabel(created?: number, endedAt?: number): string {
-  if (!created) return "";
-  // created 来自上游 unix_timestamp_now()（秒），endedAt 是前端毫秒时间戳，
-  // 相减前必须统一单位，否则会显示数百万分钟。
-  const ms = (endedAt ?? Date.now()) - created * 1000;
-  if (ms < 1000) return "";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${s % 60}s`;
-}
+/**
+ * 任务耗时：优先用内核时间戳 `completed - started`（真实采样时长），
+ * 拿不到才退回「created → 最近一次成功轮询」。旧实现一律用 created，
+ * 把排队等待与 2s 轮询抖动都算进了生成耗时（审查 30-api §2.8）。
+ * 逻辑放在 lib/utils 里以便单测，组件只负责展示。
+ */
+
+/**
+ * 任务耗时：优先用内核时间戳 `completed - started`（真实采样时长），
+ * 拿不到才退回「created → 最近一次成功轮询」。旧实现一律用 created，
+ * 把排队等待与 2s 轮询抖动都算进了生成耗时（审查 30-api §2.8）。
+ * 逻辑放在 lib/utils 里以便单测，组件只负责展示。
+ */
 
 export const JobQueue = memo(function JobQueue({
   jobs,
@@ -105,25 +109,18 @@ export const JobQueue = memo(function JobQueue({
         jobs.map((j) => {
           const generating = j.status === "generating";
           const terminal =
-            j.status === "completed" ||
-            j.status === "failed" ||
-            j.status === "cancelled";
+            j.status === "completed" || j.status === "failed" || j.status === "cancelled";
           const jobResult = results.find((r) => r.jobId === j.id)?.result;
           // 终态但没有成功轮询时间戳（404/410 失效路径）：耗时无法定格，
           // 显示空而不是随渲染继续增长的数字。
-          const elapsed =
-            terminal && !j.lastPollSuccess
-              ? ""
-              : elapsedLabel(j.created, terminal ? j.lastPollSuccess : undefined);
+          const elapsed = jobElapsed(j, terminal);
           return (
             <div key={j.id} className="job-row-wrap">
               <div className="job-row">
                 <span className="job-id" title={`任务 ${j.id}`}>
                   {shortId(j.id)}
                 </span>
-                <span className="job-mode">
-                  {(j.kind || mode) === "img_gen" ? "IMG" : "VID"}
-                </span>
+                <span className="job-mode">{(j.kind || mode) === "img_gen" ? "IMG" : "VID"}</span>
                 <span
                   className={`job-status ${j.status}`}
                   title={j.error?.message}
@@ -131,8 +128,17 @@ export const JobQueue = memo(function JobQueue({
                 >
                   {statusLabel(j.status, vostok)}
                 </span>
+                {j.status === "queued" && j.queue_position != null && (
+                  <span
+                    className="job-pos"
+                    aria-label={`排队第 ${j.queue_position} 位`}
+                    title="内核队列中的排队位次（1 = 下一个执行）"
+                  >
+                    #{j.queue_position}
+                  </span>
+                )}
                 <span className="job-prompt">{j.config?.params?.prompt || ""}</span>
-                <span className="job-elapsed" aria-hidden="true">
+                <span className="job-elapsed" title="真实生成耗时">
                   {elapsed}
                 </span>
                 <div className="job-actions">
@@ -146,8 +152,7 @@ export const JobQueue = memo(function JobQueue({
                   </button>
                   {(j.status === "queued" ||
                     (generating &&
-                      caps?.features_by_mode?.[j.kind || mode]
-                        ?.cancel_generating)) && (
+                      caps?.features_by_mode?.[j.kind || mode]?.cancel_generating)) && (
                     <button
                       className="btn btn-sm btn-danger"
                       aria-label={`取消任务 ${j.id}`}
@@ -189,7 +194,7 @@ export const JobQueue = memo(function JobQueue({
                               baseSeed != null && baseSeed >= 0
                                 ? baseSeed + (img.index ?? i)
                                 : undefined,
-                              images.length > 1 ? `_${i + 1}` : undefined
+                              images.length > 1 ? `_${i + 1}` : undefined,
                             );
                           }
                         }}

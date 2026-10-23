@@ -1,13 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  THEMES,
-  applyTheme,
-  getStoredTheme,
-  initTheme,
-  setTheme,
-  useTheme,
-} from "../lib/theme";
+import { THEMES, applyTheme, getStoredTheme, initTheme, setTheme, useTheme } from "../lib/theme";
 
 /** 每个用例前清空存储并把模块快照重置回默认主题。 */
 function resetTheme() {
@@ -51,14 +44,14 @@ describe("lib/theme 主题注册表与状态", () => {
   it("applyTheme 落到 data-theme 与 meta theme-color", () => {
     applyTheme("vostok");
     expect(document.documentElement.dataset.theme).toBe("vostok");
-    expect(
-      document.querySelector('meta[name="theme-color"]')?.getAttribute("content"),
-    ).toBe("#110e0b");
+    expect(document.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe(
+      "#110e0b",
+    );
     applyTheme("lumina");
     expect(document.documentElement.dataset.theme).toBe("lumina");
-    expect(
-      document.querySelector('meta[name="theme-color"]')?.getAttribute("content"),
-    ).toBe("#0d0b09");
+    expect(document.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe(
+      "#0d0b09",
+    );
   });
 
   it("setTheme 持久化并同步 DOM", () => {

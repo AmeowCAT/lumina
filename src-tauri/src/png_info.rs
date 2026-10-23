@@ -45,28 +45,35 @@ fn parse_webp_xmp(xmp: &str) -> Option<serde_json::Value> {
     extract_sdcpp_metadata(&xml_unescape(&xmp[start..start + rel_end]))
 }
 
-/// Parse a PNG file and extract the `parameters` tEXt chunk (sd-server
-/// `embed_image_metadata` output). Returns the JSON value, or None if no
-/// metadata was found / the file is not a valid PNG.
-pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
-    let path = Path::new(path);
-    if let Ok(metadata) = fs::metadata(path) {
-        if metadata.len() > MAX_METADATA_FILE_BYTES {
-            return Err(anyhow!("file too large for metadata parsing"));
-        }
-    }
-    let data = fs::read(path)?;
+/// 元数据一般写在文件前部（PNG 的 tEXt 通常紧跟 IHDR，WebP 的 XMP 在 VP8X 头后），
+/// 所以先只读头部；没命中才整读一次。
+///
+/// `list_output_files` 会遍历整个输出目录并对每个 png/webp 解析元数据，旧实现
+/// 逐张整读：1000 张 8 MB 的 4K 图就是 8 GB IO（审查 10 §2.8）。256 KiB 覆盖了
+/// 绝大多数写入器，同时给「元数据在 IDAT 之后」的合法但少见情况留了整读兜底。
+const METADATA_HEAD_BYTES: u64 = 256 * 1024;
+
+fn read_head(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let file = fs::File::open(path)?;
+    let mut buf = Vec::new();
+    file.take(limit).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// 在已知字节上扫 PNG chunk，找 `parameters` tEXt。
+fn scan_png_metadata(data: &[u8]) -> Result<Option<serde_json::Value>> {
     if data.len() < 33 {
         return Err(anyhow!("file too small to be PNG"));
     }
     // PNG signature: 8 bytes
     let sig: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
     if data[..8] != sig {
-        return Err(anyhow!("not a valid PNG"));
+        return Err(anyhow!("不是有效的 PNG 文件"));
     }
     let mut off = 8usize;
     while off + 12 <= data.len() {
-        let len = read_be_u32(&data, off) as usize;
+        let len = read_be_u32(data, off) as usize;
         if off + 12 + len > data.len() {
             break;
         }
@@ -91,23 +98,34 @@ pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
     Ok(None)
 }
 
-/// Parse a WebP file and extract the `sdcpp:parameters` XMP packet
-/// (`embed_image_metadata` output). Returns the JSON value, or None if no
-/// metadata was found / the file is not a valid WebP.
-pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
+/// Parse a PNG file and extract the `parameters` tEXt chunk (sd-server
+/// `embed_image_metadata` output). Returns the JSON value, or None if no
+/// metadata was found / the file is not a valid PNG.
+pub fn parse_png_metadata(path: &str) -> Result<Option<serde_json::Value>> {
     let path = Path::new(path);
-    if let Ok(metadata) = fs::metadata(path) {
-        if metadata.len() > MAX_METADATA_FILE_BYTES {
-            return Err(anyhow!("file too large for metadata parsing"));
-        }
+    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size > MAX_METADATA_FILE_BYTES {
+        return Err(anyhow!("文件超过 64 MB，跳过元数据解析"));
     }
-    let data = fs::read(path)?;
+    let head = read_head(path, METADATA_HEAD_BYTES)?;
+    if let Some(v) = scan_png_metadata(&head)? {
+        return Ok(Some(v));
+    }
+    if size <= METADATA_HEAD_BYTES {
+        return Ok(None);
+    }
+    // 头部没命中：少数写入器会 tEXt 放在 IDAT 之后，整读兜底（仅这一种情况）。
+    scan_png_metadata(&fs::read(path)?)
+}
+
+/// 在已知字节上扫 WebP chunk，找 `XMP ` 里的 sdcpp 参数包。
+fn scan_webp_metadata(data: &[u8]) -> Result<Option<serde_json::Value>> {
     if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" {
         return Err(anyhow!("not a valid WebP"));
     }
     let mut off = 12usize;
     while off + 8 <= data.len() {
-        let size = read_le_u32(&data, off + 4) as usize;
+        let size = read_le_u32(data, off + 4) as usize;
         if off + 8 + size > data.len() {
             break;
         }
@@ -122,6 +140,26 @@ pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
         off += 8 + size + (size & 1);
     }
     Ok(None)
+}
+
+/// Parse a WebP file and extract the `sdcpp:parameters` XMP packet
+/// (`embed_image_metadata` output). Returns the JSON value, or None if no
+/// metadata was found / the file is not a valid WebP.
+pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
+    let path = Path::new(path);
+    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size > MAX_METADATA_FILE_BYTES {
+        return Err(anyhow!("文件超过 64 MB，跳过元数据解析"));
+    }
+    // WebP 的 XMP 块一般在 VP8X 头后，同样先读头部；没命中再整读兜底。
+    let head = read_head(path, METADATA_HEAD_BYTES)?;
+    if let Some(v) = scan_webp_metadata(&head)? {
+        return Ok(Some(v));
+    }
+    if size <= METADATA_HEAD_BYTES {
+        return Ok(None);
+    }
+    scan_webp_metadata(&fs::read(path)?)
 }
 
 /// 去掉 Windows canonicalize 产出的 `\\?\` verbatim 前缀。starts_with 比较
@@ -301,6 +339,48 @@ mod tests {
     }
 
     const METADATA_TEXT: &str = "a lovely cat\nSteps: 8, CFG scale: 1.0, Seed: 42, SDCPP: {\"schema\":\"sdcpp.image.params/v1\",\"seed\":42,\"width\":1024,\"height\":1024}";
+
+    /// 构造「大文件」：把 tEXt 放在 IDAT 之前或之后，中间塞 1 MiB 的 IDAT。
+    /// 用于验证头部读取命中与整读兜底两条路径（审查 10 §2.8）。
+    fn make_padded_png(text: &str, metadata_after_idat: bool) -> Vec<u8> {
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&1u32.to_be_bytes());
+        ihdr.extend_from_slice(&1u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let mut text_data = b"parameters\0".to_vec();
+        text_data.extend_from_slice(text.as_bytes());
+        let text_chunk = chunk(b"tEXt", &text_data);
+        let big_idat = chunk(b"IDAT", &vec![0u8; 1024 * 1024]);
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        png.extend_from_slice(&chunk(b"IHDR", &ihdr));
+        if metadata_after_idat {
+            png.extend_from_slice(&big_idat);
+            png.extend_from_slice(&text_chunk);
+        } else {
+            png.extend_from_slice(&text_chunk);
+            png.extend_from_slice(&big_idat);
+        }
+        png.extend_from_slice(&chunk(b"IEND", &[]));
+        png
+    }
+
+    #[test]
+    fn reads_metadata_from_the_head_of_a_large_png() {
+        let p = temp_path("png");
+        fs::write(&p, make_padded_png(METADATA_TEXT, false)).unwrap();
+        let meta = parse_png_metadata(p.to_str().unwrap()).unwrap();
+        let _ = fs::remove_file(&p);
+        assert_eq!(meta.unwrap()["seed"], 42);
+    }
+
+    #[test]
+    fn falls_back_to_full_read_when_metadata_follows_the_pixels() {
+        let p = temp_path("png");
+        fs::write(&p, make_padded_png(METADATA_TEXT, true)).unwrap();
+        let meta = parse_png_metadata(p.to_str().unwrap()).unwrap();
+        let _ = fs::remove_file(&p);
+        assert_eq!(meta.unwrap()["seed"], 42);
+    }
 
     #[test]
     fn parses_sdcpp_json_from_png_text_chunk() {

@@ -11,11 +11,22 @@ export function VostokPoster() {
       <rect width="480" height="600" style={{ fill: "var(--color-bg, #110e0b)" }} />
       <circle cx="356" cy="128" r="98" style={{ fill: "var(--color-fg, #eeead8)" }} />
       <circle
-        cx="356" cy="128" r="98" fill="none" strokeWidth="3" opacity="0.15"
+        cx="356"
+        cy="128"
+        r="98"
+        fill="none"
+        strokeWidth="3"
+        opacity="0.15"
         style={{ stroke: "var(--color-bg, #110e0b)" }}
       />
       <ellipse
-        cx="240" cy="330" rx="300" ry="66" fill="none" strokeWidth="2" opacity="0.55"
+        cx="240"
+        cy="330"
+        rx="300"
+        ry="66"
+        fill="none"
+        strokeWidth="2"
+        opacity="0.55"
         transform="rotate(-18 240 330)"
         style={{ stroke: "var(--color-steel, #50afb9)" }}
       />
@@ -23,12 +34,13 @@ export function VostokPoster() {
         points="0,600 0,352 480,470 480,600"
         style={{ fill: "var(--color-accent, #cf3616)" }}
       />
-      <polygon
-        points="0,600 0,540 480,600"
-        style={{ fill: "var(--color-flow-end, #9b2014)" }}
-      />
+      <polygon points="0,600 0,540 480,600" style={{ fill: "var(--color-flow-end, #9b2014)" }} />
       <rect
-        x="88" y="120" width="34" height="34" transform="rotate(18 105 137)"
+        x="88"
+        y="120"
+        width="34"
+        height="34"
+        transform="rotate(18 105 137)"
         style={{ fill: "var(--color-accent, #cf3616)" }}
       />
       <circle cx="118" cy="212" r="9" style={{ fill: "var(--color-fg, #eeead8)" }} />
@@ -36,13 +48,27 @@ export function VostokPoster() {
       <circle cx="420" cy="330" r="2.5" style={{ fill: "var(--color-steel, #50afb9)" }} />
       <circle cx="200" cy="70" r="2" opacity="0.7" style={{ fill: "var(--color-fg, #eeead8)" }} />
       <circle cx="392" cy="412" r="2" opacity="0.7" style={{ fill: "var(--color-fg, #eeead8)" }} />
-      <circle cx="150" cy="420" r="2" opacity="0.8" style={{ fill: "var(--color-steel, #50afb9)" }} />
+      <circle
+        cx="150"
+        cy="420"
+        r="2"
+        opacity="0.8"
+        style={{ fill: "var(--color-steel, #50afb9)" }}
+      />
       <rect
-        x="330" y="500" width="110" height="10" transform="skewX(-24)" opacity="0.9"
+        x="330"
+        y="500"
+        width="110"
+        height="10"
+        transform="skewX(-24)"
+        opacity="0.9"
         style={{ fill: "var(--color-fg, #eeead8)" }}
       />
       <text
-        x="36" y="76" fontSize="30" fontWeight={700}
+        x="36"
+        y="76"
+        fontSize="30"
+        fontWeight={700}
         style={{
           fontFamily: "var(--font-display)",
           fill: "var(--color-fg, #eeead8)",
@@ -52,7 +78,9 @@ export function VostokPoster() {
         红楔入轨
       </text>
       <text
-        x="38" y="100" fontSize="11"
+        x="38"
+        y="100"
+        fontSize="11"
         style={{
           fontFamily: "var(--font-mono)",
           fill: "var(--color-accent-hi, #fb6c2b)",

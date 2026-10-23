@@ -1,8 +1,4 @@
-import {
-  getCurrentWindow,
-  ProgressBarStatus,
-  UserAttentionType,
-} from "@tauri-apps/api/window";
+import { getCurrentWindow, ProgressBarStatus, UserAttentionType } from "@tauri-apps/api/window";
 import {
   isPermissionGranted,
   requestPermission,

@@ -36,7 +36,7 @@ fn validate_job_id(id: &str) -> Result<()> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        anyhow::bail!("invalid job id: {}", id);
+        anyhow::bail!("任务 ID 非法：{}。请刷新任务列表后重试。", id);
     }
     Ok(())
 }
@@ -57,9 +57,67 @@ fn is_sd_server_models_shape(value: &serde_json::Value) -> bool {
 
 /// Thin HTTP client wrapping sd-server's `/sdcpp/v1` API. Replaces the webui's
 /// reverse-proxy approach: the React frontend calls Tauri commands, which use this.
+/// capabilities 兜底探测的负缓存（审查 10 §2.6）。
+///
+/// `ping()` 每 3 秒被 `server_status` 调用一次；对「/v1/models 形状不匹配」的
+/// 内核（自编译/裁剪/魔改），兜底会**每次都**打 `/sdcpp/v1/capabilities`，而该
+/// 端点会触发上游全量 LoRA 递归扫描——空闲时等于每 3 秒扫一遍模型目录。
+/// 连续失败 3 次后降到 30 秒最多一次，成功即清零。
+struct FallbackGate {
+    fails: u32,
+    last_at: Option<std::time::Instant>,
+}
+
+static FALLBACK_GATE: OnceLock<std::sync::Mutex<std::collections::HashMap<u16, FallbackGate>>> =
+    OnceLock::new();
+
+const FALLBACK_FAILS_BEFORE_THROTTLE: u32 = 3;
+const FALLBACK_MIN_INTERVAL: Duration = Duration::from_secs(30);
+
+/// 现在是否允许再打一次重的 capabilities 兜底。
+fn fallback_allowed(port: u16) -> bool {
+    let gate = FALLBACK_GATE.get_or_init(Default::default);
+    let mut map = match gate.lock() {
+        Ok(m) => m,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let entry = map.entry(port).or_insert(FallbackGate {
+        fails: 0,
+        last_at: None,
+    });
+    if entry.fails < FALLBACK_FAILS_BEFORE_THROTTLE {
+        return true;
+    }
+    match entry.last_at {
+        Some(at) => at.elapsed() >= FALLBACK_MIN_INTERVAL,
+        None => true,
+    }
+}
+
+/// 记录一次兜底探测的结果（成功清零，失败累计并记时间）。
+fn fallback_record(port: u16, ok: bool) {
+    let gate = FALLBACK_GATE.get_or_init(Default::default);
+    let mut map = match gate.lock() {
+        Ok(m) => m,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let entry = map.entry(port).or_insert(FallbackGate {
+        fails: 0,
+        last_at: None,
+    });
+    if ok {
+        entry.fails = 0;
+        entry.last_at = None;
+    } else {
+        entry.fails = entry.fails.saturating_add(1);
+        entry.last_at = Some(std::time::Instant::now());
+    }
+}
+
 pub struct SdClient {
     base: String,
     http: Client,
+    port: u16,
 }
 
 impl SdClient {
@@ -67,6 +125,7 @@ impl SdClient {
         Self {
             base: format!("http://127.0.0.1:{}", port),
             http: shared_http(),
+            port,
         }
     }
 
@@ -93,18 +152,25 @@ impl SdClient {
             _ => false,
         };
         if models_ok {
+            fallback_record(self.port, true);
             return true;
+        }
+        // 轻量探测失败：先看负缓存是否允许再打一次重的兜底（审查 10 §2.6）。
+        if !fallback_allowed(self.port) {
+            return false;
         }
         let req = self
             .http
             .get(format!("{}/sdcpp/v1/capabilities", self.base));
-        match req.timeout(Duration::from_secs(3)).send().await {
+        let reachable = match req.timeout(Duration::from_secs(3)).send().await {
             Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
                 Ok(v) => v.get("samplers").and_then(|s| s.as_array()).is_some(),
                 Err(_) => false,
             },
             _ => false,
-        }
+        };
+        fallback_record(self.port, reachable);
+        reachable
     }
 
     pub async fn capabilities(&self) -> Result<serde_json::Value> {
@@ -130,7 +196,7 @@ impl SdClient {
         body: &serde_json::Value,
     ) -> Result<(u16, serde_json::Value)> {
         if mode != "img_gen" && mode != "vid_gen" {
-            anyhow::bail!("unsupported generation mode: {}", mode);
+            anyhow::bail!("不支持的生成模式：{}。请切换图形/视频模式后重试。", mode);
         }
         let resp = self
             .http
@@ -200,6 +266,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fallback_gate_throttles_after_repeated_failures() {
+        // 用非默认端口避免与其他用例共享全局状态。
+        let port = 65535;
+        assert!(fallback_allowed(port), "首次探测应放行");
+        for _ in 0..FALLBACK_FAILS_BEFORE_THROTTLE {
+            assert!(fallback_allowed(port));
+            fallback_record(port, false);
+        }
+        assert!(
+            !fallback_allowed(port),
+            "连续失败达到阈值后应被 30s 负缓存挡住"
+        );
+        fallback_record(port, true);
+        assert!(fallback_allowed(port), "成功后应清零并立即放行");
+    }
+
+    #[test]
     fn validate_job_id_accepts_server_minted_ids() {
         assert!(validate_job_id("job_01HTXYZABC").is_ok());
         assert!(validate_job_id("job-1").is_ok());
@@ -232,6 +315,6 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("unsupported generation mode"));
+        assert!(error.contains("不支持的生成模式"));
     }
 }

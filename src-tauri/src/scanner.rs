@@ -73,6 +73,9 @@ struct ScanContext {
     stats: ScanStats,
     truncated: bool,
     referenced_shards: HashSet<PathBuf>,
+    /// 已进入过的目录（规范化路径）。junction / symlink 可以形成环
+    /// （a→b→a），没有这个集合时只能靠 `MAX_DEPTH` 侥幸不炸（审查 10 §2.10）。
+    visited_dirs: HashSet<PathBuf>,
 }
 
 struct SafetensorsIndexInfo {
@@ -110,8 +113,17 @@ fn is_safetensors_index(name: &str) -> bool {
         .ends_with(SAFETENSORS_INDEX_SUFFIX)
 }
 
+/// 统一分隔符用于展示与 `settings.json`；反斜杠只在 Windows 上算分隔符。
+///
+/// POSIX 里 `\` 是合法文件名字符，无条件替换会把 `/m/wan\2.gguf` 改成
+/// `/m/wan/2.gguf`——既不是真实路径，也会让后续读取失败（审查 10 §2.9）。
 pub fn to_slash(p: &Path) -> String {
-    p.to_string_lossy().replace('\\', "/")
+    let text = p.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text
+    }
 }
 
 /// Return the first existing subdirectory under `base` from the list of candidates.
@@ -297,6 +309,11 @@ fn is_skipped(path: &Path, skip: &HashSet<PathBuf>) -> bool {
             .unwrap_or(false)
 }
 
+// 8 个参数确实是「walk 不断加职责」的产物（审查 2.14 / 2.22）：逐项拆成
+// 结构体是会改变递归调用面的重构，本批只加 lint 放行并保留重构入口——
+// 新增参数前请先考虑把它们收进 ScanContext（skip/category_hint/
+// package_family 都是「同一遍扫描的上下文」）。
+#[allow(clippy::too_many_arguments)]
 fn walk(
     dir: &Path,
     base: &Path,
@@ -377,9 +394,40 @@ fn walk(
                 continue;
             }
         };
+        // Windows junction 与 Unix symlink：`DirEntry::file_type()` **不跟随**链接，
+        // 于是链接目录既不是 dir 也不是 file，整棵子树被静默跳过（扫描警告里也
+        // 没有记录），用户只看到"模型少了一半"。这里按链接目标判断
+        // （审查 10 §2.10）；环由下面的 visited 集合兜住。
+        let resolved_type = if file_type.is_symlink() {
+            match fs::metadata(&path) {
+                Ok(meta) => meta.file_type(),
+                Err(error) => {
+                    context.stats.metadata_errors += 1;
+                    context.warn(
+                        "link_target_failed",
+                        &path,
+                        format!("无法解析链接目标：{}", error),
+                    );
+                    continue;
+                }
+            }
+        } else {
+            file_type
+        };
 
-        if file_type.is_dir() {
+        if resolved_type.is_dir() {
             if is_skipped(&path, skip) {
+                continue;
+            }
+            // 规范化去重：同一目录经不同链接第二次到达时直接跳过，避免环。
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !context.visited_dirs.insert(canonical) {
+                context.stats.skipped_directories += 1;
+                context.warn(
+                    "directory_already_visited",
+                    &path,
+                    "目录已通过其它链接扫描过，跳过以避免循环",
+                );
                 continue;
             }
             // Diffusers directory: contains model_index.json → treat as a model file.
@@ -449,7 +497,7 @@ fn walk(
             continue;
         }
 
-        if !file_type.is_file() {
+        if !resolved_type.is_file() {
             continue;
         }
         let name = match path.file_name().and_then(|n| n.to_str()) {
@@ -525,7 +573,10 @@ pub fn scan_models(dir: &str) -> Result<ScanResult> {
     let requested_base = PathBuf::from(dir);
     let base = requested_base.canonicalize().unwrap_or(requested_base);
     if !base.is_dir() {
-        anyhow::bail!("not a directory: {}", dir);
+        anyhow::bail!(
+            "模型目录不存在或不可访问：{}。请在设置里重新选择模型目录。",
+            dir
+        );
     }
     let mut files = Vec::new();
     let mut context = ScanContext::default();
@@ -655,6 +706,27 @@ mod tests {
         assert!(!result.truncated);
         assert!(result.stats.directories_scanned >= 1);
         assert!(result.stats.entries_inspected >= 2);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 链接目录必须被跟随（而不是静默跳过），但同一目标只能扫一次。
+    /// 只在 Unix 上跑：普通用户即可创建 symlink（Windows 需要开发者模式/管理员）。
+    #[cfg(unix)]
+    #[test]
+    fn scan_follows_directory_symlinks_once() {
+        let dir = test_dir("symlink");
+        let real = dir.join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("model.safetensors"), b"model").unwrap();
+        std::os::unix::fs::symlink(&real, dir.join("alias")).unwrap();
+
+        let result = scan_models(dir.to_str().unwrap()).unwrap();
+        // 跟随链接：能扫到；去重：只出现一次（alias 指向 real 已在 visited 里）。
+        assert_eq!(result.count, 1, "链接目录应被跟随且只计一次");
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "directory_already_visited"));
         fs::remove_dir_all(dir).unwrap();
     }
 

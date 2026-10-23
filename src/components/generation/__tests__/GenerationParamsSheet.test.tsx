@@ -52,7 +52,7 @@ function renderSheet(family: string) {
       onSeedEdit={vi.fn()}
       onRandomSeed={vi.fn()}
       onReset={vi.fn()}
-    />
+    />,
   );
 }
 
@@ -80,8 +80,6 @@ describe("GenerationParamsSheet family hint", () => {
   it("renders no hint panel for a family without one", () => {
     expect(FAMILY_CONFIG.flux.generationHint).toBeUndefined();
     renderSheet("flux");
-    expect(
-      screen.queryByRole("button", { name: "模型使用提示" })
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "模型使用提示" })).not.toBeInTheDocument();
   });
 });

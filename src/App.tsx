@@ -17,7 +17,7 @@ import { useTheme } from "./lib/theme";
 const Dashboard = lazy(() =>
   import("./components/dashboard/Dashboard").then((m) => ({
     default: m.Dashboard,
-  }))
+  })),
 );
 
 type Phase = "checking" | "dashboard" | "running";
@@ -33,6 +33,10 @@ export default function App() {
   const toast = useStore((s) => s.toast);
   const lastCapsSync = useRef(0);
   const lastCapsErrorToast = useRef(0);
+  // 3s 轮询里含两次 IPC（serverStatus + capabilities，Rust 侧 reqwest 硬超时
+  // 最长 30s）。没有互斥时慢请求会叠加下一轮，多轮结果乱序回写 caps
+  // （审查 20-frontend §2.7）。
+  const checkBusy = useRef(false);
 
   // 任务轮询挂在整个 App 生命周期（而非 GenerationUI）：切到控制台改设置
   // 期间任务仍在服务器上跑，停止轮询会让完成的结果无人收货、随服务器
@@ -44,6 +48,8 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     const check = async () => {
+      if (checkBusy.current) return;
+      checkBusy.current = true;
       try {
         const s = await api.serverStatus();
         if (!alive) return;
@@ -58,11 +64,11 @@ export default function App() {
           prev.running !== s.running ||
           prev.reachable !== s.reachable ||
           prev.external !== s.external ||
-           prev.pid !== s.pid ||
-           prev.model !== s.model ||
-           prev.phase !== s.phase ||
-           prev.lastError !== s.lastError ||
-           prev.startedAt !== s.startedAt
+          prev.pid !== s.pid ||
+          prev.model !== s.model ||
+          prev.phase !== s.phase ||
+          prev.lastError !== s.lastError ||
+          prev.startedAt !== s.startedAt
         ) {
           setServerStatus(s);
         }
@@ -88,10 +94,8 @@ export default function App() {
               // 外部 sd-server 没有 startedAt（不是我们 spawn 的），同端口
               // 换外部实例时 identityChanged 检测不到；用 caps 里的模型名
               // 兜底识别切换（对抗性审查 M6）。
-              const capsIdentityChanged =
-                hadCaps && prevCapsModel !== c.model?.name;
-              const freshIdentity =
-                !hadCaps || identityChanged || capsIdentityChanged;
+              const capsIdentityChanged = hadCaps && prevCapsModel !== c.model?.name;
+              const freshIdentity = !hadCaps || identityChanged || capsIdentityChanged;
               setCaps(c);
               lastCapsSync.current = Date.now();
               // current_mode 是服务器启动时的静态默认值（上游 routes_sdcpp.cpp），
@@ -124,14 +128,22 @@ export default function App() {
             setPhase("dashboard");
           }
         } else {
-          if (useStore.getState().caps) {
+          // 用户主动切模型时会先 stopServer 再 start（Dashboard 里），那段时间
+          // 必然「不可达」——此时弹红色「连接已断开」是假错误（审查 20-frontend
+          // §2.7）。只在工作室里（非控制台）突然失联才算异常。
+          if (useStore.getState().caps && !useStore.getState().dashboardOpen) {
             setCaps(null);
             toast("与服务器的连接已断开", true);
+          } else if (useStore.getState().caps) {
+            // 控制台里（多半是切换模型/重启中）：静默清空能力，不报错。
+            setCaps(null);
           }
           setPhase("dashboard");
         }
       } catch {
         if (alive) setPhase((p) => (p === "checking" ? "dashboard" : p));
+      } finally {
+        checkBusy.current = false;
       }
     };
     check();
@@ -166,9 +178,7 @@ export default function App() {
     listen<{ type: string; text: string }>("server-log", (e) => {
       const p = e.payload;
       pendingEvents.push(
-        p.type === "progress"
-          ? { type: "progress", text: p.text }
-          : { type: "line", text: p.text }
+        p.type === "progress" ? { type: "progress", text: p.text } : { type: "line", text: p.text },
       );
       if (rafId == null) rafId = requestAnimationFrame(flush);
     }).then((f) => {
@@ -195,12 +205,7 @@ export default function App() {
   // 不能据此切回首页——否则接管外部 sd-server 时会和 check() 的
   // setPhase("running") 每 3 秒来回震荡。
   useEffect(() => {
-    if (
-      serverStatus &&
-      !serverStatus.running &&
-      !serverStatus.external &&
-      phase === "running"
-    ) {
+    if (serverStatus && !serverStatus.running && !serverStatus.external && phase === "running") {
       setPhase("dashboard");
     }
   }, [serverStatus, phase]);
@@ -244,16 +249,47 @@ export default function App() {
                 <path id="vostok-patch-bot" d="M 102,74 A 44,44 0 0 1 18,74" fill="none" />
               </defs>
               <circle cx="60" cy="60" r="58" fill="#110e0b" stroke="#eeead8" strokeWidth="1.6" />
-              <circle cx="60" cy="60" r="50" fill="none" stroke="#eeead8" strokeOpacity="0.35" strokeWidth="0.8" />
-              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.6" fill="#eeead8">
-                <textPath href="#vostok-patch-top" startOffset="6%">LUMINA STUDIO</textPath>
+              <circle
+                cx="60"
+                cy="60"
+                r="50"
+                fill="none"
+                stroke="#eeead8"
+                strokeOpacity="0.35"
+                strokeWidth="0.8"
+              />
+              <text
+                fontFamily="JetBrains Mono, monospace"
+                fontSize="8.4"
+                letterSpacing="2.6"
+                fill="#eeead8"
+              >
+                <textPath href="#vostok-patch-top" startOffset="6%">
+                  LUMINA STUDIO
+                </textPath>
               </text>
-              <text fontFamily="JetBrains Mono, monospace" fontSize="8.4" letterSpacing="2.2" fill="#eeead8">
-                <textPath href="#vostok-patch-bot" startOffset="4%">ВОСТОК · 东方号</textPath>
+              <text
+                fontFamily="JetBrains Mono, monospace"
+                fontSize="8.4"
+                letterSpacing="2.2"
+                fill="#eeead8"
+              >
+                <textPath href="#vostok-patch-bot" startOffset="4%">
+                  ВОСТОК · 东方号
+                </textPath>
               </text>
               <polygon points="60,26 74,86 46,86" fill="#cf3616" />
               <circle cx="60" cy="26" r="6.5" fill="#eeead8" />
-              <ellipse cx="60" cy="60" rx="34" ry="9" fill="none" stroke="#50afb9" strokeWidth="1.4" transform="rotate(-18 60 60)" />
+              <ellipse
+                cx="60"
+                cy="60"
+                rx="34"
+                ry="9"
+                fill="none"
+                stroke="#50afb9"
+                strokeWidth="1.4"
+                transform="rotate(-18 60 60)"
+              />
               <circle cx="88" cy="44" r="2.2" fill="#eeead8" />
             </svg>
           </div>

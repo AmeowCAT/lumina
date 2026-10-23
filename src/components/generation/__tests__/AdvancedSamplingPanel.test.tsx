@@ -23,7 +23,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
         onUpdate={onUpdate}
         vaeTilingProtocol="pixels"
         vaeTilingParams={{ enabled: true, tile_size_w: 256, rel_size_w: 0.5 }}
-      />
+      />,
     );
 
     const width = screen.getByLabelText(/分块宽/);
@@ -32,7 +32,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
 
     expect(onUpdate).toHaveBeenCalledWith(
       "vae_tiling_params",
-      expect.objectContaining({ tile_size_w: 512, rel_size_w: 0 })
+      expect.objectContaining({ tile_size_w: 512, rel_size_w: 0 }),
     );
   });
 
@@ -44,7 +44,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
         onUpdate={onUpdate}
         vaeTilingProtocol="pixels"
         vaeTilingParams={{ enabled: true, tile_size_w: 256, rel_size_w: 0.5 }}
-      />
+      />,
     );
 
     expect(screen.getByText(/相对尺寸正在覆盖分块宽/)).toBeTruthy();
@@ -52,7 +52,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
 
     expect(onUpdate).toHaveBeenCalledWith(
       "vae_tiling_params",
-      expect.objectContaining({ rel_size_w: 0, rel_size_h: 0 })
+      expect.objectContaining({ rel_size_w: 0, rel_size_h: 0 }),
     );
   });
 
@@ -71,7 +71,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
           tile_size_x: 16,
           rel_size_y: 0,
         }}
-      />
+      />,
     );
 
     const alert = screen.getByRole("alert");
@@ -79,10 +79,7 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "清除旧值" }));
 
-    const [path, value] = onUpdate.mock.calls[0] as [
-      string,
-      Record<string, unknown>,
-    ];
+    const [path, value] = onUpdate.mock.calls[0] as [string, Record<string, unknown>];
     expect(path).toBe("vae_tiling_params");
     expect(value.tile_size_x).toBeUndefined();
     // 像素值属于用户设置，清除旧值时不能被顺手抹掉。
@@ -97,9 +94,26 @@ describe("AdvancedSamplingPanel VAE 分块", () => {
         onUpdate={vi.fn()}
         vaeTilingProtocol="latent"
         vaeTilingParams={{ enabled: true, tile_size_w: 512, tile_size_h: 512 }}
-      />
+      />,
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(/不会下发到该内核/);
+  });
+});
+
+// 审查 50-ux F-18：`shifted_timestep` 一直随请求体发送，但此前没有 UI 入口。
+describe("AdvancedSamplingPanel shifted timestep", () => {
+  it("reports edits on the sample_params path", async () => {
+    const onUpdate = vi.fn();
+    render(
+      <AdvancedSamplingPanel
+        {...baseProps}
+        onUpdate={onUpdate}
+        shiftedTimestep={0}
+        vaeTilingParams={undefined}
+      />,
+    );
+
+    expect(screen.getByLabelText(/Shifted Timestep/)).toBeTruthy();
   });
 });

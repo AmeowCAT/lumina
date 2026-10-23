@@ -1,0 +1,54 @@
+name: Bug 报告
+description: 界面、启动流程、参数映射的问题（出图质量/显存/模型不被识别请报上游）
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        启动失败、出图质量、加载失败、显存不足、模型不被识别属于上游
+        [`stable-diffusion.cpp`](https://github.com/leejet/stable-diffusion.cpp/issues)，
+        不是本仓库的问题。本仓库只负责任务界面与进程管理。
+  - type: input
+    id: lumina-version
+    attributes:
+      label: Lumina 版本
+      description: 设置/关于里显示的版本号，或安装包文件名
+      placeholder: 0.8.6
+    validations:
+      required: true
+  - type: input
+    id: kernel-version
+    attributes:
+      label: sd-server 版本与后端
+      description: 控制台「内核兼容性」面板会显示版本；后端指 CUDA / Vulkan / CPU / ROCm
+      placeholder: 例如 b4270 / CUDA 12.4
+    validations:
+      required: true
+  - type: input
+    id: model-family
+    attributes:
+      label: 模型与家族
+      description: 主模型文件名 + 识别出的家族（识别错误时请写你手动指定的家族）
+      placeholder: 例如 flux1-dev-Q8_0.gguf / Flux.1
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 实际发生了什么
+      description: 复现步骤 + 预期结果。涉及启动失败时请附服务器日志面板的最后 30 行。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 控制台 → 服务器日志面板（展开 → 清空前的最后一次启动日志）。**没有日志的 bug 报告通常无法定位。**
+      render: text
+  - type: input
+    id: os
+    attributes:
+      label: 系统
+      placeholder: Windows 11 23H2 / macOS 15 / Ubuntu 24.04
+    validations:
+      required: true

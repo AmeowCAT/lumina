@@ -2,7 +2,10 @@
   "compilerOptions": {
     "target": "ES2020",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    // lib 用 ES2022：`new Error(msg, { cause })`、`Object.hasOwn` 等在
+    // WebView2 / WKWebView（Tauri 2 的最低要求）上早已可用，而 target 仍由
+    // Vite 的构建目标决定（这里只影响类型可见性）。
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",

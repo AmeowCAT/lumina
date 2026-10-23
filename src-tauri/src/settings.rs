@@ -55,6 +55,31 @@ pub struct Settings {
     pub sd_port: u16,
     #[serde(default)]
     pub model_snapshots: HashMap<String, ModelConfigSnapshot>,
+    /// 配置文件结构版本（迁移用）。旧文件没有该键 → 0；任何一次写入都会补成
+    /// [`CURRENT_SCHEMA_VERSION`]，后续迁移函数表按此值选择升级路径
+    /// （审查 S-6 / 2.15）。
+    #[serde(default)]
+    pub schema_version: u32,
+    /// 生成完成后自动把结果落盘到输出目录（审查 S-5）。
+    ///
+    /// **默认关**（用户确认的产品意图）：未显式打开前不会向输出目录写入任何东西，
+    /// 避免"我只想看看"变成磁盘上的惊喜。打开后若未配置输出目录，前端会跳过——
+    /// 后端 `save_output` 会以「no output dir」拒绝。
+    /// 只属于全局行为，`ModelConfigSnapshot` 是「每个模型的启动配置」，不包含该项。
+    #[serde(default)]
+    pub auto_save_results: bool,
+    /// 计算线程数（--threads）；0 = 不传，由内核按 CPU 物理核数决定（上游
+    /// help：threads <= 0 时取物理核数）。属于本机硬件配置，与 `sd_port`
+    /// 一样只存全局设置、不进 `ModelConfigSnapshot`。
+    #[serde(default)]
+    pub threads: u32,
+    /// 参数驻留后端（--params-backend），如 `disk` / `cpu` / `te=cpu,vae=cpu`。
+    /// 空 = 交给 auto-fit 决定。与 `backend`（计算设备）是两套分配。
+    #[serde(default)]
+    pub params_backend: String,
+    /// RPC 服务器列表（--rpc-servers），`host:port` 逗号分隔；空 = 不传。
+    #[serde(default)]
+    pub rpc_servers: String,
 }
 
 /// Hand-written so that `Settings::default()` (used on a corrupt/missing file)
@@ -82,6 +107,11 @@ impl Default for Settings {
             max_queue_size: default_max_queue_size(),
             sd_port: default_sd_port(),
             model_snapshots: HashMap::new(),
+            schema_version: 0,
+            auto_save_results: false,
+            threads: 0,
+            params_backend: String::new(),
+            rpc_servers: String::new(),
         }
     }
 }
@@ -159,6 +189,10 @@ fn default_max_queue_size() -> u32 {
     4
 }
 
+/// 当前配置文件结构版本。写盘时低于该值的文件会被补成它（迁移由后续
+/// 版本按 `schemaVersion` 展开）。
+const CURRENT_SCHEMA_VERSION: u32 = 1;
+
 /// Historical sd-server port — the value the upstream webui also defaults to.
 pub fn default_sd_port() -> u16 {
     crate::server::DEFAULT_SD_PORT
@@ -181,6 +215,82 @@ fn legacy_config_path() -> PathBuf {
 
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+/// `output_dir` 校验：它是 `save_output` / `read_file_b64` /
+/// `list_output_files` / `delete_output_file` 的白名单根
+/// （`lib::dir_is_within`），因此不能让 webview 用一次 `save_settings` 把它
+/// 指向任意位置——否则「目录必须位于已配置的输出目录内」这条控制项等于自
+/// 证（审查 S-2）。
+///
+/// - 空串（含纯空白）保留「未配置」语义：此时所有读写命令一律被拒，不能
+///   因为清空配置而被阻断。
+/// - 其余必须是绝对路径、且不含 `..` 分量与 NUL：相对路径会让前缀比较失去
+///   意义，`..` 是词法逃逸的入口。
+///
+/// 这里不要求目录已存在：用户可以预先配置一个稍后才创建的目录，而且
+/// `save_output` 自己会 `create_dir_all`。
+pub fn validate_output_dir(dir: &str) -> Result<()> {
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if trimmed.contains('\0') {
+        anyhow::bail!("输出目录包含非法字符（NUL）：{}", dir);
+    }
+    let path = Path::new(trimmed);
+    if !path.is_absolute() {
+        anyhow::bail!("输出目录必须是绝对路径：{}", dir);
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        anyhow::bail!("输出目录不能包含 `..` 分量：{}", dir);
+    }
+    Ok(())
+}
+
+/// 把覆盖层（本次要写入的结构体序列化结果）合并进底层（磁盘上的旧 JSON）：
+/// 覆盖层同名键胜出、对象递归合并、覆盖层没有的未知键原样保留。
+///
+/// 这样三个会静默丢配置的场景都被堵住（审查 S-6）：降级版本写的字段、
+/// 「前端先加字段、Rust 后补」窗口期里的字段、以及 `save_settings({})` 这类
+/// 部分载荷——后者的 `"modelSnapshots":{}` 在深合并后**不会**清空用户为每个
+/// 模型手调的家族/组件/VAE 配置。
+fn merge_json(base: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (base, overlay) {
+        (serde_json::Value::Object(base_map), serde_json::Value::Object(overlay_map)) => {
+            for (key, value) in overlay_map {
+                match base_map.get_mut(&key) {
+                    // 两边都是对象才递归；数组/标量一律由覆盖层整值替换。
+                    Some(slot) if slot.is_object() && value.is_object() => merge_json(slot, value),
+                    _ => {
+                        base_map.insert(key, value);
+                    }
+                }
+            }
+        }
+        (slot, overlay) => *slot = overlay,
+    }
+}
+
+/// 写盘前把 `schemaVersion` 补到当前版本（只升不降：更高版本写的文件保持
+/// 原值，避免降级运行时把版本号改小、让下次升级走错迁移分支）。
+fn ensure_schema_version(value: &mut serde_json::Value) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let existing = object
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if existing < u64::from(CURRENT_SCHEMA_VERSION) {
+        object.insert(
+            "schemaVersion".into(),
+            serde_json::Value::from(CURRENT_SCHEMA_VERSION),
+        );
+    }
 }
 
 fn unique_sibling(path: &Path, suffix: &str) -> PathBuf {
@@ -267,7 +377,7 @@ fn replace_existing(temp: &Path, target: &Path, backup: &Path) -> Result<()> {
         if let Some(previous) = previous_backup {
             let _ = fs::rename(previous, backup);
         }
-        return Err(error).context("atomically replace settings");
+        return Err(error).context("原子替换 settings.json 失败");
     }
     if let Some(previous) = previous_backup {
         let _ = fs::remove_file(previous);
@@ -291,7 +401,17 @@ fn save_to(settings: &Settings, path: &Path) -> Result<()> {
         .ok_or_else(|| anyhow!("settings path has no parent: {}", path.display()))?;
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
 
-    let data = serde_json::to_vec_pretty(settings).context("serialize settings")?;
+    // 写前 merge：见 merge_json。旧文件读不出来（不存在/损坏）时按「没有旧
+    // 数据」处理，保持原有的原子写行为。
+    let mut value = serde_json::to_value(settings).context("序列化设置失败")?;
+    if let Ok(bytes) = fs::read(path) {
+        if let Ok(mut previous) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            merge_json(&mut previous, value);
+            value = previous;
+        }
+    }
+    ensure_schema_version(&mut value);
+    let data = serde_json::to_vec_pretty(&value).context("序列化设置失败")?;
     let temp = unique_sibling(path, "tmp");
     let write_result = (|| -> Result<()> {
         let mut file = OpenOptions::new()
@@ -607,5 +727,166 @@ mod tests {
                 && defaults.conditioning_cache_size.is_empty()
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 审查 S-6：写盘是「反序列化 → 整体序列化 → 覆盖」，旧文件里的未知键
+    /// （降级版本写的字段、前端先加、Rust 后补的窗口期）以及用户手调的
+    /// `modelSnapshots` 都不能因为一次保存而消失。
+    #[test]
+    fn save_merges_unknown_keys_and_keeps_model_snapshots() {
+        let dir = test_dir("merge");
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            br#"{
+                "modelDir":"old-models",
+                "futureField":{"nested":true},
+                "modelSnapshots":{"models/a.safetensors":{"familyOverride":"pid","components":{"vae":"x"}}}
+            }"#,
+        )
+        .unwrap();
+
+        // 1) 「load → save」往返（降级版本/字段漂移的真实路径）：未知键必须
+        //    原样回到文件里，modelSnapshots 不能因为重新序列化而消失。
+        let loaded = load_file(&path).unwrap();
+        save_to(&loaded, &path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["futureField"]["nested"], true);
+        assert_eq!(
+            saved["modelSnapshots"]["models/a.safetensors"]["familyOverride"],
+            "pid"
+        );
+        assert_eq!(
+            saved["modelSnapshots"]["models/a.safetensors"]["components"]["vae"],
+            "x"
+        );
+        // 首次写入补上 schemaVersion（旧文件没有该键 → 0）。
+        assert_eq!(saved["schemaVersion"], 1);
+
+        // 2) 部分载荷（模拟 `save_settings({})`，所有字段走 serde 默认值）：
+        //    未知键与用户快照仍然保留。
+        save_to(&Settings::default(), &path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["futureField"]["nested"], true);
+        assert_eq!(
+            saved["modelSnapshots"]["models/a.safetensors"]["familyOverride"],
+            "pid"
+        );
+        // merge 不是「保留旧值」：同名键仍由本次的新值覆盖。
+        assert_eq!(saved["modelDir"], "");
+        assert_eq!(saved["schemaVersion"], 1);
+
+        // 3) 再次保存：新值生效，未知键依旧保留。
+        let updated = Settings {
+            model_dir: "new-models".into(),
+            ..Settings::default()
+        };
+        save_to(&updated, &path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["modelDir"], "new-models");
+        assert_eq!(saved["futureField"]["nested"], true);
+        assert_eq!(saved["schemaVersion"], 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 审查 S-5：自动保存结果**默认关**（用户确认）；旧文件缺键必须是 false，
+    /// 显式 true 要能往返保存。
+    #[test]
+    fn auto_save_results_defaults_to_false_and_round_trips() {
+        let legacy: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!legacy.auto_save_results);
+        // 旧文件缺 `schemaVersion` → 0，写盘时才补成 1。
+        assert_eq!(legacy.schema_version, 0);
+        assert!(!Settings::default().auto_save_results);
+
+        let enabled: Settings = serde_json::from_str(r#"{"autoSaveResults":true}"#).unwrap();
+        assert!(enabled.auto_save_results);
+        assert_eq!(
+            serde_json::to_value(&enabled).unwrap()["autoSaveResults"],
+            true
+        );
+
+        let dir = test_dir("auto-save");
+        let path = dir.join("settings.json");
+        save_to(&enabled, &path).unwrap();
+        let reparsed = load_file(&path).unwrap();
+        assert!(reparsed.auto_save_results);
+        assert_eq!(reparsed.schema_version, 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 审查 §2.9：`--threads` / `--params-backend` / `--rpc-servers` 三个结构化
+    /// 控件必须能落盘往返。它们和 `sd_port` 一样是「本机硬件配置」，只存全局
+    /// 设置——`ModelConfigSnapshot` 里不该出现，否则切模型会把线程数/多机端点
+    /// 按模型改掉。旧配置文件缺这三个键时仍是「不传」语义。
+    #[test]
+    fn threads_params_backend_and_rpc_servers_round_trip_as_global_only() {
+        let legacy: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.threads, 0, "缺键 = 0 = 启动时不传 --threads");
+        assert!(legacy.params_backend.is_empty());
+        assert!(legacy.rpc_servers.is_empty());
+        let defaults = Settings::default();
+        assert_eq!(defaults.threads, 0);
+        assert!(defaults.params_backend.is_empty());
+        assert!(defaults.rpc_servers.is_empty());
+
+        let configured: Settings = serde_json::from_str(
+            r#"{"threads":12,"paramsBackend":"te=cpu,vae=cpu","rpcServers":"127.0.0.1:50052,192.168.1.10:50052"}"#,
+        )
+        .unwrap();
+        assert_eq!(configured.threads, 12);
+        assert_eq!(configured.params_backend, "te=cpu,vae=cpu");
+        assert_eq!(configured.rpc_servers, "127.0.0.1:50052,192.168.1.10:50052");
+
+        let encoded = serde_json::to_value(&configured).unwrap();
+        assert_eq!(encoded["threads"], 12);
+        assert_eq!(encoded["paramsBackend"], "te=cpu,vae=cpu");
+
+        let dir = test_dir("engine-knobs");
+        let path = dir.join("settings.json");
+        save_to(&configured, &path).unwrap();
+        let reparsed = load_file(&path).unwrap();
+        assert_eq!(reparsed.threads, 12);
+        assert_eq!(reparsed.params_backend, "te=cpu,vae=cpu");
+        assert_eq!(reparsed.rpc_servers, configured.rpc_servers);
+        // 只属于全局设置：模型快照不携带这三项（snapshot 结构里没有它们）。
+        let snapshot = serde_json::to_value(ModelConfigSnapshot::default()).unwrap();
+        assert!(snapshot.get("threads").is_none());
+        assert!(snapshot.get("paramsBackend").is_none());
+        assert!(snapshot.get("rpcServers").is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 审查 S-2：`output_dir` 是 webview 可调用命令的白名单根，必须由后端
+    /// 校验成「空或干净的绝对路径」，否则白名单的取值权等于交给了 webview。
+    #[test]
+    fn output_dir_validation_requires_an_absolute_path_without_parent_components() {
+        // 清空配置 = 未配置：允许，不能因为新增校验阻断用户清空。
+        assert!(validate_output_dir("").is_ok());
+        assert!(validate_output_dir("   ").is_ok());
+
+        // `..` 分量一律拒绝（绝对路径也不例外）。
+        assert!(validate_output_dir("/tmp/../etc").is_err());
+        assert!(validate_output_dir("D:/out/../evil").is_err());
+        // NUL 是明显的畸形输入。
+        assert!(validate_output_dir("D:/out\0x").is_err());
+
+        #[cfg(windows)]
+        {
+            assert!(validate_output_dir("D:/outputs").is_ok());
+            assert!(validate_output_dir(r"D:\outputs").is_ok());
+            assert!(validate_output_dir(r"\\server\share\outputs").is_ok());
+            // 相对路径与「盘符相对」（无根）形式必须拒绝。
+            assert!(validate_output_dir("outputs").is_err());
+            assert!(validate_output_dir(r"D:outputs").is_err());
+            assert!(validate_output_dir(r"\outputs").is_err());
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(validate_output_dir("/tmp/outputs").is_ok());
+            assert!(validate_output_dir("outputs").is_err());
+            assert!(validate_output_dir("~/outputs").is_err());
+            assert!(validate_output_dir(r"D:\outputs").is_err());
+        }
     }
 }

@@ -4,9 +4,7 @@ import { logSeverity } from "../logFormat";
 describe("logSeverity", () => {
   it("recognizes the single-letter tags upstream #2104 introduced", () => {
     expect(logSeverity("[E] failed to load model --- model_loader.cpp:120")).toBe("error");
-    expect(logSeverity("[W] can not found lora lora.safetensors --- common.cpp:2323")).toBe(
-      "warn"
-    );
+    expect(logSeverity("[W] can not found lora lora.safetensors --- common.cpp:2323")).toBe("warn");
     expect(logSeverity("[I] loading model from disk")).toBe("other");
     expect(logSeverity("[D] backend device list")).toBe("other");
     expect(logSeverity("[V] tensor layout")).toBe("other");

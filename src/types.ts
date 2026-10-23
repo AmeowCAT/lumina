@@ -51,10 +51,29 @@ export interface Settings extends RuntimeDiagnostics {
   quantType: string;
   /** Raw --max-vram value（"6" / "-2" / "cuda0=6,vulkan0=4"）；空 = 不传。 */
   maxVram?: string;
+  /**
+   * 计算线程数（--threads / -t）；0 或未设置 = 不传，由内核按 CPU 物理核数决定。
+   * 上游 help：threads <= 0 时取物理核数。只属于本机硬件配置，不进模型快照。
+   */
+  threads?: number;
+  /**
+   * 参数驻留后端（--params-backend），如 `disk` / `cpu` / `te=cpu,vae=cpu`。
+   * 与 --backend（计算设备）不同：它决定权重放在哪里。上游限制：不接受 `&`
+   * 设备列表；`disk` 只在这里合法。空 = 由 auto-fit 决定。
+   */
+  paramsBackend?: string;
+  /** RPC 服务器列表（--rpc-servers），`host:port` 逗号分隔，多机拆卡用。空 = 不传。 */
+  rpcServers?: string;
   /** Fallback queue size when server doesn't report max_queue_size. Default 4. */
   maxQueueSize: number;
   /** Port sd-server is launched on and proxied through. Default 1234. */
   sdPort: number;
+  /**
+   * 生成完成后自动保存到输出目录（审查 F-16：结果只在内存，关窗/刷新/内存
+   * 淘汰即整批丢失）。**默认关**：只有显式 `true` 才开启，`undefined` 视为关。
+   * 未配置 outputDir 时该开关不生效。Rust 侧字段 `auto_save_results` 默认 false。
+   */
+  autoSaveResults?: boolean;
   modelSnapshots: Record<string, ModelConfigSnapshot>;
   loadWarning?: {
     code: string;
@@ -260,6 +279,52 @@ export interface VaeTilingParams {
   rel_size_y?: number;
 }
 
+/**
+ * 缓存微调（请求体 `cache_option`）的结构化草稿（审查 F-18 / 30-api §2）。
+ *
+ * 上游把它当 `key=value` 逗号串解析（`examples/common/common.cpp:2434-2494`），
+ * 但**同名键在不同 `cache_mode` 下含义不同**（`threshold` 分别写
+ * `reuse_threshold` / `residual_diff_threshold`，`warmup` 分别写
+ * `spectrum_warmup_steps` / `max_warmup_steps`），未知键直接 400。因此界面只提供
+ * 按模式渲染的结构化子控件，由 `buildCacheOption()` 按固定键序拼串。
+ *
+ * 本对象是 **UI 中间态，不进请求体**；请求体只发拼好的 `cache_option` 字符串。
+ * 未设置的键**不发送**（沿用内核默认），所以 `undefined` 与「显式等于默认值」
+ * 语义不同，不要用默认值预填充。
+ */
+export interface CacheOptionDraft {
+  /** easycache/ucache → reuse_threshold；dbcache 系 → residual_diff_threshold。 */
+  threshold?: number;
+  /** easycache/ucache：开始缓存的步数比例。 */
+  start?: number;
+  /** easycache/ucache：停止缓存的步数比例。 */
+  end?: number;
+  /** easycache/ucache：误差衰减率。 */
+  decay?: number;
+  /** easycache/ucache：阈值是否按输出范数缩放（拼成 `relative=0|1`）。 */
+  relative?: boolean;
+  /** easycache/ucache：每步计算后是否重置误差（拼成 `reset=0|1`）。 */
+  reset?: boolean;
+  /** 前段强制计算的 block 数（dbcache 系）。 */
+  Fn?: number;
+  /** 后段强制计算的 block 数（dbcache 系）。 */
+  Bn?: number;
+  /** spectrum：Chebyshev/Taylor 混合权重。 */
+  w?: number;
+  /** spectrum：Chebyshev 阶数。 */
+  m?: number;
+  /** spectrum：岭回归正则。 */
+  lam?: number;
+  /** spectrum：初始窗口（每 N 步计算一次）。 */
+  window?: number;
+  /** spectrum：预热后窗口增长步长。 */
+  flex?: number;
+  /** 预热步数：spectrum → spectrum_warmup_steps；其余 → max_warmup_steps。 */
+  warmup?: number;
+  /** spectrum：超过该步数比例后停止缓存。 */
+  stop?: number;
+}
+
 /** Generation parameters — mirrors sd-server defaults + everything the UI edits. */
 export interface GenParams {
   prompt?: string;
@@ -292,8 +357,28 @@ export interface GenParams {
   hires?: HiresParams;
   vae_tiling_params?: VaeTilingParams;
   cache_mode?: string;
+  /**
+   * 原始的 `key=value` 串。两种来源：① 旧版本/PNG 元数据恢复写入的原文
+   * （保留未知键，见 `parseCacheOption`）；② 由界面的结构化草稿拼出后回写。
+   * `cache_options` 存在时以草稿为准（见 `resolveCacheOption`）。
+   */
   cache_option?: string;
+  /** 结构化缓存微调草稿（F-18）；不进请求体，由 `buildCacheOption` 拼串。 */
+  cache_options?: CacheOptionDraft;
+  /**
+   * SCM 步掩码（逗号分隔 0/1，`1`=该步计算、`0`=可缓存；空 = 不发）。
+   *
+   * **必须**先过 `validateScmMask`：上游 `parse_scm_mask`
+   * （`src/runtime/cache_dit.hpp:558-575`）对每段直接 `std::stoi` 且无 try/catch，
+   * 非数字/空段会抛异常；该路径跑在 sd-server 的工作线程里
+   * （`examples/server/main.cpp:119` + `async_jobs.cpp` 全文无 try/catch），
+   * 逸出即 `std::terminate` —— 内核整个进程消失。非法值一律不下发。
+   */
   scm_mask?: string;
+  /**
+   * SCM 策略；**请求体里是死键**（上游 `from_json_str` 不解析，只有启动参数
+   * `--scm-policy` 生效），因此界面不发送它。保留字段仅为能力默认值回显。
+   */
   scm_policy_dynamic?: boolean;
   /**
    * 生成过程预览模式（上游 #2093 的请求体键 `preview`）：`none` 关闭，
@@ -337,6 +422,17 @@ export interface Capabilities {
   supported_modes: GenMode[];
   /** 上游只包含支持的模式，缺键可能存在（routes_sdcpp.cpp） */
   defaults_by_mode: Partial<Record<GenMode, GenParams>>;
+  /**
+   * 上游 `api.md` 标注为 deprecated 的**顶层兼容镜像**（`defaults` /
+   * `output_formats` / `features`），只有旧内核或裁剪过的实现才只给这一层。
+   * 生成界面的降级链第一顺位是 `defaults_by_mode`，第二顺位才是它，
+   * 都没有时回落到家族预设——用于兜住「HTTP 200 但形状不同」的白屏（审查 S-11）。
+   */
+  defaults?: GenParams;
+  /** 兼容镜像（旧内核）；语义同 `output_formats_by_mode`。 */
+  output_formats?: string[];
+  /** 兼容镜像（旧内核）；语义同 `features_by_mode`。 */
+  features?: Features;
   limits: Limits;
   samplers: string[];
   schedulers: string[];
@@ -395,13 +491,7 @@ export interface JobResult {
   images?: JobImage[];
 }
 
-export type JobStatus =
-  | "queued"
-  | "generating"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "unknown";
+export type JobStatus = "queued" | "generating" | "completed" | "failed" | "cancelled" | "unknown";
 
 /**
  * sd-server 的 **HTTP 层**错误响应体。注意 `error` 是字符串
@@ -458,6 +548,16 @@ export interface Job {
    *  前端两处耗时换算（JobQueue `created*1000`、ResultsGrid
    *  `completedAt/1000 - created`）都依赖此约定,上游改单位要同步改。 */
   created?: number;
+  /**
+   * 排队位次（1 起，上游 `async_jobs.cpp:167-176`）。队列里只有它还回答
+   * 「前面还有几个」，缺键=旧内核或已完成。
+   */
+  queue_position?: number;
+  /** 真正开始采样的内核时间戳（秒）。`completed - started` 才是生成耗时，
+   *  用 `created` 到轮询时刻估算会混入排队等待与 2s 轮询抖动（审查 30-api §2.8）。 */
+  started?: number;
+  /** 完成时间戳（秒）。 */
+  completed?: number;
   result?: JobResult | null;
   error?: { code?: string; message?: string } | null;
   /** 生成中的最新预览帧；完成任务不再携带该键。 */

@@ -37,6 +37,11 @@ export function ToastContainer() {
               />
             )}
             <span className="toast-message">{t.msg}</span>
+            {(t.count ?? 1) > 1 && (
+              <span className="toast-count" aria-label={`重复 ${t.count} 次`}>
+                ×{t.count}
+              </span>
+            )}
             {t.action && (
               <button
                 type="button"

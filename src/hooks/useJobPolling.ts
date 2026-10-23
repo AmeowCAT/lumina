@@ -2,13 +2,9 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { useStore, type ImageSaveState, type ResultEntry } from "../store";
 import type { Job } from "../types";
-import {
-  b64ByteLength,
-  extractApiError,
-  formatError,
-  MAX_RESULTS,
-} from "../lib/utils";
+import { b64ByteLength, extractApiError, formatError, MAX_RESULTS } from "../lib/utils";
 import { flashWindow, notifyIfUnfocused } from "../lib/systemIntegration";
+import { MEMORY_BUDGET } from "../lib/memoryBudget";
 
 const POLL_FAILURE_THRESHOLD = 3;
 /** 单次任务查询的软超时：底层 invoke 无法中断，超时后放弃本轮结果继续
@@ -60,8 +56,7 @@ export function useJobPolling() {
     const iv = setInterval(async () => {
       if (pollBusy.current) return;
       const active = jobsRef.current.filter(
-        (j) =>
-          j.status === "queued" || j.status === "generating" || j.status === "unknown"
+        (j) => j.status === "queued" || j.status === "generating" || j.status === "unknown",
       );
       if (!active.length) return;
       pollBusy.current = true;
@@ -83,9 +78,14 @@ export function useJobPolling() {
               store.setJobs((j) =>
                 j.map((x) =>
                   x.id === job.id
-                    ? { ...x, status: "failed", preview: undefined, error: { message: "任务已失效（服务器重启或任务过期）" } }
-                    : x
-                )
+                    ? {
+                        ...x,
+                        status: "failed",
+                        preview: undefined,
+                        error: { message: "任务已失效（服务器重启或任务过期）" },
+                      }
+                    : x,
+                ),
               );
               continue;
             }
@@ -109,8 +109,8 @@ export function useJobPolling() {
                       pollFailures: 0,
                       lastPollSuccess: Date.now(),
                     }
-                  : x
-              )
+                  : x,
+              ),
             );
             ingestCompletedJob(d);
             if (d.status === "failed") {
@@ -127,12 +127,7 @@ export function useJobPolling() {
         pollBusy.current = false;
       }
       if (expired.length > 0) {
-        useStore
-          .getState()
-          .toast(
-            `${expired.length} 个任务已失效（服务器重启或任务过期）`,
-            true
-          );
+        useStore.getState().toast(`${expired.length} 个任务已失效（服务器重启或任务过期）`, true);
       }
     }, 2000);
     return () => clearInterval(iv);
@@ -158,26 +153,33 @@ function recordPollFailure(id: string, message: string) {
           message: `连续 ${failures} 次无法查询任务状态：${message}`,
         },
       };
-    })
+    }),
   );
 }
 
-/** 单张图片/视频手动保存到输出目录。key 为图片索引字符串(视频为 "v")。
- * 与"下载"(save-as 弹窗选路径)区分:本按钮一键落盘到配置的输出目录,
- * 生成过程不再自动保存(用户明确要求)。 */
-export async function saveEntryPart(jobId: string, key: string): Promise<void> {
+/** 单张图片/视频保存到输出目录。key 为图片索引字符串(视频为 "v")。
+ * 与"下载"(save-as 弹窗选路径)区分:本按钮一键落盘到配置的输出目录。
+ * 生成完成后是否自动调用由 `settings.autoSaveResults` 决定（审查 S-5：
+ * 结果只在内存时关窗/刷新即整批丢失）；`silent` 用于自动保存，避免批量
+ * 4 张图弹 4 条 toast。返回是否保存成功。 */
+export async function saveEntryPart(
+  jobId: string,
+  key: string,
+  opts?: { silent?: boolean },
+): Promise<boolean> {
+  const silent = opts?.silent === true;
   const store = useStore.getState();
   const entry = store.results.find((r) => r.jobId === jobId);
   if (!entry) {
     // 结果画廊有保留上限，超限被淘汰后 base64 已不在内存（对抗性审查 M1）。
-    store.toast("该任务的结果已超出内存保留上限，无法再保存", true);
-    return;
+    if (!silent) store.toast("该任务的结果已超出内存保留上限，无法再保存", true);
+    return false;
   }
-  if (entry.saves?.[key]?.status === "saving") return;
+  if (entry.saves?.[key]?.status === "saving") return false;
   const dir = store.settings.outputDir;
   if (!dir) {
-    store.toast("未配置输出目录，请先到控制台设置", true);
-    return;
+    if (!silent) store.toast("未配置输出目录，请先到控制台设置", true);
+    return false;
   }
   const ext = entry.result.output_format || "png";
   // key 是服务端批次索引(img.index,见 ResultsGrid.imageKey),不是数组
@@ -189,36 +191,64 @@ export async function saveEntryPart(jobId: string, key: string): Promise<void> {
       ? entry.result.b64_json
       : images?.find((im, pos) => (im.index ?? pos) === Number(key))?.b64_json;
   if (!b64) {
-    store.toast("未找到对应图片,可能已被移除", true);
-    return;
+    if (!silent) store.toast("未找到对应图片,可能已被移除", true);
+    return false;
   }
   const name = key === "v" ? `sdcpp_${jobId}` : `sdcpp_${jobId}_${key}`;
-  const mark = (
-    status: ImageSaveState["status"],
-    extra?: Partial<ImageSaveState>
-  ) =>
-    useStore.getState().setResults((rs) =>
-      rs.map((r) =>
-        r.jobId === jobId
-          ? { ...r, saves: { ...r.saves, [key]: { status, ...extra } } }
-          : r
-      )
-    );
+  const mark = (status: ImageSaveState["status"], extra?: Partial<ImageSaveState>) =>
+    useStore
+      .getState()
+      .setResults((rs) =>
+        rs.map((r) =>
+          r.jobId === jobId ? { ...r, saves: { ...r.saves, [key]: { status, ...extra } } } : r,
+        ),
+      );
   mark("saving");
   try {
     const saved = await api.saveOutput(b64, ext, name, dir);
     if (saved.saved && saved.path) {
       mark("saved", { path: saved.path });
-      useStore.getState().toast(`已保存到输出目录：${saved.path}`);
-    } else {
-      const reason = saved.reason || "未知原因";
-      mark("failed", { error: reason });
-      useStore.getState().toast(`保存失败：${reason}`, true);
+      if (!silent) useStore.getState().toast(`已保存到输出目录：${saved.path}`);
+      return true;
     }
+    const reason = saved.reason || "未知原因";
+    mark("failed", { error: reason });
+    useStore.getState().toast(`保存失败：${reason}`, true);
+    return false;
   } catch (e) {
     const msg = formatError(e);
     mark("failed", { error: msg });
     useStore.getState().toast(`保存失败：${msg}`, true);
+    return false;
+  }
+}
+
+/**
+ * 生成完成后自动把该结果的全部图片（或视频）写入输出目录。
+ *
+ * 只在「已配置 outputDir 且用户显式开启 `autoSaveResults === true`」时由
+ * `ingestCompletedJob` 调用（审查 S-5）。批量保存合并成一条 toast，
+ * 失败只提示一次、不重试。
+ */
+export async function autoSaveEntry(jobId: string): Promise<void> {
+  const entry = useStore.getState().results.find((r) => r.jobId === jobId);
+  if (!entry || !entry.result) return;
+  const keys = entry.result.b64_json
+    ? ["v"]
+    : (entry.result.images ?? []).map((im, pos) => String(im.index ?? pos));
+  if (!keys.length) return;
+  let saved = 0;
+  for (const key of keys) {
+    const ok = await saveEntryPart(jobId, key, { silent: true });
+    if (ok) saved += 1;
+  }
+  const store = useStore.getState();
+  if (saved === keys.length) {
+    store.toast(`已自动保存 ${saved} 个文件到输出目录`);
+  } else if (saved > 0) {
+    store.toast(`自动保存部分失败（${saved}/${keys.length}），请在结果卡片上重试`, true);
+  } else {
+    store.toast("自动保存失败，请检查输出目录设置与写入权限", true);
   }
 }
 
@@ -260,14 +290,20 @@ export function ingestCompletedJob(d: Job): boolean {
     return trimResultsToBudget([entry, ...r], MAX_RESULTS, MAX_RESULTS_BYTES);
   });
   store.toast(`生成完成 · ${what}`);
+  // 审查 S-5：结果只在内存时，关窗/刷新/内存淘汰都会整批丢失。**默认不写盘**
+  // （用户确认的产品意图：不打招呼就往磁盘写东西更糟），只有用户在控制台显式
+  // 打开开关、且配置了输出目录时才自动保存。
+  if (store.settings.outputDir && store.settings.autoSaveResults === true) {
+    void autoSaveEntry(d.id);
+  }
   return true;
 }
 
 /**
- * 结果区整体的 base64 字节预算（约 1 GiB）：按 4/3 换算的近似值。
- * blob URL 与 base64 双份常驻，再乘 2 也远低于“60 条大视频”的失控叠加。
+ * 结果区整体的 base64 字节预算：取自统一的 [memoryBudget](../lib/memoryBudget.ts)
+ * 总账（审查 20-frontend §2.2），不再在这里单独写魔数。
  */
-export const MAX_RESULTS_BYTES = 1024 * 1024 * 1024;
+export const MAX_RESULTS_BYTES = MEMORY_BUDGET.results;
 
 /**
  * 结果内存上限：最新在前，超出丢弃最旧。
@@ -278,7 +314,7 @@ export const MAX_RESULTS_BYTES = 1024 * 1024 * 1024;
 export function trimResultsToBudget(
   next: ResultEntry[],
   countCap: number,
-  byteCap: number
+  byteCap: number,
 ): ResultEntry[] {
   let totalBytes = next.reduce((acc, e) => acc + resultEntryBytes(e), 0);
   let end = next.length;

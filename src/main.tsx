@@ -18,5 +18,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <MotionConfig reducedMotion="user">
       <App />
     </MotionConfig>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

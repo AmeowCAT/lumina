@@ -6,7 +6,7 @@ import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { ImageUpload } from "../../ui/ImageUpload";
 import { IC } from "../../ui/Icons";
-import { readFileAsDataUrl } from "../../../lib/utils";
+import { featureEnabled, readFileAsDataUrl } from "../../../lib/utils";
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
@@ -61,21 +61,21 @@ function MultiImageRow({
                   ? `${f.name}（非图片格式）`
                   : f.size > MAX_UPLOAD_BYTES
                     ? `${f.name}（超过 100MB）`
-                    : null
+                    : null,
               )
               .filter((x): x is string => !!x);
             if (invalid.length) {
               toast(`已跳过 ${invalid.length} 个无效文件：${invalid.join("、")}`, true);
             }
             const valid = files.filter(
-              (f) => f.type.startsWith("image/") && f.size <= MAX_UPLOAD_BYTES
+              (f) => f.type.startsWith("image/") && f.size <= MAX_UPLOAD_BYTES,
             );
             if (!valid.length) return;
             // 条件帧顺序即上游条件帧顺序：显式按文件名排序，
             // 不依赖浏览器的 FileList 顺序。
             valid.sort((a, b) => a.name.localeCompare(b.name));
             Promise.all(valid.map(readFileAsDataUrl)).then((urls) =>
-              onChange((p) => [...p, ...urls])
+              onChange((p) => [...p, ...urls]),
             );
             // 文件对话框是原生模态：关闭后把焦点还给追加按钮
             requestAnimationFrame(() => addBtnRef.current?.focus());
@@ -111,17 +111,14 @@ interface Props {
   strength: number | undefined;
   controlStrength: number | undefined;
   ipAdapterStrength: number | undefined;
+  /** VACE 的条件强度（审查 50-ux F-18：上游 webui 有、Lumina 请求体已接但无控件）。 */
+  vaceStrength: number | undefined;
   imgCfg: number | undefined;
   txtCfg: number | undefined;
   onUpdate: (path: string, v: unknown) => void;
   onSetImage: (
-    which:
-      | "initImage"
-      | "maskImage"
-      | "controlImage"
-      | "ipAdapterImage"
-      | "endImage",
-    v: string | null
+    which: "initImage" | "maskImage" | "controlImage" | "ipAdapterImage" | "endImage",
+    v: string | null,
   ) => void;
   onSetRefImages: (updater: (r: string[]) => string[]) => void;
   onSetControlFrames: (updater: (r: string[]) => string[]) => void;
@@ -144,6 +141,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   strength,
   controlStrength,
   ipAdapterStrength,
+  vaceStrength,
   imgCfg,
   txtCfg,
   onUpdate,
@@ -153,8 +151,8 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   onInitSize,
 }: Props) {
   return (
-    <Panel title="图片输入" collapsed={!features.init_image}>
-      {features.init_image && (
+    <Panel title="图片输入" collapsed={!featureEnabled(features, "init_image")}>
+      {featureEnabled(features, "init_image") && (
         <ImageUpload
           label="初始图片"
           value={initImage}
@@ -162,66 +160,57 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           onSizeDetected={onInitSize}
         />
       )}
-      {features.mask_image && mode === "img_gen" && (
-        <ImageUpload
-          label="蒙版"
-          value={maskImage}
-          onChange={(v) => onSetImage("maskImage", v)}
-        />
+      {featureEnabled(features, "mask_image") && mode === "img_gen" && (
+        <ImageUpload label="蒙版" value={maskImage} onChange={(v) => onSetImage("maskImage", v)} />
       )}
-      {features.control_image && mode === "img_gen" && (
+      {featureEnabled(features, "control_image") && mode === "img_gen" && (
         <ImageUpload
           label="Control 图片"
           value={controlImage}
           onChange={(v) => onSetImage("controlImage", v)}
         />
       )}
-      {features.ip_adapter_image && mode === "img_gen" && (
+      {featureEnabled(features, "ip_adapter_image") && mode === "img_gen" && (
         <ImageUpload
           label="IP-Adapter 图片"
           value={ipAdapterImage}
           onChange={(v) => onSetImage("ipAdapterImage", v)}
         />
       )}
-      {features.end_image && mode === "vid_gen" && (
-        <ImageUpload
-          label="结束帧"
-          value={endImage}
-          onChange={(v) => onSetImage("endImage", v)}
-        />
+      {featureEnabled(features, "end_image") && mode === "vid_gen" && (
+        <ImageUpload label="结束帧" value={endImage} onChange={(v) => onSetImage("endImage", v)} />
       )}
-      {(features.init_image || features.control_image) && mode === "img_gen" && (
-        <>
-          <Slider
-            label="重绘强度"
-            value={strength ?? 0.75}
-            onChange={(v) => onUpdate("strength", v)}
-            min={0}
-            max={1}
-            step={0.05}
-          />
-          <Slider
-            label="Control 强度"
-            value={controlStrength ?? 0.9}
-            onChange={(v) => onUpdate("control_strength", v)}
-            min={0}
-            max={1}
-            step={0.05}
-          />
-          <Slider
-            label="CFG (图像)"
-            value={imgCfg}
-            onChange={(v) => onUpdate("sample_params.guidance.img_cfg", v)}
-            min={0}
-            max={30}
-            step={0.5}
-            hint={
-              imgCfg != null ? undefined : `未设置，跟随文本 CFG (${txtCfg ?? 0})`
-            }
-          />
-        </>
-      )}
-      {features.ip_adapter_image && mode === "img_gen" && (
+      {(featureEnabled(features, "init_image") || featureEnabled(features, "control_image")) &&
+        mode === "img_gen" && (
+          <>
+            <Slider
+              label="重绘强度"
+              value={strength ?? 0.75}
+              onChange={(v) => onUpdate("strength", v)}
+              min={0}
+              max={1}
+              step={0.05}
+            />
+            <Slider
+              label="Control 强度"
+              value={controlStrength ?? 0.9}
+              onChange={(v) => onUpdate("control_strength", v)}
+              min={0}
+              max={1}
+              step={0.05}
+            />
+            <Slider
+              label="CFG (图像)"
+              value={imgCfg}
+              onChange={(v) => onUpdate("sample_params.guidance.img_cfg", v)}
+              min={0}
+              max={30}
+              step={0.5}
+              hint={imgCfg != null ? undefined : `未设置，跟随文本 CFG (${txtCfg ?? 0})`}
+            />
+          </>
+        )}
+      {featureEnabled(features, "ip_adapter_image") && mode === "img_gen" && (
         <Slider
           label="IP-Adapter 强度"
           value={ipAdapterStrength ?? 1.0}
@@ -231,7 +220,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           step={0.05}
         />
       )}
-      {features.init_image && mode === "vid_gen" && (
+      {featureEnabled(features, "init_image") && mode === "vid_gen" && (
         <Slider
           label="图生视频强度"
           value={strength ?? 0.75}
@@ -246,9 +235,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
         <MultiImageRow
           label={
             "参考图片" +
-            (FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes(
-              "ref_images"
-            )
+            (FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images")
               ? "（必需）"
               : "")
           }
@@ -258,12 +245,24 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
         />
       )}
       {controlFramesSupported && mode === "vid_gen" && (
-        <MultiImageRow
-          label="条件帧（VACE）"
-          images={controlFrames}
-          onChange={onSetControlFrames}
-          addLabel="添加条件帧"
-        />
+        <>
+          <MultiImageRow
+            label="条件帧（VACE）"
+            images={controlFrames}
+            onChange={onSetControlFrames}
+            addLabel="添加条件帧"
+          />
+          {/* 审查 50-ux F-18：上游 webui 有 VACE Strength，Lumina 请求体一直会发
+              vace_strength（utils.ts），但界面没有入口——VACE 的唯一行为旋钮。 */}
+          <Slider
+            label="VACE 条件强度"
+            value={vaceStrength ?? 1.0}
+            onChange={(v) => onUpdate("vace_strength", v)}
+            min={0}
+            max={2}
+            step={0.05}
+          />
+        </>
       )}
     </Panel>
   );

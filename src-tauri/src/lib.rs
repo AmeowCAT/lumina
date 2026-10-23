@@ -2,8 +2,11 @@
 //! output saving, and proxies the sd-server `/sdcpp/v1` HTTP API to the frontend
 //! via typed Tauri commands.
 
+mod args;
 mod cli;
 mod family;
+mod log_pipe;
+mod logging;
 mod png_info;
 mod save;
 mod scanner;
@@ -48,7 +51,15 @@ fn dir_is_within(dir: &str, root: &str) -> bool {
     let raw_root = root.trim();
     let norm = |s: &str| {
         // 词法归一化：折叠 "."、弹出 ".."，再统一分隔符与大小写。
-        let replaced = s.replace('\\', "/");
+        //
+        // 反斜杠→斜杠只在 Windows 上做：POSIX 里 `\` 是合法文件名字符，
+        // 无条件替换会把 `/models/wan\2` 改写成 `/models/wan/2`，指向另一条
+        // 路径（审查 10 §2.9）。
+        let replaced = if cfg!(windows) {
+            s.replace('\\', "/")
+        } else {
+            s.to_string()
+        };
         let mut parts: Vec<&str> = Vec::new();
         for comp in replaced.split('/') {
             match comp {
@@ -100,8 +111,11 @@ fn dir_is_within(dir: &str, root: &str) -> bool {
     };
     match (canon(raw_root), canon(raw_dir)) {
         (Some(rc), Some(dc)) => {
-            let rc_str = rc.to_string_lossy();
-            dc == rc || dc.starts_with(format!("{}{}", rc_str, std::path::MAIN_SEPARATOR))
+            // 用 `Path::starts_with` 按组件比较，不要先 `to_string_lossy()`：
+            // 非 UTF-8 路径（POSIX 合法，如 Latin-1 文件名）会被替换成 U+FFFD，
+            // 于是「明明在输出目录里」也恒判 false，所有保存/读取都被拒绝
+            // （审查 10 §2.9）。
+            dc == rc || dc.starts_with(&rc)
         }
         // root 可解析而 dir 不可解析：dir 链上有坏链接，保守拒绝。
         (Some(_), None) => false,
@@ -208,13 +222,14 @@ async fn start_server(
 ) -> Result<server::StartResult, String> {
     // The dashboard debounces its settings write, so a launch fired right after
     // editing the port would otherwise still read the previous value from disk.
-    let port = match port {
-        Some(port) => port,
-        None => state.settings.lock().await.sd_port,
+    let (configured_port, exe_dir) = {
+        let settings = state.settings.lock().await;
+        (settings.sd_port, settings.exe_dir.clone())
     };
+    let port = port.unwrap_or(configured_port);
     let mut srv = state.server.lock().await;
     let result = srv
-        .start(&app, &exe_path, &model_name, port, mode, args)
+        .start(&app, &exe_path, &exe_dir, &model_name, port, mode, args)
         .await
         .map_err(|e| e.to_string())?;
     drop(srv);
@@ -327,6 +342,11 @@ async fn save_settings(
     state: State<'_, AppState>,
     mut settings: settings::Settings,
 ) -> Result<SaveSettingsResponse, String> {
+    // `output_dir` 是 save_output / read_file_b64 / list_output_files 的白名单
+    // 根（见 dir_is_within）——接受 webview 传入的任意值等于把安全边界的
+    // 取值权交给同一侧，等于没有边界（审查 S-2）。空串保留「未配置」语义
+    // （此时所有读写命令一律被拒），否则必须是干净的绝对路径。
+    settings::validate_output_dir(&settings.output_dir).map_err(|e| e.to_string())?;
     // 运行中的子进程端口以内存为准：前端携带的 Settings 快照可能还是旧端口
     // （保存防抖），直接落盘会覆盖刚更新的值，stop 后代理会连错端口。
     let active = state.server.lock().await.active_port();
@@ -344,12 +364,25 @@ async fn save_settings(
 
 // ── native dialogs ────────────────────────────────────────────────────
 
+/// 把路径转成设置/界面用的字符串。
+///
+/// 「把分隔符统一成 `/`」只在 Windows 上成立：POSIX 里反斜杠是合法文件名字符，
+/// 无条件替换会改写用户真实路径（审查 10 §2.9）。
+fn path_to_setting_string(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text
+    }
+}
+
 #[tauri::command]
 async fn pick_folder() -> Result<Option<String>, String> {
     Ok(rfd::AsyncFileDialog::new()
         .pick_folder()
         .await
-        .map(|h| h.path().to_string_lossy().replace('\\', "/")))
+        .map(|h| path_to_setting_string(h.path())))
 }
 
 #[tauri::command]
@@ -357,7 +390,7 @@ async fn pick_file() -> Result<Option<String>, String> {
     Ok(rfd::AsyncFileDialog::new()
         .pick_file()
         .await
-        .map(|h| h.path().to_string_lossy().replace('\\', "/")))
+        .map(|h| path_to_setting_string(h.path())))
 }
 
 // ── output saving ─────────────────────────────────────────────────────
@@ -405,26 +438,6 @@ async fn save_as(
 }
 
 // ── PNG metadata ───────────────────────────────────────────────────────
-
-#[tauri::command]
-async fn parse_png_metadata(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<serde_json::Value, String> {
-    // 与 read_file_b64 / list_output_files / delete_output_file 对等：
-    // 元数据读取同样收敛到输出目录内（对抗性审查：此前是唯一无校验的读入口）。
-    let output_dir = state.settings.lock().await.output_dir.clone();
-    if !dir_is_within(&path, &output_dir) {
-        return Err("文件必须位于已配置的输出目录内".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || match png_info::parse_png_metadata(&path) {
-        Ok(Some(v)) => Ok(v),
-        Ok(None) => Ok(serde_json::Value::Null),
-        Err(e) => Err(e.to_string()),
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
 
 #[tauri::command]
 async fn list_output_files(
@@ -588,7 +601,15 @@ fn filter_caps_loras(caps: &mut serde_json::Value, model_dir: &str) {
             entry
                 .get("path")
                 .and_then(|p| p.as_str())
-                .map(|p| p.replace('\\', "/").starts_with(&prefix))
+                .map(|p| {
+                    // 同上：反斜杠只在 Windows 上算分隔符。
+                    let normalized = if cfg!(windows) {
+                        p.replace('\\', "/")
+                    } else {
+                        p.to_string()
+                    };
+                    normalized.starts_with(&prefix)
+                })
                 .unwrap_or(true)
         });
     }
@@ -661,6 +682,8 @@ async fn sdcpp_upscale(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::try_init();
+    // 文件日志（审查 10 §2.5）：release 没有控制台，没有它就没有崩溃后的证据。
+    logging::init();
     let loaded_settings = settings::Settings::load();
     tauri::Builder::default()
         .manage(AppState {
@@ -704,7 +727,6 @@ pub fn run() {
             pick_file,
             save_output,
             save_as,
-            parse_png_metadata,
             list_output_files,
             read_file_b64,
             read_thumbnail,
@@ -718,11 +740,22 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            // 退出前强制停止 sd-server：释放显存，避免后台残留进程。
+            // 退出前尽力停止 sd-server：释放显存，避免后台残留进程。
+            //
+            // 不能用 `blocking_lock()`（审查 10 §2.4）：`start_server` 会跨 await
+            // 持锁最长约 35s（probe 5s×2 / 设备探测 20s / stop 10s / 健康检查
+            // 0.4s），同步阻塞在事件循环线程上会让「关窗」变成「关不掉」。
+            // 拿不到锁也不影响正确性：Windows 的 JobObject（KILL_ON_JOB_CLOSE）
+            // 与 Unix 的 PR_SET_PDEATHSIG 都会在本进程退出时兜底杀掉子进程。
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<AppState>() {
-                    let mut server = state.server.blocking_lock();
-                    server.kill();
+                    match state.server.try_lock() {
+                        Ok(mut server) => server.kill(),
+                        Err(_) => logging::info(
+                            "app",
+                            "退出时 server 锁被占用，交给 OS 兜底回收 sd-server",
+                        ),
+                    }
                 }
             }
         });

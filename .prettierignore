@@ -1,0 +1,11 @@
+# 依赖与构建产物
+node_modules
+dist
+src-tauri
+
+# 机器生成的文件：格式化只会制造巨大 diff，且它们本来就不由人读
+package-lock.json
+*.lock
+
+# 上游克隆（脚本 --upstream 指向的目录若被放在仓库内）
+.stable-diffusion.cpp

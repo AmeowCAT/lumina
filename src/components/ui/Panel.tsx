@@ -46,18 +46,16 @@ export function Panel({
       >
         <span className="panel-title">
           {title}
-          {badge ? (
-            <span className="tag ml-1.5">
-              {badge}
-            </span>
-          ) : null}
+          {badge ? <span className="tag ml-1.5">{badge}</span> : null}
         </span>
         <span className="panel-chevron" aria-hidden="true">
           {IC.chev}
         </span>
       </div>
       {/* 折叠时子树保持挂载（高度归零）:折叠面板里的表单控件值仍在 DOM 中,
-          行为与原 display:none 实现等价,但换得高度展开动画。 */}
+          行为与原 display:none 实现等价,但换得高度展开动画。
+          但挂载≠可达：用 `inert` 把整棵子树从 Tab 序与读屏树里摘掉，否则键盘
+          用户会 Tab 进 0 高度区域、焦点环被 overflow:hidden 裁掉（审查 F-07）。 */}
       <motion.div
         id={bodyId}
         initial={false}
@@ -65,7 +63,14 @@ export function Panel({
         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
         style={{ overflow: "hidden" }}
       >
-        <div className="panel-body">{children}</div>
+        <div
+          className="panel-body"
+          ref={(node) => {
+            if (node) node.inert = c;
+          }}
+        >
+          {children}
+        </div>
       </motion.div>
     </div>
   );

@@ -18,7 +18,7 @@ function validateFile(file: File): string | null {
 function processFile(
   file: File,
   onChange: (v: string | null) => void,
-  onSizeDetected?: (w: number, h: number) => void
+  onSizeDetected?: (w: number, h: number) => void,
 ): boolean {
   const invalid = validateFile(file);
   if (invalid) {
@@ -82,7 +82,7 @@ export function ImageUpload({
       }
       processFile(f, onChange, onSizeDetected);
     },
-    [onChange, onSizeDetected]
+    [onChange, onSizeDetected],
   );
 
   // 挂载顺序即注册顺序：第一个挂载的实例成为粘贴兜底目标（初始图槽位）。

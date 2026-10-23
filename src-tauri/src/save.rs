@@ -132,6 +132,35 @@ fn write_with_suffix(
     Ok(path)
 }
 
+/// `save_output` 允许的扩展名（上游图片/视频容器，与 `/sdcpp/v1` 的
+/// `output_format` 取值域对齐）。`ext` 来自 webview：只做字符替换的话
+/// `.bat` / `.ps1` / `.exe` 都能落盘，再配合 `start_server` 就是「任意写 →
+/// 任意执行」（审查 S-2）。`save_as` 不在此列——落盘路径由用户在系统对话框
+/// 里显式确认。
+const ALLOWED_OUTPUT_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "webm", "avi",
+];
+
+/// 归一化（去空白/前导点、转小写）并校验输出扩展名。空值沿用历史的 `png`
+/// 兜底；不在白名单里的值直接报可读错误，而不是字符替换后静默写盘。
+fn normalize_output_ext(ext: &str) -> Result<String> {
+    let normalized = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    let normalized = if normalized.is_empty() {
+        "png".to_string()
+    } else {
+        normalized
+    };
+    if ALLOWED_OUTPUT_EXTENSIONS.contains(&normalized.as_str()) {
+        Ok(normalized)
+    } else {
+        Err(anyhow!(
+            "输出格式不受支持：{}（允许 {}）",
+            ext,
+            ALLOWED_OUTPUT_EXTENSIONS.join("/")
+        ))
+    }
+}
+
 /// Decodes a base64 payload (with optional `data:...;base64,` prefix) and writes
 /// it to `<dir>/<name>.<ext>`. sd-server itself never persists outputs, so this
 /// is the launcher's responsibility — mirrors the webui `/api/save` endpoint.
@@ -139,6 +168,8 @@ pub fn save_output(b64: &str, ext: &str, name: &str, dir: &str) -> Result<String
     if dir.is_empty() {
         return Err(anyhow!("no output dir"));
     }
+    // 白名单放在解码/建目录之前：非法格式不能有任何落盘副作用。
+    let ext = normalize_output_ext(ext)?;
     let dir_path = PathBuf::from(dir);
     fs::create_dir_all(&dir_path)?;
 
@@ -148,7 +179,6 @@ pub fn save_output(b64: &str, ext: &str, name: &str, dir: &str) -> Result<String
     };
     let data = base64::engine::general_purpose::STANDARD.decode(raw)?;
 
-    let ext = sanitize_component(ext).unwrap_or_else(|| "png".into());
     let name = sanitize_component(name).unwrap_or_else(|| format!("sdcpp_{}", chrono_like_ts()));
     let path = write_with_suffix(&dir_path, &name, &ext, &data)?;
     Ok(path.to_string_lossy().to_string())
@@ -336,5 +366,36 @@ mod tests {
         // Only COM1-9 / LPT1-9 are reserved; "com10" and "console" are ordinary.
         assert_eq!(sanitize_component("com10").as_deref(), Some("com10"));
         assert_eq!(sanitize_component("console").as_deref(), Some("console"));
+    }
+
+    /// 审查 S-2：`ext` 来自 webview，没有白名单时「保存结果图」可以变成往
+    /// 输出目录写 `.bat`/`.exe`，再被 `start_server` 当内核启动。
+    #[test]
+    fn save_output_rejects_non_media_extensions() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-ext-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        // 1x1 transparent PNG.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+        for ext in ["bat", "exe", "ps1", "cmd", "dll", "js", "html"] {
+            let error = save_output(png, ext, "x", dir.to_str().unwrap())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("输出格式不受支持"), "{}: {}", ext, error);
+        }
+        // 被拒绝的保存不得产生任何落盘副作用（连目录都不创建）。
+        assert!(!dir.exists(), "rejected save must not create the directory");
+
+        // 大小写/前导点归一化后仍然放行（上游给小写，但旧前端可能带点）。
+        let written = save_output(png, ".PNG", "upper", dir.to_str().unwrap()).unwrap();
+        assert!(written.ends_with(".png"), "written: {}", written);
+        let written = save_output(png, "webm", "vid", dir.to_str().unwrap()).unwrap();
+        assert!(written.ends_with(".webm"), "written: {}", written);
+        fs::remove_dir_all(dir).unwrap();
     }
 }

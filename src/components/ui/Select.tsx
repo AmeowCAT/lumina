@@ -44,13 +44,14 @@ export function Select({
   const searchRef = useRef<HTMLInputElement>(null);
   const searchable = options.length > SEARCH_THRESHOLD;
   const q = query.trim().toLocaleLowerCase();
-  const visible = searchable && q
-    ? options.filter((o) =>
-        (o.textValue ?? (typeof o.label === "string" ? o.label : ""))
-          .toLocaleLowerCase()
-          .includes(q)
-      )
-    : options;
+  const visible =
+    searchable && q
+      ? options.filter((o) =>
+          (o.textValue ?? (typeof o.label === "string" ? o.label : ""))
+            .toLocaleLowerCase()
+            .includes(q),
+        )
+      : options;
 
   return (
     <RxSelect.Root
@@ -65,11 +66,7 @@ export function Select({
       }}
       disabled={disabled}
     >
-      <RxSelect.Trigger
-        id={id}
-        className={cn("select-trigger", className)}
-        aria-label={ariaLabel}
-      >
+      <RxSelect.Trigger id={id} className={cn("select-trigger", className)} aria-label={ariaLabel}>
         <span className="select-value">
           <RxSelect.Value />
         </span>
@@ -107,9 +104,7 @@ export function Select({
                   textValue={o.textValue ?? (typeof o.label === "string" ? o.label : undefined)}
                   className="select-item"
                 >
-                  <RxSelect.ItemText className="select-item-text">
-                    {o.label}
-                  </RxSelect.ItemText>
+                  <RxSelect.ItemText className="select-item-text">{o.label}</RxSelect.ItemText>
                   <RxSelect.ItemIndicator className="select-item-indicator">
                     <Check size={12} strokeWidth={2.4} aria-hidden="true" />
                   </RxSelect.ItemIndicator>

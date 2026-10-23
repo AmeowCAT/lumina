@@ -91,10 +91,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
               {grp.sizes.map(([l, w, h]) => (
                 <button
                   key={l}
-                  className={cn(
-                    "size-preset",
-                    width === w && height === h && "active"
-                  )}
+                  className={cn("size-preset", width === w && height === h && "active")}
                   aria-pressed={width === w && height === h}
                   onClick={() => {
                     onUpdate("width", w);
@@ -142,8 +139,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
         />
         {spatialMultiple && sizeWillChange && (
           <div className="field-hint field-hint-flush mt-0.5">
-            实际生成 {alignedWidth}×{alignedHeight}（该模型按 {spatialMultiple}{" "}
-            向上对齐）
+            实际生成 {alignedWidth}×{alignedHeight}（该模型按 {spatialMultiple} 向上对齐）
           </div>
         )}
       </div>
@@ -221,9 +217,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             step={1}
             className="w-20"
           />
-          <div className="field-hint field-hint-flush mt-0.5">
-            最终输出数量为分层数量 + 1
-          </div>
+          <div className="field-hint field-hint-flush mt-0.5">最终输出数量为分层数量 + 1</div>
         </div>
       )}
       {mode === "vid_gen" && (
@@ -252,10 +246,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
                 <button
                   type="button"
                   key={frames}
-                  className={cn(
-                    "size-preset",
-                    videoFrames === frames && "active"
-                  )}
+                  className={cn("size-preset", videoFrames === frames && "active")}
                   onClick={() => onUpdate("video_frames", frames)}
                 >
                   {frames} 帧
@@ -272,9 +263,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             hint={
               // 引擎对 MiniMax-H3 强制 24 fps（src/stable-diffusion.cpp
               // GenerationRequest），其他取值会被静默覆盖，提前说明。
-              family.startsWith("minimax-h3")
-                ? "该模型固定 24 fps，其他值会被引擎覆盖"
-                : undefined
+              family.startsWith("minimax-h3") ? "该模型固定 24 fps，其他值会被引擎覆盖" : undefined
             }
           />
         </>

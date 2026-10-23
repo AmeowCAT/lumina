@@ -23,6 +23,8 @@ import {
   missingRequiredInputs,
   persistFamilyDefaults,
   validateMaxVramSpec,
+  validateParamsBackendSpec,
+  validateRpcServersSpec,
   validateTokenizerSpec,
 } from "../launchConfig";
 
@@ -77,14 +79,12 @@ describe("sampler / scheduler token coverage", () => {
   ];
 
   it("names every upstream sampler and nothing else", () => {
-    expect(Object.keys(SAMPLER_NAMES).sort()).toEqual(
-      ["default", ...UPSTREAM_SAMPLERS].sort()
-    );
+    expect(Object.keys(SAMPLER_NAMES).sort()).toEqual(["default", ...UPSTREAM_SAMPLERS].sort());
   });
 
   it("names every upstream scheduler plus the normal alias", () => {
     expect(Object.keys(SCHEDULER_NAMES).sort()).toEqual(
-      ["default", "normal", ...UPSTREAM_SCHEDULERS].sort()
+      ["default", "normal", ...UPSTREAM_SCHEDULERS].sort(),
     );
   });
 });
@@ -264,7 +264,7 @@ describe("launch configuration", () => {
         tokenizer: "/models/tokenizers/tokenizer_gemma2.json",
         "flash-attn": "off,diffusion=on",
         "vae-format": "flux",
-      })
+      }),
     );
   });
 
@@ -348,9 +348,7 @@ describe("launch configuration", () => {
       runtime: { ...runtime, conditioningCacheSize: "-1" },
     });
     expect(bad.args["conditioning-cache-size"]).toBeUndefined();
-    expect(bad.missing).toContain(
-      "条件缓存大小（--conditioning-cache-size，非负整数）"
-    );
+    expect(bad.missing).toContain("条件缓存大小（--conditioning-cache-size，非负整数）");
   });
 
   it("requires an explicit PiD VAE format even when the filename has a hint", () => {
@@ -369,14 +367,7 @@ describe("launch configuration", () => {
   // Z-Image L2P（上游 #2075）与 Iris-3B（上游 #2117）同样走 FakeVAE：latent
   // 就是 RGB 像素，TAE 分支被 FakeVAE 抢先，给 TAE 只会白读权重。
   it("offers an optional TAE component for every non-FakeVAE family", () => {
-    const fakeVae = [
-      "chroma-radiance",
-      "hidream",
-      "minit2i",
-      "sensenova-u1",
-      "zimage-l2p",
-      "iris",
-    ];
+    const fakeVae = ["chroma-radiance", "hidream", "minit2i", "sensenova-u1", "zimage-l2p", "iris"];
     for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
       const tae = config.fields.filter((field) => field.arg === "taesd");
       if (fakeVae.includes(family)) {
@@ -473,7 +464,7 @@ describe("launch configuration", () => {
         expect.objectContaining({
           clip_vision: "/models/clip_vision_h.safetensors",
           "ip-adapter": "/models/ip-adapter-plus_sd15.safetensors",
-        })
+        }),
       );
     }
   });
@@ -538,7 +529,7 @@ describe("launch configuration", () => {
         llm: "/models/qwen_2.5_vl_7b.safetensors",
         t5xxl: "/models/byt5_small_glyphxl.safetensors",
         "flash-attn": "off,diffusion=on",
-      })
+      }),
     );
   });
 
@@ -563,7 +554,7 @@ describe("launch configuration", () => {
         "audio-vae": "/models/minimax_h3_audio_vae_fp32.safetensors",
         llm: "/models/qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
         "flash-attn": "off,diffusion=on",
-      })
+      }),
     );
   });
 
@@ -604,7 +595,7 @@ describe("launch configuration", () => {
         height: 480,
         video_frames: 56,
         fps: 24,
-      })
+      }),
     );
   });
 
@@ -675,9 +666,7 @@ describe("launch configuration", () => {
     expect(inferPidVaeFormat("pid_sd3_512_to_2048.safetensors")).toBe("sd3");
     expect(inferPidVaeFormat("pid_flux2_512_to_2048.safetensors")).toBe("flux2");
     expect(inferPidVaeFormat("pid_qwen_image_512_to_2048.safetensors")).toBe("wan");
-    expect(inferPidVaeFormat("/models/qwen/pid_flux1_512_to_2048.safetensors")).toBe(
-      "flux"
-    );
+    expect(inferPidVaeFormat("/models/qwen/pid_flux1_512_to_2048.safetensors")).toBe("flux");
     expect(inferPidVaeFormat("pid_unknown.safetensors")).toBe("");
   });
 
@@ -693,17 +682,17 @@ describe("launch configuration", () => {
         video_frames: 16,
         fps: 8,
         strength: 0.75,
-      })
+      }),
     );
     expect((video?.sample_params as Record<string, unknown>).guidance).toEqual(
-      expect.objectContaining({ txt_cfg: 8 })
+      expect.objectContaining({ txt_cfg: 8 }),
     );
   });
 
   it("persists mode presets while retaining prompts and recovering malformed storage", () => {
     localStorage.setItem(
       "sdcpp:params:vid_gen",
-      JSON.stringify({ prompt: "keep this", negative_prompt: "avoid that", width: 1 })
+      JSON.stringify({ prompt: "keep this", negative_prompt: "avoid that", width: 1 }),
     );
     localStorage.setItem("sdcpp:params:img_gen", "{malformed");
 
@@ -712,7 +701,11 @@ describe("launch configuration", () => {
     const video = JSON.parse(localStorage.getItem("sdcpp:params:vid_gen") || "{}");
     const image = JSON.parse(localStorage.getItem("sdcpp:params:img_gen") || "{}");
     expect(video).toEqual(
-      expect.objectContaining({ prompt: "keep this", negative_prompt: "avoid that", video_frames: 16 })
+      expect.objectContaining({
+        prompt: "keep this",
+        negative_prompt: "avoid that",
+        video_frames: 16,
+      }),
     );
     expect(image).toEqual(expect.objectContaining({ width: 512, height: 512 }));
   });
@@ -733,7 +726,7 @@ describe("launch configuration", () => {
       missingRequiredInputs(FAMILY_CONFIG.pid, "img_gen", {
         ...empty,
         refImages: ["data:image/png;base64,abc"],
-      })
+      }),
     ).toEqual([]);
   });
 });
@@ -757,8 +750,7 @@ describe("newly supported families", () => {
 
   it("keeps the TAE hint on each model's own latent space", () => {
     const hint = (family: string) =>
-      FAMILY_CONFIG[family].fields.find((field) => field.arg === "taesd")
-        ?.description || "";
+      FAMILY_CONFIG[family].fields.find((field) => field.arg === "taesd")?.description || "";
     expect(hint("pixart-sigma")).toMatch(/taesdxl/);
     expect(hint("pixart-alpha")).toMatch(/taesd（/);
     expect(hint("ming-image")).toMatch(/自己的 VAE/);
@@ -795,9 +787,7 @@ describe("newly supported families", () => {
       components,
       runtime,
     });
-    expect(without.missing).toContain(
-      "外部 Tokenizer（--tokenizer，tokenizer.json）"
-    );
+    expect(without.missing).toContain("外部 Tokenizer（--tokenizer，tokenizer.json）");
     const withTokenizer = buildLaunchConfig({
       family: "ming-image",
       modelPath: "/models/ming_image_0.1_design_bf16.safetensors",
@@ -822,9 +812,7 @@ describe("newly supported families", () => {
       components,
       runtime: { ...runtime, tokenizer: "clip-l=/models/tokenizer.json" },
     });
-    expect(clipOnly.missing).toContain(
-      "外部 Tokenizer 的 main 槽（如 main=tokenizer.json）"
-    );
+    expect(clipOnly.missing).toContain("外部 Tokenizer 的 main 槽（如 main=tokenizer.json）");
 
     // 显式 main= 与多槽写法都算配置了主槽。
     for (const spec of [
@@ -859,7 +847,7 @@ describe("newly supported families", () => {
   it("disables and filters reference images for Ming-Image", () => {
     const features = applyFamilyFeatureLimits(
       { ref_images: true, init_image: true } as Features,
-      FAMILY_CONFIG["ming-image"]
+      FAMILY_CONFIG["ming-image"],
     );
     expect(features.ref_images).toBe(false);
     expect(features.init_image).toBe(true);
@@ -873,9 +861,7 @@ describe("newly supported families", () => {
       refImages: ["data:image/png;base64,abc"],
       controlFrames: [],
     };
-    expect(
-      filterFamilyInputs(images, FAMILY_CONFIG["ming-image"]).refImages
-    ).toEqual([]);
+    expect(filterFamilyInputs(images, FAMILY_CONFIG["ming-image"]).refImages).toEqual([]);
   });
 
   // 上游 #2075：Z-Image L2P 用 16×16 patch + 小型卷积解码器取代 VAE，
@@ -924,7 +910,7 @@ describe("newly supported families", () => {
   it("disables and filters reference images for Z-Image L2P", () => {
     const features = applyFamilyFeatureLimits(
       { ref_images: true, init_image: true } as Features,
-      FAMILY_CONFIG["zimage-l2p"]
+      FAMILY_CONFIG["zimage-l2p"],
     );
     expect(features.ref_images).toBe(false);
     // img2img 静态可达（FakeVAE 的 encode 是恒等映射），不要一起禁掉。
@@ -939,9 +925,7 @@ describe("newly supported families", () => {
       refImages: ["data:image/png;base64,abc"],
       controlFrames: [],
     };
-    expect(
-      filterFamilyInputs(images, FAMILY_CONFIG["zimage-l2p"]).refImages
-    ).toEqual([]);
+    expect(filterFamilyInputs(images, FAMILY_CONFIG["zimage-l2p"]).refImages).toEqual([]);
   });
 });
 
@@ -964,12 +948,12 @@ describe("exclusive family inputs", () => {
       refImages: ["data:image/png;base64,ref"],
       initImage: "data:image/png;base64,init",
     };
-    expect(
-      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-ref2va"], conflict)
-    ).toEqual(["MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用"]);
-    expect(
-      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-fl2va"], conflict)
-    ).toEqual(["MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用"]);
+    expect(exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-ref2va"], conflict)).toEqual([
+      "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+    ]);
+    expect(exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-fl2va"], conflict)).toEqual([
+      "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+    ]);
 
     // 参考图 + 结束帧同样是上游拒绝的组合；两条二元规则同时命中只报一次。
     expect(
@@ -977,7 +961,7 @@ describe("exclusive family inputs", () => {
         ...empty,
         refImages: ["data:image/png;base64,ref"],
         endImage: "data:image/png;base64,end",
-      })
+      }),
     ).toEqual(["MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用"]);
 
     // 只给参考图（Ref2VA 的正常用法）与只给首尾帧（FL2VA 的正常用法）都不算冲突。
@@ -985,14 +969,14 @@ describe("exclusive family inputs", () => {
       exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-ref2va"], {
         ...empty,
         refImages: ["data:image/png;base64,ref"],
-      })
+      }),
     ).toEqual([]);
     expect(
       exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-fl2va"], {
         ...empty,
         initImage: "data:image/png;base64,init",
         endImage: "data:image/png;base64,end",
-      })
+      }),
     ).toEqual([]);
   });
 
@@ -1013,28 +997,17 @@ describe("exclusive family inputs", () => {
 describe("flash attention launch flag", () => {
   it("never emits the deprecated attention aliases", () => {
     for (const [family, config] of Object.entries(FAMILY_CONFIG)) {
-      expect(config.fixedArgs, `${family} 仍在使用已弃用的 --fa`).not.toHaveProperty(
-        "fa"
+      expect(config.fixedArgs, `${family} 仍在使用已弃用的 --fa`).not.toHaveProperty("fa");
+      expect(config.fixedArgs, `${family} 仍在使用已弃用的 --diffusion-fa`).not.toHaveProperty(
+        "diffusion-fa",
       );
-      expect(
-        config.fixedArgs,
-        `${family} 仍在使用已弃用的 --diffusion-fa`
-      ).not.toHaveProperty("diffusion-fa");
     }
   });
 
   it("keeps diffusion-only flash attention for DiT families", () => {
     // `off,diffusion=on` 与旧 --diffusion-fa 语义等价：注意力只在扩散模型内开。
-    for (const family of [
-      "flux2",
-      "flux2-klein",
-      "flux3-klein",
-      "qwen-image-2.1",
-      "moss-image",
-    ]) {
-      expect(FAMILY_CONFIG[family].fixedArgs["flash-attn"]).toBe(
-        "off,diffusion=on"
-      );
+    for (const family of ["flux2", "flux2-klein", "flux3-klein", "qwen-image-2.1", "moss-image"]) {
+      expect(FAMILY_CONFIG[family].fixedArgs["flash-attn"]).toBe("off,diffusion=on");
     }
   });
 
@@ -1047,12 +1020,8 @@ describe("flash attention launch flag", () => {
       const config = FAMILY_CONFIG[family];
       expect(config, `${family} 未注册`).toBeTruthy();
       const args = config.fields.map((field) => field.arg);
-      expect(args).toEqual(
-        expect.arrayContaining(["diffusion-model", "vae", "llm"])
-      );
-      expect(
-        familyDefaults(config, "img_gen")?.sample_params
-      ).toMatchObject({
+      expect(args).toEqual(expect.arrayContaining(["diffusion-model", "vae", "llm"]));
+      expect(familyDefaults(config, "img_gen")?.sample_params).toMatchObject({
         sample_steps: steps,
         sample_method: "euler",
         guidance: { txt_cfg: cfg },
@@ -1061,21 +1030,17 @@ describe("flash attention launch flag", () => {
 
     // Iris-3B：像素空间，没有 VAE 槽位；宽高按 16 对齐。
     const iris = FAMILY_CONFIG.iris;
-    expect(iris.fields.map((field) => field.arg)).toEqual([
-      "diffusion-model",
-      "llm",
-      "llm_vision",
-    ]);
+    expect(iris.fields.map((field) => field.arg)).toEqual(["diffusion-model", "llm", "llm_vision"]);
     expect(alignSizeUp("iris", 1080)).toBe(1088);
     expect(alignSizeUp("iris", 720)).toBe(720);
-    expect(
-      familyDefaults(iris, "img_gen")?.sample_params
-    ).toMatchObject({ guidance: { txt_cfg: 3.0 } });
+    expect(familyDefaults(iris, "img_gen")?.sample_params).toMatchObject({
+      guidance: { txt_cfg: 3.0 },
+    });
 
     // MOSS-Image：Flux.2 VAE + Qwen3.5，强制外部 tokenizer，宽高按 16 对齐。
     const moss = FAMILY_CONFIG["moss-image"];
     expect(moss.fields.map((field) => field.arg)).toEqual(
-      expect.arrayContaining(["diffusion-model", "vae", "llm"])
+      expect.arrayContaining(["diffusion-model", "vae", "llm"]),
     );
     expect(familyNeedsExternalTokenizer("moss-image")).toBe(true);
     expect(alignSizeUp("moss-image", 1080)).toBe(1088);
@@ -1088,9 +1053,7 @@ describe("flash attention launch flag", () => {
       },
       runtime,
     });
-    expect(mossBuilt.missing).toContain(
-      "外部 Tokenizer（--tokenizer，tokenizer.json）"
-    );
+    expect(mossBuilt.missing).toContain("外部 Tokenizer（--tokenizer，tokenizer.json）");
     const mossWithTokenizer = buildLaunchConfig({
       family: "moss-image",
       modelPath: "/models/moss_image_sft_int8_convrot_attn.safetensors",
@@ -1101,8 +1064,104 @@ describe("flash attention launch flag", () => {
       runtime: { ...runtime, tokenizer: "/models/tokenizer_qwen3.5.json" },
     });
     expect(mossWithTokenizer.missing).toEqual([]);
-    expect(mossWithTokenizer.args.tokenizer).toBe(
-      "/models/tokenizer_qwen3.5.json"
-    );
+    expect(mossWithTokenizer.args.tokenizer).toBe("/models/tokenizer_qwen3.5.json");
+  });
+});
+
+// 审查 §2.9：--threads / --params-backend / --rpc-servers 三个结构化控件。
+// 语义按上游 common.cpp（options 表）与 docs/backend.md / docs/rpc.md：
+// threads <= 0 由内核取物理核数；params-backend 不接受 & 设备列表但接受 disk；
+// rpc-servers 是 host:port 列表，写错端口只打日志不中止。
+describe("engine knobs (threads / params-backend / rpc-servers)", () => {
+  const launch = (overrides: Partial<LaunchRuntime>) =>
+    buildLaunchConfig({
+      family: "hidream",
+      modelPath: "/models/hidream.safetensors",
+      components: {},
+      runtime: { ...runtime, ...overrides },
+    });
+
+  it("passes --threads only for positive integers", () => {
+    expect(launch({ threads: 8 }).args.threads).toBe(8);
+    expect(launch({ threads: 1 }).args.threads).toBe(1);
+    // 小数按整数截断：上游 int_options 只收整数，传 7.5 会被内核报错。
+    expect(launch({ threads: 7.5 }).args.threads).toBe(7);
+  });
+
+  it("omits --threads when unset, zero or negative", () => {
+    // 0 / 缺省 = 让内核按 CPU 物理核数决定（上游 help：threads <= 0 时取核数）。
+    for (const threads of [0, undefined, -4, Number.NaN]) {
+      expect(launch({ threads }).args).not.toHaveProperty("threads");
+    }
+  });
+
+  it("passes valid --params-backend specs through verbatim", () => {
+    for (const paramsBackend of ["cpu", "disk", "te=cpu,vae=cpu", "diffusion=disk,clip=cpu"]) {
+      const result = launch({ paramsBackend });
+      expect(result.args["params-backend"]).toBe(paramsBackend);
+      expect(result.missing).toEqual([]);
+    }
+  });
+
+  it("blocks a --params-backend with a device list instead of silently dropping it", () => {
+    const result = launch({ paramsBackend: "te=cpu&cuda0" });
+    expect(result.args).not.toHaveProperty("params-backend");
+    expect(result.missing.join("；")).toContain("--params-backend");
+    expect(result.missing.join("；")).toContain("设备列表");
+  });
+
+  it("rejects --params-backend entries with an empty module or backend", () => {
+    expect(validateParamsBackendSpec("=cpu")).not.toBeNull();
+    expect(validateParamsBackendSpec("te=")).not.toBeNull();
+    // 空段与未知模块名放行：上游跳过空段，模块名由上游启动时报错
+    // （与 --backend 同口径，避免内核新增模块时 GUI 误杀）。
+    expect(validateParamsBackendSpec("te=cpu,,vae=disk")).toBeNull();
+    expect(validateParamsBackendSpec("some-new-module=cpu")).toBeNull();
+  });
+
+  it("passes --rpc-servers through for host:port lists", () => {
+    for (const rpcServers of [
+      "localhost:50052",
+      "127.0.0.1:50052,192.168.1.10:50053",
+      "[::1]:50052",
+    ]) {
+      const result = launch({ rpcServers });
+      expect(result.args["rpc-servers"]).toBe(rpcServers);
+      expect(result.missing).toEqual([]);
+    }
+  });
+
+  it("blocks a --rpc-servers entry with a missing or out-of-range port", () => {
+    // 端口边界：1 与 65535 合法，0/65536 越界。
+    expect(validateRpcServersSpec("host:1")).toBeNull();
+    expect(validateRpcServersSpec("host:65535")).toBeNull();
+    expect(validateRpcServersSpec("host:65536")).not.toBeNull();
+    expect(validateRpcServersSpec("host:0")).not.toBeNull();
+    for (const rpcServers of [
+      "localhost",
+      "localhost:0",
+      "localhost:70000",
+      "localhost:port",
+      ":50052",
+      "::1:50052",
+      "ok:50052,bad",
+    ]) {
+      const result = launch({ rpcServers });
+      expect(result.args).not.toHaveProperty("rpc-servers");
+      expect(result.missing.join("；")).toContain("--rpc-servers");
+    }
+  });
+
+  it("keeps all three knobs out of the argument map when blank", () => {
+    for (const blank of ["", "   "]) {
+      const args = launch({
+        threads: 0,
+        paramsBackend: blank,
+        rpcServers: blank,
+      }).args;
+      expect(args).not.toHaveProperty("threads");
+      expect(args).not.toHaveProperty("params-backend");
+      expect(args).not.toHaveProperty("rpc-servers");
+    }
   });
 });

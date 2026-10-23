@@ -12,11 +12,7 @@ interface Props {
   onUpdate: (path: string, v: unknown) => void;
 }
 
-export const LoraPanel = memo(function LoraPanel({
-  loras,
-  available,
-  onUpdate,
-}: Props) {
+export const LoraPanel = memo(function LoraPanel({ loras, available, onUpdate }: Props) {
   return (
     <Panel title="LoRA" badge={loras.length || null}>
       {loras.map((l, i) => {
@@ -46,7 +42,7 @@ export const LoraPanel = memo(function LoraPanel({
                 onClick={() =>
                   onUpdate(
                     "lora",
-                    loras.filter((_, j) => j !== i)
+                    loras.filter((_, j) => j !== i),
                   )
                 }
               >

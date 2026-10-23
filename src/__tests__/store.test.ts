@@ -42,9 +42,17 @@ describe("store", () => {
     });
 
     it("handles paths with null intermediates", () => {
-      useStore.setState({ params: { width: 64, height: 64, seed: 0, sample_params: { guidance: { txt_cfg: 1 } } as unknown as GenParams["sample_params"] } });
+      useStore.setState({
+        params: {
+          width: 64,
+          height: 64,
+          seed: 0,
+          sample_params: { guidance: { txt_cfg: 1 } } as unknown as GenParams["sample_params"],
+        },
+      });
       useStore.getState().updateParam("sample_params.guidance.img_cfg", 5);
-      const sp = useStore.getState().params?.sample_params as { guidance?: { img_cfg?: number } } | undefined;
+      const sp = useStore.getState().params?.sample_params as
+        { guidance?: { img_cfg?: number } } | undefined;
       expect(sp?.guidance?.img_cfg).toBe(5);
     });
   });
@@ -52,7 +60,16 @@ describe("store", () => {
   describe("appendLog", () => {
     it("appends a log line", () => {
       useStore.getState().appendLog("test line");
-      expect(useStore.getState().logs).toContain("test line");
+      expect(useStore.getState().logs.map((l) => l.text)).toContain("test line");
+    });
+
+    it("assigns monotonically increasing ids for stable React keys", () => {
+      const before = useStore.getState().logs;
+      useStore.getState().appendLog("a");
+      useStore.getState().appendLog("b");
+      const after = useStore.getState().logs;
+      expect(after.length).toBe(before.length + 2);
+      expect(after[after.length - 1].id).toBeGreaterThan(after[after.length - 2].id);
     });
 
     it("trims logs when exceeding 2000 lines", () => {
@@ -75,7 +92,7 @@ describe("store", () => {
       useStore.getState().updateProgress("progress 2");
       const logs = useStore.getState().logs;
       expect(logs).toHaveLength(1);
-      expect(logs[0]).toBe("progress 2");
+      expect(logs[0].text).toBe("progress 2");
     });
 
     it("replaces parsed step progress instead of appending every update", () => {
@@ -83,13 +100,44 @@ describe("store", () => {
       useStore.getState().updateProgress("step 2/20");
       const logs = useStore.getState().logs;
       expect(logs).toHaveLength(1);
-      expect(logs[0]).toBe("step 2/20");
+      expect(logs[0].text).toBe("step 2/20");
     });
   });
 
   describe("seedRandom persistence", () => {
     it("defaults to true", () => {
       expect(useStore.getState().seedRandom).toBe(true);
+    });
+  });
+
+  // 审查 50-ux F-21：轮询失败每 3 秒一条、批量保存每张一条，同文案会堆满屏幕。
+  describe("toast 合并", () => {
+    beforeEach(() => {
+      useStore.setState({ toasts: [] });
+    });
+
+    it("merges identical repeated messages into one card with a count", () => {
+      useStore.getState().toast("网络错误: boom", true);
+      useStore.getState().toast("网络错误: boom", true);
+      useStore.getState().toast("网络错误: boom", true);
+
+      const toasts = useStore.getState().toasts;
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0].count).toBe(3);
+    });
+
+    it("keeps different messages as separate cards", () => {
+      useStore.getState().toast("网络错误: boom", true);
+      useStore.getState().toast("队列已满", true);
+
+      expect(useStore.getState().toasts).toHaveLength(2);
+    });
+
+    it("does not merge a non-error message with an error of the same text", () => {
+      useStore.getState().toast("已停止");
+      useStore.getState().toast("已停止", true);
+
+      expect(useStore.getState().toasts).toHaveLength(2);
     });
   });
 });

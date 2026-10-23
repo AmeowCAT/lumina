@@ -36,6 +36,7 @@ export function QueueDrawer({
           }}
           className="queue-overlay"
           role="dialog"
+          aria-modal="true"
           aria-label="任务队列"
           tabIndex={-1}
           initial={{ x: "-100%" }}

@@ -31,6 +31,15 @@ describe("SamplingPanel option fallbacks", () => {
     expect(screen.getByLabelText("调度器")).toHaveTextContent("Discrete");
     expect(screen.getByLabelText("采样器")).toHaveTextContent("Euler");
   });
+
+  // 审查 30-api §2.7：陈旧值不仅要在下拉里保留，还必须标出「当前内核不支持」，
+  // 否则界面显示 A、内核静默用默认，用户看不出原因。
+  it("marks persisted values the current kernel does not advertise", () => {
+    render(<SamplingPanel {...baseProps} scheduler="discrete" />);
+
+    expect(screen.getByLabelText("调度器")).toHaveTextContent("当前内核不支持");
+    expect(screen.getByRole("alert")).toHaveTextContent("静默忽略");
+  });
 });
 
 describe("SamplingPanel beta scheduler args", () => {
@@ -45,11 +54,11 @@ describe("SamplingPanel beta scheduler args", () => {
 
     expect(screen.getByRole("slider", { name: /Beta α/ })).toHaveAttribute(
       "aria-valuetext",
-      "0.80"
+      "0.80",
     );
     expect(screen.getByRole("slider", { name: /Beta β/ })).toHaveAttribute(
       "aria-valuetext",
-      "0.50"
+      "0.50",
     );
 
     rerender(<SamplingPanel {...base} scheduler="karras" />);
@@ -65,13 +74,10 @@ describe("SamplingPanel lms sampler args", () => {
     const base = { ...baseProps, samplers: ["euler", "lms"] };
     const { rerender } = render(<SamplingPanel {...base} sampleMethod="lms" />);
 
-    expect(screen.getByRole("slider", { name: /LMS 阶数/ })).toHaveAttribute(
-      "aria-valuetext",
-      "4"
-    );
+    expect(screen.getByRole("slider", { name: /LMS 阶数/ })).toHaveAttribute("aria-valuetext", "4");
     expect(screen.getByRole("slider", { name: /LMS 历史偏移/ })).toHaveAttribute(
       "aria-valuetext",
-      "1"
+      "1",
     );
     expect(screen.getByLabelText(/LMS 积分分段/)).toHaveValue(1000);
 
@@ -91,7 +97,7 @@ describe("SamplingPanel lms sampler args", () => {
         sampleMethod="lms"
         lmsDivisions={2000}
         onUpdate={onUpdate}
-      />
+      />,
     );
 
     const divisions = screen.getByLabelText(/LMS 积分分段/);
@@ -113,9 +119,7 @@ describe("SamplingPanel 默认（自动）选项", () => {
   });
 
   it("当前值为 default 哨兵时显示 默认（自动）", () => {
-    render(
-      <SamplingPanel {...baseProps} sampleMethod="default" scheduler="default" />
-    );
+    render(<SamplingPanel {...baseProps} sampleMethod="default" scheduler="default" />);
 
     expect(screen.getByLabelText("调度器")).toHaveTextContent("默认（自动）");
     expect(screen.getByLabelText("采样器")).toHaveTextContent("默认（自动）");
@@ -134,7 +138,7 @@ describe("SamplingPanel 生成预览（上游 #2093）", () => {
         {...baseProps}
         previewModes={["none", "proj", "tae", "vae"]}
         previewMode="none"
-      />
+      />,
     );
 
     expect(screen.getByLabelText(/生成预览/)).toHaveTextContent("关闭");
@@ -147,7 +151,7 @@ describe("SamplingPanel 生成预览（上游 #2093）", () => {
         previewModes={["none", "proj", "tae", "vae"]}
         previewMode="tae"
         previewInterval={5}
-      />
+      />,
     );
     expect(screen.getByLabelText(/生成预览/)).toHaveTextContent("TAE 解码");
     expect(screen.getByLabelText(/预览间隔/)).toHaveValue(5);
@@ -161,7 +165,7 @@ describe("SamplingPanel 生成预览（上游 #2093）", () => {
         previewModes={["none", "proj"]}
         previewMode="none"
         onUpdate={onUpdate}
-      />
+      />,
     );
 
     fireEvent.click(screen.getByLabelText(/生成预览/));
@@ -171,13 +175,7 @@ describe("SamplingPanel 生成预览（上游 #2093）", () => {
   });
 
   it("当前模式不受支持时显示关闭，不把旧值补为可选项", async () => {
-    render(
-      <SamplingPanel
-        {...baseProps}
-        previewModes={["none", "proj"]}
-        previewMode="vae"
-      />
-    );
+    render(<SamplingPanel {...baseProps} previewModes={["none", "proj"]} previewMode="vae" />);
 
     expect(screen.getByLabelText(/生成预览/)).toHaveTextContent("关闭");
     expect(screen.queryByLabelText(/预览间隔/)).toBeNull();

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  computeGridLayout,
-  computeVisibleRange,
-  tilePosition,
-} from "../virtualGrid";
+import { computeGridLayout, computeVisibleRange, tilePosition } from "../virtualGrid";
 
 describe("computeGridLayout", () => {
   it("fits as many min-tiles as width allows", () => {

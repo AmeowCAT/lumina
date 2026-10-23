@@ -21,18 +21,15 @@ describe("HighNoisePanel beta scheduler args", () => {
 
     expect(screen.getByRole("slider", { name: /Beta α/ })).toHaveAttribute(
       "aria-valuetext",
-      "0.70"
+      "0.70",
     );
     expect(screen.getByRole("slider", { name: /Beta β/ })).toHaveAttribute(
       "aria-valuetext",
-      "0.60"
+      "0.60",
     );
 
     rerender(
-      <HighNoisePanel
-        {...base}
-        hsp={{ scheduler: "karras", guidance: { txt_cfg: 3.5 } }}
-      />
+      <HighNoisePanel {...base} hsp={{ scheduler: "karras", guidance: { txt_cfg: 3.5 } }} />,
     );
 
     expect(screen.queryByRole("slider", { name: /Beta α/ })).toBeNull();
@@ -54,7 +51,7 @@ describe("HighNoisePanel 默认（自动）选项", () => {
         betaAlpha={undefined}
         betaBeta={undefined}
         onUpdate={vi.fn()}
-      />
+      />,
     );
 
     fireEvent.click(screen.getByLabelText("调度器"));
@@ -81,22 +78,20 @@ describe("HighNoisePanel lms/extra args", () => {
       <HighNoisePanel
         {...base}
         hsp={{ sample_method: "lms", lms_shift: 0, guidance: { txt_cfg: 3.5 } }}
-      />
+      />,
     );
 
     expect(screen.getByRole("slider", { name: /LMS 阶数 \(高噪\)/ })).toHaveAttribute(
       "aria-valuetext",
-      "4"
+      "4",
     );
-    expect(
-      screen.getByRole("slider", { name: /LMS 历史偏移 \(高噪\)/ })
-    ).toHaveAttribute("aria-valuetext", "0");
+    expect(screen.getByRole("slider", { name: /LMS 历史偏移 \(高噪\)/ })).toHaveAttribute(
+      "aria-valuetext",
+      "0",
+    );
 
     rerender(
-      <HighNoisePanel
-        {...base}
-        hsp={{ sample_method: "euler", guidance: { txt_cfg: 3.5 } }}
-      />
+      <HighNoisePanel {...base} hsp={{ sample_method: "euler", guidance: { txt_cfg: 3.5 } }} />,
     );
 
     expect(screen.queryByRole("slider", { name: /LMS 阶数 \(高噪\)/ })).toBeNull();
@@ -109,16 +104,13 @@ describe("HighNoisePanel lms/extra args", () => {
         {...base}
         hsp={{ sample_method: "euler", guidance: { txt_cfg: 3.5 } }}
         onUpdate={onUpdate}
-      />
+      />,
     );
 
     fireEvent.change(screen.getByLabelText("额外采样参数 (高噪)"), {
       target: { value: "gamma=4" },
     });
 
-    expect(onUpdate).toHaveBeenCalledWith(
-      "high_noise_sample_params.extra_sample_args",
-      "gamma=4"
-    );
+    expect(onUpdate).toHaveBeenCalledWith("high_noise_sample_params.extra_sample_args", "gamma=4");
   });
 });

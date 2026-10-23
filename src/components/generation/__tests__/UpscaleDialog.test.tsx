@@ -1,12 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { UpscalerInfo } from "../../../types";
 import { UpscaleDialog } from "../UpscaleDialog";
 
-const UPSCALERS: UpscalerInfo[] = [
-  { name: "RealESRGAN_x4plus", model: true, image_upscale: true },
-];
+const UPSCALERS: UpscalerInfo[] = [{ name: "RealESRGAN_x4plus", model: true, image_upscale: true }];
 
 function renderDialog(overrides: Partial<Parameters<typeof UpscaleDialog>[0]> = {}) {
   return render(
@@ -19,7 +18,7 @@ function renderDialog(overrides: Partial<Parameters<typeof UpscaleDialog>[0]> = 
       busy={false}
       onSubmit={vi.fn()}
       {...overrides}
-    />
+    />,
   );
 }
 
@@ -44,6 +43,21 @@ describe("UpscaleDialog", () => {
 
     expect(screen.getByRole("button", { name: "放大中…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "关闭放大对话框" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("不可取消");
+  });
+
+  // 审查 30-api §2.12：同步接口没有进度事件，至少要能看到"已经等了多久"。
+  it("shows elapsed seconds while the sync request runs", () => {
+    vi.useFakeTimers();
+    try {
+      renderDialog({ busy: true });
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(screen.getByRole("button", { name: /放大中… 3s/ })).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces the kernel error body", () => {

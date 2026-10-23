@@ -1,29 +1,44 @@
 import { describe, it, expect } from "vitest";
 import {
   b64ToBlobUrl,
+  buildCacheOption,
   buildRequestBody,
+  cacheOptionFields,
   clearLegacyLatentTiling,
   deepClone,
   deepMerge,
   extractApiError,
   fmtSize,
   formatError,
+  formatLayerList,
   hasLegacyLatentTiling,
   hasPixelTiling,
+  jobElapsed,
   legacyLatentTilingAxes,
   legacyTilingDroppedOnPixels,
   LINGBOT_PROMPT_TEMPLATE,
+  matchAvailableLora,
   modelFileOptionLabel,
   normalizeSizeStep,
+  normalizeScmMask,
+  parseCacheOption,
+  parseLayerList,
   pixelTilingDroppedOnLatent,
   previewModesFromCapabilities,
+  resolveCacheOption,
   resolvePreviewMode,
   resolveVaeTilingForProtocol,
+  sanitizeCacheOptionsForMode,
   sdcppMetadataToGenParams,
+  setTilingArgValue,
+  tilingArgValue,
+  trimJobsToBudget,
   vaeTilingProtocolFromCapabilities,
   validateLingbotPrompt,
+  validateScmMask,
+  validateSlgWindow,
 } from "../utils";
-import type { Capabilities, GenImages, GenParams } from "../../types";
+import type { Capabilities, GenImages, GenParams, Job, SlgGuidance } from "../../types";
 
 describe("normalizeSizeStep", () => {
   it("defaults to 1 and keeps positive integers", () => {
@@ -55,7 +70,9 @@ describe("preview capability gating", () => {
     expect(previewModesFromCapabilities(caps, "img_gen")).toEqual(["none", "proj", "vae"]);
     expect(previewModesFromCapabilities(caps, "vid_gen")).toEqual([]);
     expect(previewModesFromCapabilities({ ...caps, features_by_mode: {} }, "img_gen")).toEqual([]);
-    expect(previewModesFromCapabilities({ ...caps, preview_modes: undefined }, "img_gen")).toEqual([]);
+    expect(previewModesFromCapabilities({ ...caps, preview_modes: undefined }, "img_gen")).toEqual(
+      [],
+    );
   });
 
   it("falls back to none for unsupported or malformed saved values", () => {
@@ -71,21 +88,16 @@ describe("extractApiError", () => {
   // sd-server 的 HTTP 错误响应里 `error` 是字符串（routes_sdcpp.cpp），
   // 早期按 `.error.message` 读会把所有失败原因吞成 "错误 400"。
   it("reads the string-shaped HTTP error body", () => {
-    expect(
-      extractApiError({ error: "invalid generation parameters" }, 400)
-    ).toBe("invalid generation parameters");
-    expect(extractApiError({ error: "job queue is full" }, 429)).toBe(
-      "job queue is full"
+    expect(extractApiError({ error: "invalid generation parameters" }, 400)).toBe(
+      "invalid generation parameters",
     );
+    expect(extractApiError({ error: "job queue is full" }, 429)).toBe("job queue is full");
   });
 
   it("appends the detail message for invalid json", () => {
-    expect(
-      extractApiError(
-        { error: "invalid json", message: "unexpected token" },
-        400
-      )
-    ).toBe("invalid json：unexpected token");
+    expect(extractApiError({ error: "invalid json", message: "unexpected token" }, 400)).toBe(
+      "invalid json：unexpected token",
+    );
   });
 
   // Job 对象内的 error 是 {code,message} 对象（async_jobs.cpp）——形状不同。
@@ -93,7 +105,7 @@ describe("extractApiError", () => {
     expect(
       extractApiError({
         error: { code: "generation_failed", message: "generate_image returned empty results" },
-      })
+      }),
     ).toBe("generate_image returned empty results（generation_failed）");
   });
 
@@ -133,7 +145,7 @@ describe("deepClone", () => {
 describe("formatError", () => {
   it("renders structured Tauri errors without [object Object]", () => {
     expect(formatError({ code: "save_failed", message: "磁盘空间不足" })).toBe(
-      "磁盘空间不足（save_failed）"
+      "磁盘空间不足（save_failed）",
     );
   });
 });
@@ -205,14 +217,14 @@ describe("modelFileOptionLabel", () => {
         ...base,
         name: "model.safetensors.index.json",
         ext: "safetensors.index.json",
-      })
+      }),
     ).toBe("model.safetensors.index.json [分片索引] (2.0 GB)");
     expect(
       modelFileOptionLabel({
         ...base,
         name: "model.safetensors",
         ext: "safetensors",
-      })
+      }),
     ).toBe("model.safetensors (2.0 GB)");
   });
 });
@@ -274,9 +286,7 @@ describe("buildRequestBody", () => {
       // 旧内核读这个。
       expect(body.auto_resize_ref_image).toBe(false);
       // 新内核读这个；请求端是整体赋值，漏掉 preset 会把启动参数顶掉。
-      expect(body.ref_image_args).toBe(
-        "preset=flux_kontext,resize_before_vae=false"
-      );
+      expect(body.ref_image_args).toBe("preset=flux_kontext,resize_before_vae=false");
     });
 
     it("honors an explicit ref_image_args without duplicating preset or resize", () => {
@@ -291,16 +301,53 @@ describe("buildRequestBody", () => {
       expect(body.ref_image_args).toBe("preset=longcat,resize_before_vae=off");
     });
 
-    it.each(["img_gen", "vid_gen"] as const)("normalizes draft rules only when building %s requests", (mode) => {
-      const rules = ["  target=init,mode=fit-pad  ", "", "   ", "target=ref,mode=none", ""];
-      const p = { ...baseParams, image_preprocess: rules };
-      expect(buildRequestBody(mode, p, {} as GenImages).image_preprocess).toEqual([
-        "target=init,mode=fit-pad", "target=ref,mode=none",
-      ]);
-      expect(p.image_preprocess).toEqual(["  target=init,mode=fit-pad  ", "", "   ", "target=ref,mode=none", ""]);
-      expect(buildRequestBody(mode, { ...baseParams, image_preprocess: ["", "  "] }, {} as GenImages))
-        .not.toHaveProperty("image_preprocess");
+    // 审查 30-api §2.10：embed_image_metadata 此前只在 img_gen 分支发送，
+    // 视频永远带元数据、用户关不掉；fps 缺省也要跟上游一致（16，不是 24）。
+    it.each(["img_gen", "vid_gen"] as const)(
+      "sends embed_image_metadata=false in %s when the user disables it",
+      (mode) => {
+        expect(
+          buildRequestBody(mode, { ...baseParams, embed_image_metadata: false }, {} as GenImages)
+            .embed_image_metadata,
+        ).toBe(false);
+        expect(
+          buildRequestBody(
+            mode,
+            { ...baseParams, embed_image_metadata: undefined },
+            {} as GenImages,
+          ).embed_image_metadata,
+        ).toBe(true);
+      },
+    );
+
+    it("defaults vid_gen fps to the upstream value, not 24", () => {
+      expect(
+        buildRequestBody("vid_gen", { ...baseParams, fps: undefined }, {} as GenImages).fps,
+      ).toBe(16);
+      expect(buildRequestBody("vid_gen", { ...baseParams, fps: 30 }, {} as GenImages).fps).toBe(30);
     });
+
+    it.each(["img_gen", "vid_gen"] as const)(
+      "normalizes draft rules only when building %s requests",
+      (mode) => {
+        const rules = ["  target=init,mode=fit-pad  ", "", "   ", "target=ref,mode=none", ""];
+        const p = { ...baseParams, image_preprocess: rules };
+        expect(buildRequestBody(mode, p, {} as GenImages).image_preprocess).toEqual([
+          "target=init,mode=fit-pad",
+          "target=ref,mode=none",
+        ]);
+        expect(p.image_preprocess).toEqual([
+          "  target=init,mode=fit-pad  ",
+          "",
+          "   ",
+          "target=ref,mode=none",
+          "",
+        ]);
+        expect(
+          buildRequestBody(mode, { ...baseParams, image_preprocess: ["", "  "] }, {} as GenImages),
+        ).not.toHaveProperty("image_preprocess");
+      },
+    );
 
     it.each(["img_gen", "vid_gen"] as const)("handles malformed persisted rules for %s", (mode) => {
       for (const value of [null, 42, {}, "not-an-array", [1, null, {}]]) {
@@ -309,7 +356,9 @@ describe("buildRequestBody", () => {
       }
       const mixed = [null, 42, {}, "  target=ref,mode=none ", ""];
       const p = { ...baseParams, image_preprocess: mixed as unknown as string[] };
-      expect(buildRequestBody(mode, p, {} as GenImages).image_preprocess).toEqual(["target=ref,mode=none"]);
+      expect(buildRequestBody(mode, p, {} as GenImages).image_preprocess).toEqual([
+        "target=ref,mode=none",
+      ]);
       expect(mixed).toEqual([null, 42, {}, "  target=ref,mode=none ", ""]);
     });
 
@@ -362,9 +411,10 @@ describe("buildRequestBody", () => {
     expect(hn.scheduler).toBeUndefined();
   });
 
-  it("explicitly disables high-noise SLG when scale is not positive", () => {
-    // 与主采样 SLG 对等:scale<=0/缺省时显式发 {scale:0},防止服务端
-    // 默认开启时省略字段无法关闭(审查 L3 对称缺口)。
+  it("omits high-noise SLG entirely when it is not enabled", () => {
+    // 审查 F-18：此前恒发 {scale:0}，会把服务端启动参数
+    // --high-noise-slg-scale 每条请求都打回关闭（docs/audit/95-f18-semantics.md §5.3）。
+    // 「要关掉服务端默认」只能靠启动参数表达，不能靠恒发 0 去猜。
     const p: GenParams = {
       ...baseParams,
       high_noise_sample_params: {
@@ -378,7 +428,7 @@ describe("buildRequestBody", () => {
     const hn = body.high_noise_sample_params as {
       guidance: Record<string, unknown>;
     };
-    expect(hn.guidance.slg).toEqual({ scale: 0 });
+    expect("slg" in hn.guidance).toBe(false);
   });
 
   it("includes Qwen Image Layered layer count for img_gen", () => {
@@ -407,7 +457,7 @@ describe("buildRequestBody", () => {
         endImage: null,
         refImages: [],
         controlFrames: [],
-      }
+      },
     );
     expect(body.strength).toBe(0.75);
     expect(body.init_image).toBe("data:image/png;base64,init");
@@ -540,19 +590,17 @@ describe("buildRequestBody", () => {
         defaults_by_mode: {
           img_gen: { vae_tiling_params: { tile_size_w: 0, tile_size_h: 0 } },
         },
-      })
+      }),
     ).toBe("pixels");
     expect(
       vaeTilingProtocolFromCapabilities({
         defaults_by_mode: {
           vid_gen: { vae_tiling_params: { tile_size_x: 0, tile_size_y: 0 } },
         },
-      })
+      }),
     ).toBe("latent");
     // 旧内核/裁剪响应里两套键都没有时按最新内核处理。
-    expect(vaeTilingProtocolFromCapabilities({ defaults_by_mode: {} })).toBe(
-      "pixels"
-    );
+    expect(vaeTilingProtocolFromCapabilities({ defaults_by_mode: {} })).toBe("pixels");
     expect(vaeTilingProtocolFromCapabilities(null)).toBe("pixels");
   });
 
@@ -566,9 +614,7 @@ describe("buildRequestBody", () => {
       enabled: false,
     });
     expect(hasLegacyLatentTiling(legacy)).toBe(true);
-    expect(hasLegacyLatentTiling({ enabled: true, tile_size_w: 256 })).toBe(
-      false
-    );
+    expect(hasLegacyLatentTiling({ enabled: true, tile_size_w: 256 })).toBe(false);
   });
 
   // 两个方向都要提示：用新内核出图、回填元数据后又切回旧内核时，像素值
@@ -584,15 +630,13 @@ describe("buildRequestBody", () => {
     expect(legacyTilingDroppedOnPixels(latentOnly)).toBe(true);
 
     // 关闭状态与两套键齐全时都不提示。
-    expect(pixelTilingDroppedOnLatent({ enabled: false, tile_size_w: 512 })).toBe(
-      false
-    );
+    expect(pixelTilingDroppedOnLatent({ enabled: false, tile_size_w: 512 })).toBe(false);
     expect(
       pixelTilingDroppedOnLatent({
         enabled: true,
         tile_size_w: 512,
         tile_size_x: 32,
-      })
+      }),
     ).toBe(false);
   });
 
@@ -650,7 +694,7 @@ describe("buildRequestBody", () => {
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
     expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
-      "alpha=0.8,beta=0.5"
+      "alpha=0.8,beta=0.5",
     );
   });
 
@@ -660,9 +704,7 @@ describe("buildRequestBody", () => {
       sample_params: { ...baseParams.sample_params, scheduler: "beta" },
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
-    expect(
-      (body.sample_params as Record<string, unknown>).extra_sample_args
-    ).toBeUndefined();
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBeUndefined();
   });
 
   it("does not send beta args for other schedulers", () => {
@@ -676,9 +718,7 @@ describe("buildRequestBody", () => {
       },
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
-    expect(
-      (body.sample_params as Record<string, unknown>).extra_sample_args
-    ).toBeUndefined();
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBeUndefined();
   });
 
   it("ignores non-positive beta args and trims float noise", () => {
@@ -692,9 +732,7 @@ describe("buildRequestBody", () => {
       },
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
-    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
-      "beta=0.6"
-    );
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe("beta=0.6");
   });
 
   it("sends beta args in high_noise_sample_params separately", () => {
@@ -714,13 +752,10 @@ describe("buildRequestBody", () => {
       },
     };
     const body = buildRequestBody("vid_gen", p, {} as GenImages);
-    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
-      "alpha=0.7"
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe("alpha=0.7");
+    expect((body.high_noise_sample_params as Record<string, unknown>).extra_sample_args).toBe(
+      "beta=0.4",
     );
-    expect(
-      (body.high_noise_sample_params as Record<string, unknown>)
-        .extra_sample_args
-    ).toBe("beta=0.4");
   });
 
   // 上游 #1885：lms 采样器的 max_order / shift / divisions 可配。
@@ -737,7 +772,7 @@ describe("buildRequestBody", () => {
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
     expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
-      "lms_max_order=3,lms_shift=0,lms_divisions=2000"
+      "lms_max_order=3,lms_shift=0,lms_divisions=2000",
     );
   });
 
@@ -752,9 +787,7 @@ describe("buildRequestBody", () => {
       },
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
-    expect(
-      (body.sample_params as Record<string, unknown>).extra_sample_args
-    ).toBeUndefined();
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBeUndefined();
   });
 
   // 上游 parse_strict_int 会整条忽略小数；越界值按上游 max(1,·)/max(0,·) 语义丢弃。
@@ -771,7 +804,7 @@ describe("buildRequestBody", () => {
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
     expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
-      "lms_max_order=4"
+      "lms_max_order=4",
     );
   });
 
@@ -790,7 +823,7 @@ describe("buildRequestBody", () => {
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
     expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
-      "alpha=0.8,lms_max_order=2,gamma=3,lms_max_order=6"
+      "alpha=0.8,lms_max_order=2,gamma=3,lms_max_order=6",
     );
   });
 
@@ -805,9 +838,7 @@ describe("buildRequestBody", () => {
       },
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
-    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe(
-      "gamma=2.5"
-    );
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBe("gamma=2.5");
   });
 
   it("omits extra_sample_args when the free-form text has no valid pair", () => {
@@ -819,9 +850,7 @@ describe("buildRequestBody", () => {
       },
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
-    expect(
-      (body.sample_params as Record<string, unknown>).extra_sample_args
-    ).toBeUndefined();
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBeUndefined();
   });
 
   it("carries lms + free-form args on the high-noise stage independently", () => {
@@ -842,9 +871,7 @@ describe("buildRequestBody", () => {
     expect(hn.extra_sample_args).toBe("lms_shift=1,gamma=4");
     // 上游 parse_sample_params_json 对高噪段同样解析 shifted_timestep。
     expect(hn.shifted_timestep).toBe(250);
-    expect(
-      (body.sample_params as Record<string, unknown>).extra_sample_args
-    ).toBeUndefined();
+    expect((body.sample_params as Record<string, unknown>).extra_sample_args).toBeUndefined();
   });
 
   // 上游 #1824 将 IP-Adapter 纳入 img_gen schema；vid_gen 不接受这两个字段。
@@ -920,9 +947,7 @@ describe("buildRequestBody", () => {
       hires: { enabled: true, custom_sigmas: [1.5, 0.8] },
     };
     const body = buildRequestBody("img_gen", p, {} as GenImages);
-    expect((body.hires as { custom_sigmas?: number[] }).custom_sigmas).toEqual([
-      1.5, 0.8,
-    ]);
+    expect((body.hires as { custom_sigmas?: number[] }).custom_sigmas).toEqual([1.5, 0.8]);
   });
 
   // 上游 validate 对长度 <2 的 custom_sigmas 直接拒绝（400 invalid
@@ -949,16 +974,20 @@ describe("buildRequestBody", () => {
 
   // 上游 #2093：preview / preview_interval 是 img_gen 与 vid_gen 通用的顶层字段。
   describe("generation previews (upstream #2093)", () => {
-    it.each(["img_gen", "vid_gen"] as const)("disables unsupported saved previews in %s requests", (mode) => {
-      const params: GenParams = { ...baseParams, preview: "vae", preview_interval: 4 };
-      for (const previewModes of [[], ["none", "proj"]]) {
-        const body = buildRequestBody(mode, params, {} as GenImages, { previewModes });
-        expect(body.preview).toBe("none");
-        expect(body).not.toHaveProperty("preview_interval");
-      }
-      expect(buildRequestBody(mode, params, {} as GenImages, { previewModes: ["none", "vae"] }))
-        .toMatchObject({ preview: "vae", preview_interval: 4 });
-    });
+    it.each(["img_gen", "vid_gen"] as const)(
+      "disables unsupported saved previews in %s requests",
+      (mode) => {
+        const params: GenParams = { ...baseParams, preview: "vae", preview_interval: 4 };
+        for (const previewModes of [[], ["none", "proj"]]) {
+          const body = buildRequestBody(mode, params, {} as GenImages, { previewModes });
+          expect(body.preview).toBe("none");
+          expect(body).not.toHaveProperty("preview_interval");
+        }
+        expect(
+          buildRequestBody(mode, params, {} as GenImages, { previewModes: ["none", "vae"] }),
+        ).toMatchObject({ preview: "vae", preview_interval: 4 });
+      },
+    );
 
     it("explicitly disables previews by default in both modes", () => {
       for (const mode of ["img_gen", "vid_gen"] as const) {
@@ -990,10 +1019,238 @@ describe("buildRequestBody", () => {
         preview: "proj",
         preview_interval: -3,
       };
-      expect(
-        buildRequestBody("vid_gen", negative, {} as GenImages).preview_interval
-      ).toBe(1);
+      expect(buildRequestBody("vid_gen", negative, {} as GenImages).preview_interval).toBe(1);
     });
+  });
+});
+
+// 审查 F-18 / docs/audit/95-f18-semantics.md：cache_option 是 key=value 串，
+// 同名键跨模式含义不同；scm_mask 非法会让内核 terminate。这里守住
+// 「拼串确定」「按模式裁剪」「非法不下发」三条。
+describe("F-18 缓存微调与 SCM 掩码", () => {
+  const baseParams: GenParams = {
+    width: 512,
+    height: 512,
+    seed: 42,
+    sample_params: { sample_steps: 20, guidance: { txt_cfg: 7 } },
+  };
+
+  it("按 spec 固定键序拼 cache_option", () => {
+    expect(buildCacheOption("easycache", { threshold: 0.3, start: 0.1, reset: false })).toBe(
+      "threshold=0.3,start=0.1,reset=0",
+    );
+  });
+
+  it("拼串与草稿的对象键序无关", () => {
+    const a = buildCacheOption("spectrum", { stop: 0.8, w: 0.5, m: 4 });
+    const b = buildCacheOption("spectrum", { m: 4, w: 0.5, stop: 0.8 });
+    expect(a).toBe(b);
+    expect(a).toBe("w=0.5,m=4,stop=0.8");
+  });
+
+  it("只拼当前模式合法的键", () => {
+    // Fn 只在 dbcache 系生效：easycache 下留着会「设置了但内核不读」。
+    expect(buildCacheOption("easycache", { Fn: 8, threshold: 0.2 })).toBe("threshold=0.2");
+    expect(buildCacheOption("dbcache", { Fn: 8, threshold: 0.2 })).toBe("Fn=8,threshold=0.2");
+  });
+
+  it("关闭/未知模式不产生 cache_option", () => {
+    expect(buildCacheOption("disabled", { threshold: 0.2 })).toBeUndefined();
+    expect(buildCacheOption(undefined, { threshold: 0.2 })).toBeUndefined();
+    expect(buildCacheOption("easycache", {})).toBeUndefined();
+  });
+
+  it("数值按 spec 夹取、整数截断、浮点尾数收窄", () => {
+    expect(buildCacheOption("dbcache", { Fn: 4.7 })).toBe("Fn=4");
+    expect(buildCacheOption("easycache", { threshold: 0.1 + 0.2 })).toBe("threshold=0.3");
+    expect(buildCacheOption("easycache", { threshold: -5 })).toBe("threshold=0");
+  });
+
+  it("保留原始串里界面不认识的键（元数据往返不丢参数）", () => {
+    expect(buildCacheOption("easycache", { threshold: 0.2 }, "threshold=0.1,gamma=3")).toBe(
+      "threshold=0.2,gamma=3",
+    );
+  });
+
+  it("原始串可解析回草稿，未知键单独列出", () => {
+    const { draft, unknownPairs } = parseCacheOption("threshold=1.5,reset=0,gamma=3");
+    expect(draft).toEqual({ threshold: 1.5, reset: false });
+    expect(unknownPairs).toEqual([{ key: "gamma", value: "3" }]);
+  });
+
+  it("切换缓存模式时丢弃新模式不认的键与跨模式语义漂移的键", () => {
+    const draft = { threshold: 0.2, Fn: 8, start: 0.15 };
+    // easycache → dbcache：Fn 合法、start 不合法、threshold 跨分组必须丢。
+    expect(sanitizeCacheOptionsForMode("dbcache", draft, "easycache")).toEqual({
+      Fn: 8,
+    });
+    // easycache → ucache：同分组，threshold 保留。
+    expect(sanitizeCacheOptionsForMode("ucache", draft, "easycache")).toEqual({
+      threshold: 0.2,
+      start: 0.15,
+    });
+  });
+
+  it("三种模式的控件集合与上游键集合一致", () => {
+    const keys = (mode: string) => cacheOptionFields(mode).map((f) => f.key);
+    expect(keys("easycache")).toEqual(["threshold", "start", "end", "decay", "relative", "reset"]);
+    expect(keys("dbcache")).toEqual(["Fn", "Bn", "threshold", "warmup"]);
+    expect(keys("spectrum")).toEqual(["w", "m", "lam", "window", "flex", "warmup", "stop"]);
+    expect(keys("disabled")).toEqual([]);
+  });
+
+  it("resolveCacheOption 优先草稿，否则沿用原始串", () => {
+    expect(resolveCacheOption({ cache_mode: "easycache", cache_option: "threshold=0.1" })).toBe(
+      "threshold=0.1",
+    );
+    expect(
+      resolveCacheOption({
+        cache_mode: "easycache",
+        cache_option: "threshold=0.1",
+        cache_options: { threshold: 0.3 },
+      }),
+    ).toBe("threshold=0.3");
+    expect(resolveCacheOption({ cache_mode: "easycache" })).toBeUndefined();
+  });
+
+  it("请求体只带合法 scm_mask", () => {
+    const ok: GenParams = {
+      ...baseParams,
+      cache_mode: "dbcache",
+      scm_mask: "1,1,0,0",
+    };
+    expect(buildRequestBody("img_gen", ok, {} as GenImages).scm_mask).toBe("1,1,0,0");
+    // 非法掩码绝不下发：上游 parse_scm_mask 无 try/catch 且在 worker 线程，
+    // 坏值会让 sd-server terminate（宁可少一个键）。
+    for (const bad of ["1,x,0", "1,,0", "01", "1 1", "abc", "1,2"]) {
+      const p: GenParams = {
+        ...baseParams,
+        cache_mode: "dbcache",
+        scm_mask: bad,
+      };
+      expect(buildRequestBody("img_gen", p, {} as GenImages).scm_mask).toBeUndefined();
+    }
+  });
+
+  it("cache_mode 关闭时既不发 cache_option 也不发 scm_mask", () => {
+    const p: GenParams = {
+      ...baseParams,
+      cache_mode: "disabled",
+      cache_option: "threshold=0.2",
+      scm_mask: "1,0",
+    };
+    const body = buildRequestBody("img_gen", p, {} as GenImages);
+    expect(body.cache_mode).toBe("disabled");
+    expect(body.cache_option).toBeUndefined();
+    expect(body.scm_mask).toBeUndefined();
+  });
+
+  it("validateScmMask / normalizeScmMask 给出可读原因并拦截", () => {
+    expect(validateScmMask("")).toBeNull();
+    expect(validateScmMask("1,0,1")).toBeNull();
+    expect(validateScmMask("1,,0")).toContain("0/1");
+    expect(normalizeScmMask("1,,0")).toBeUndefined();
+    expect(normalizeScmMask(" 1,0 ")).toBe("1,0");
+    expect(normalizeScmMask("")).toBeUndefined();
+  });
+});
+
+// 审查 F-18：SLG 的 layers / layer_start / layer_end 此前没有入口，
+// 请求体还会把 [7,8,9]/0.01/0.2 硬塞进去覆盖服务端 --skip-layers。
+describe("F-18 SLG 三参数", () => {
+  const baseParams: GenParams = {
+    width: 512,
+    height: 512,
+    seed: 42,
+    sample_params: { sample_steps: 20, guidance: { txt_cfg: 7 } },
+  };
+  const withSlg = (slg: SlgGuidance): GenParams => ({
+    ...baseParams,
+    sample_params: {
+      ...baseParams.sample_params,
+      guidance: { txt_cfg: 7, slg },
+    },
+  });
+  const slgOf = (body: Record<string, unknown>) =>
+    (
+      body.sample_params as {
+        guidance: { slg?: Record<string, unknown> };
+      }
+    ).guidance.slg;
+
+  it("开启时只发设置过的子项", () => {
+    expect(slgOf(buildRequestBody("img_gen", withSlg({ scale: 2.5 }), {} as GenImages))).toEqual({
+      scale: 2.5,
+    });
+  });
+
+  it("layers 缺省时省略该键（不覆盖内核 --skip-layers）", () => {
+    const slg = slgOf(
+      buildRequestBody("img_gen", withSlg({ scale: 2.5, layer_start: 0.05 }), {} as GenImages),
+    );
+    expect(slg).toBeDefined();
+    expect("layers" in (slg as object)).toBe(false);
+    expect(slg?.layer_start).toBe(0.05);
+    expect("layer_end" in (slg as object)).toBe(false);
+  });
+
+  it("空数组的 layers 视为未设置（空数组在上游等于关闭 SLG）", () => {
+    expect(
+      slgOf(buildRequestBody("img_gen", withSlg({ scale: 1, layers: [] }), {} as GenImages)),
+    ).toEqual({ scale: 1 });
+  });
+
+  it("关闭时仍显式发 scale:0（服务端可能默认开启）", () => {
+    expect(
+      slgOf(buildRequestBody("img_gen", withSlg({ scale: 0, layers: [4] }), {} as GenImages)),
+    ).toEqual({ scale: 0 });
+  });
+
+  it("跳层索引解析：空串是未设置，非法输入不产生数组", () => {
+    expect(parseLayerList("")).toEqual({ ok: true });
+    expect(parseLayerList("7,8,9")).toEqual({ ok: true, layers: [7, 8, 9] });
+    expect(parseLayerList("7, 7, 8")).toEqual({ ok: true, layers: [7, 8] });
+    expect(parseLayerList("7,,9").ok).toBe(false);
+    expect(parseLayerList("7,a").ok).toBe(false);
+    expect(parseLayerList("-1").ok).toBe(false);
+    expect(parseLayerList("256").ok).toBe(false);
+    expect(formatLayerList([7, 8, 9])).toBe("7,8,9");
+    expect(formatLayerList([])).toBe("");
+    expect(formatLayerList(undefined)).toBe("");
+  });
+
+  it("SLG 生效窗口校验（start >= end 会静默不生效）", () => {
+    expect(validateSlgWindow(0.01, 0.2)).toBeNull();
+    expect(validateSlgWindow(0.2, 0.2)).toContain("小于");
+    expect(validateSlgWindow(0.3, 0.2)).toContain("小于");
+    expect(validateSlgWindow(-0.1, 0.2)).toContain("0–1");
+    expect(validateSlgWindow(undefined, 0.2)).toBeNull();
+  });
+
+  it("高噪 SLG 只在开启时发送，且同样省略缺省子项", () => {
+    const off: GenParams = {
+      ...baseParams,
+      high_noise_sample_params: {
+        sample_steps: 8,
+        guidance: { txt_cfg: 3.5 },
+      },
+    };
+    const hnOff = buildRequestBody("vid_gen", off, {} as GenImages).high_noise_sample_params as {
+      guidance: Record<string, unknown>;
+    };
+    expect("slg" in hnOff.guidance).toBe(false);
+
+    const on: GenParams = {
+      ...baseParams,
+      high_noise_sample_params: {
+        sample_steps: 8,
+        guidance: { txt_cfg: 3.5, slg: { scale: 2, layer_start: 0.1 } },
+      },
+    };
+    const hnOn = buildRequestBody("vid_gen", on, {} as GenImages).high_noise_sample_params as {
+      guidance: { slg?: Record<string, unknown> };
+    };
+    expect(hnOn.guidance.slg).toEqual({ scale: 2, layer_start: 0.1 });
   });
 });
 
@@ -1088,10 +1345,7 @@ describe("sdcppMetadataToGenParams", () => {
     });
     expect(off.auto_resize_ref_image).toBe(false);
     expect(off.ref_image_args).toBe("preset=qwen,resize_before_vae=false");
-    expect(off.image_preprocess).toEqual([
-      "target=ref,mode=none",
-      "target=init,mode=fit-pad",
-    ]);
+    expect(off.image_preprocess).toEqual(["target=ref,mode=none", "target=init,mode=fit-pad"]);
 
     // 数组形式的 image_preprocess（native 请求允许 string | array）。
     const arr = sdcppMetadataToGenParams({
@@ -1149,6 +1403,10 @@ describe("sdcppMetadataToGenParams", () => {
     });
   });
 
+  // 回归（审查 S-10）：元数据的 name 是**含扩展名的文件名**（上游
+  // common.cpp:3146 的 sd_basename），capabilities 的 name 是 **stem**
+  // （runtime.cpp:286）。夹具必须按真实形状构造，两侧都写 "style.safetensors"
+  // 会让这个缺陷一直是绿灯。
   it("matches loras by name and skips unmatched ones", () => {
     const meta = {
       seed: 1,
@@ -1158,7 +1416,7 @@ describe("sdcppMetadataToGenParams", () => {
       ],
     };
     const p = sdcppMetadataToGenParams(meta, [
-      { name: "style.safetensors", path: "D:/loras/style.safetensors" },
+      { name: "style", path: "D:/loras/style.safetensors" },
     ]);
     expect(p.lora).toEqual([
       {
@@ -1167,6 +1425,26 @@ describe("sdcppMetadataToGenParams", () => {
         is_high_noise: false,
       },
     ]);
+  });
+
+  it("matches loras through path basename and bare stems", () => {
+    // 三种真实存在的写法：caps 只给文件名、元数据不带扩展名、路径尾部匹配。
+    expect(
+      matchAvailableLora([{ name: "style", path: "loras/style.safetensors" }], "style.safetensors")
+        ?.path,
+    ).toBe("loras/style.safetensors");
+    expect(matchAvailableLora([{ name: "style.safetensors", path: "a/b.pt" }], "style")?.path).toBe(
+      "a/b.pt",
+    );
+    expect(
+      matchAvailableLora(
+        [{ name: "unrelated", path: "D:/loras/style.safetensors" }],
+        "style.safetensors",
+      )?.path,
+    ).toBe("D:/loras/style.safetensors");
+    expect(
+      matchAvailableLora([{ name: "style", path: "loras/style.safetensors" }], "other"),
+    ).toBeUndefined();
   });
 
   it("leaves beta fields unset for unrelated extra_sample_args", () => {
@@ -1270,5 +1548,103 @@ describe("sdcppMetadataToGenParams", () => {
   it("leaves vae_tiling_params unset when the metadata omits the section", () => {
     const p = sdcppMetadataToGenParams({ seed: 1 });
     expect(p.vae_tiling_params).toBeUndefined();
+  });
+});
+
+// 审查 20-frontend §2.3：结果侧有字节预算，任务侧的 config.images 此前只有条数上限。
+// 审查 30-api §2.9：视频时间维分块存在 extra_tiling_args 里，界面按单键读写。
+describe("extra_tiling_args 单键读写", () => {
+  it("reads a key without disturbing the others", () => {
+    expect(
+      tilingArgValue("temporal_tile_frames=8,temporal_tile_overlap=2", "temporal_tile_frames"),
+    ).toBe(8);
+    expect(tilingArgValue("other=1", "temporal_tile_frames")).toBeNull();
+    expect(tilingArgValue(undefined, "temporal_tile_frames")).toBeNull();
+  });
+
+  it("writes a key in place and removes it when cleared", () => {
+    expect(setTilingArgValue("temporal_tile_overlap=2", "temporal_tile_frames", 4)).toBe(
+      "temporal_tile_overlap=2,temporal_tile_frames=4",
+    );
+    expect(setTilingArgValue("a=1,b=2", "a", 9)).toBe("b=2,a=9");
+    expect(setTilingArgValue("a=1,b=2", "a", null)).toBe("b=2");
+    expect(setTilingArgValue(undefined, "a", 3)).toBe("a=3");
+  });
+});
+
+describe("trimJobsToBudget", () => {
+  const job = (id: string, b64?: string): Job => ({
+    id,
+    kind: "img_gen",
+    status: "completed",
+    config: b64
+      ? {
+          mode: "img_gen",
+          params: {
+            width: 512,
+            height: 512,
+            seed: 1,
+            sample_params: { guidance: {} },
+          },
+          images: {
+            initImage: b64,
+            maskImage: null,
+            controlImage: null,
+            ipAdapterImage: null,
+            endImage: null,
+            refImages: [],
+            controlFrames: [],
+          },
+        }
+      : undefined,
+  });
+
+  it("keeps the list untouched while under budget", () => {
+    const jobs = [job("a", "A".repeat(1024)), job("b", "B".repeat(1024))];
+    expect(trimJobsToBudget(jobs, 1024 * 1024)).toBe(jobs);
+  });
+
+  it("strips images from the oldest jobs first and never from the newest", () => {
+    // 3 条任务各 1024 字符 base64 ≈ 768 B；总 2304 B 超出 2048 B 预算，
+    // 只需剥离最旧的一条即可回到预算内。
+    const jobs = [
+      job("newest", "C".repeat(1024)),
+      job("mid", "B".repeat(1024)),
+      job("oldest", "A".repeat(1024)),
+    ];
+    const trimmed = trimJobsToBudget(jobs, 2048);
+    expect(trimmed[0].config?.images?.initImage).toBeTruthy();
+    expect(trimmed[1].config?.images).toBeTruthy();
+    expect(trimmed[2].config?.images).toBeUndefined();
+  });
+});
+
+// 审查 30-api §2.8：耗时优先用内核的 started/completed，而不是 created→轮询时刻。
+describe("jobElapsed", () => {
+  it("uses the kernel timestamps when both are present", () => {
+    const j: Job = {
+      id: "x",
+      kind: "img_gen",
+      status: "completed",
+      created: 100,
+      started: 110,
+      completed: 125,
+    };
+    expect(jobElapsed(j, true)).toBe("15s");
+  });
+
+  it("returns nothing for queued jobs and falls back to created for legacy payloads", () => {
+    expect(jobElapsed({ id: "q", kind: "img_gen", status: "queued", created: 100 }, false)).toBe(
+      "",
+    );
+    const legacy: Job = {
+      id: "l",
+      kind: "img_gen",
+      status: "completed",
+      created: 100,
+      // 旧内核没有 completed，用最近一次成功轮询兜底
+      lastPollSuccess: 130_000,
+    };
+    expect(jobElapsed(legacy, true)).toBe("30s");
   });
 });

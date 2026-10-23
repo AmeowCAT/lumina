@@ -11,7 +11,8 @@ export function diagnosticsFor(source?: RuntimeDiagnostics): Required<RuntimeDia
   };
 }
 
-const NUMBER_RE = /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|0[xX](?:[\da-fA-F]+(?:\.[\da-fA-F]*)?|\.[\da-fA-F]+)(?:[pP][+-]?\d+)?)$/;
+const NUMBER_RE =
+  /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|0[xX](?:[\da-fA-F]+(?:\.[\da-fA-F]*)?|\.[\da-fA-F]+)(?:[pP][+-]?\d+)?)$/;
 
 /** Mirror upstream finite f32 / reciprocal checks, including C99 hex floats. */
 export function scaleValidationError(raw?: string): string | null {
@@ -25,8 +26,10 @@ export function scaleValidationError(raw?: string): string | null {
     const unsigned = text.replace(/^[+-]/, "").slice(2);
     const [mantissa, exponent] = unsigned.split(/[pP]/);
     const [whole, fraction = ""] = mantissa.split(".");
-    value = ((whole ? parseInt(whole, 16) : 0) +
-      (fraction ? parseInt(fraction, 16) / 16 ** fraction.length : 0)) * 2 ** Number(exponent || 0);
+    value =
+      ((whole ? parseInt(whole, 16) : 0) +
+        (fraction ? parseInt(fraction, 16) / 16 ** fraction.length : 0)) *
+      2 ** Number(exponent || 0);
     if (text.startsWith("-")) value = -value;
     nonzeroMantissa = /[1-9a-f]/i.test(mantissa);
   } else {
@@ -34,19 +37,28 @@ export function scaleValidationError(raw?: string): string | null {
     nonzeroMantissa = /[1-9]/.test(text.split(/[eE]/)[0]);
   }
   const scale = Math.fround(value);
-  if (!Number.isFinite(value) || value < 0 || !Number.isFinite(scale) ||
-      nonzeroMantissa && (scale === 0 || !Number.isFinite(Math.fround(1 / scale)))) return invalid;
+  if (
+    !Number.isFinite(value) ||
+    value < 0 ||
+    !Number.isFinite(scale) ||
+    (nonzeroMantissa && (scale === 0 || !Number.isFinite(Math.fround(1 / scale))))
+  )
+    return invalid;
   return null;
 }
 
-export function buildDiagnosticArgs(source: RuntimeDiagnostics): { args: ServerArgs; errors: string[] } {
+export function buildDiagnosticArgs(source: RuntimeDiagnostics): {
+  args: ServerArgs;
+  errors: string[];
+} {
   const values = diagnosticsFor(source);
   const args: ServerArgs = {};
   const errors: string[] = [];
   const level = values.logLevel.trim();
   if (level) {
     args["log-level"] = level;
-    if (!(LOG_LEVELS as readonly string[]).includes(level)) errors.push("日志等级必须为 debug / verbose / info / warn / error");
+    if (!(LOG_LEVELS as readonly string[]).includes(level))
+      errors.push("日志等级必须为 debug / verbose / info / warn / error");
   }
   for (const [raw, flag, label] of [
     [values.linearScale, "linear-scale", "Linear 输入缩放"],

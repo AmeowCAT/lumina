@@ -1,12 +1,41 @@
 # 统一行尾：源码一律 LF 入库，终结 LF/CRLF 往返 churn
 # （b8dfc18 的 ResultsGrid"1488 行重写"实为换行符噪音，d33e687 的
 # Dashboard 同理）。Windows 工作区由 core.autocrlf 处理检出转换。
+#
+# 注意：gitattributes 的 pattern **不支持** `{a,b}` 花括号展开——写成
+# `*.{ts,tsx}` 时整条规则被当成一个字面量模式，匹配不到任何文件，
+# 实际只剩 `* text=auto` 生效（`git check-attr -a -- src/App.tsx` 只
+# 显示 text: auto，没有 eol）。所以这里必须逐条列出扩展名。
 * text=auto
 
-*.{ts,tsx,js,jsx,mjs,cjs}   text eol=lf
-*.{css,html,svg}            text eol=lf
-*.{json,json5,toml,yaml,yml} text eol=lf
-*.{rs,md,sh,ps1}            text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.svg   text eol=lf
+*.json  text eol=lf
+*.json5 text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.rs    text eol=lf
+*.md    text eol=lf
+*.sh    text eol=lf
+*.ps1   text eol=lf
 
-# 二进制资源不转换
-*.{png,jpg,jpeg,webp,ico,icns,gif,woff,woff2,ttf,otf} binary
+# 二进制资源不转换（同样逐条列出，理由同上）
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary

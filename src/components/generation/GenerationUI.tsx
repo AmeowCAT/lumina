@@ -10,25 +10,26 @@ import {
   deepClone,
   deepMerge,
   extractApiError,
+  featureEnabled,
   formatError,
   LINGBOT_PROMPT_TEMPLATE,
   MAX_JOBS,
   MAX_RESULTS,
   previewModesFromCapabilities,
+  reconcileOutputFormat,
   resolvePreviewMode,
   sdcppMetadataToGenParams,
   validateLingbotPrompt,
   vaeTilingProtocolFromCapabilities,
 } from "../../lib/utils";
-import { applyFamilyFeatureLimits, exclusiveInputConflicts, familyDefaults, filterFamilyInputs, missingRequiredInputs } from "../../lib/launchConfig";
-import type {
-  GenImages,
-  GenMode,
-  GenParams,
-  Job,
-  JobConfig,
-  UpscaleResponse,
-} from "../../types";
+import {
+  applyFamilyFeatureLimits,
+  exclusiveInputConflicts,
+  familyDefaults,
+  filterFamilyInputs,
+  missingRequiredInputs,
+} from "../../lib/launchConfig";
+import type { GenImages, GenMode, GenParams, Job, JobConfig, UpscaleResponse } from "../../types";
 import { Lightbox, type LightboxItem } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
 import { cn } from "../ui/cn";
@@ -55,10 +56,10 @@ import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 const GenerationParamsSheet = lazy(() =>
   import("./GenerationParamsSheet").then((m) => ({
     default: m.GenerationParamsSheet,
-  }))
+  })),
 );
 const HistoryGallery = lazy(() =>
-  import("./HistoryGallery").then((m) => ({ default: m.HistoryGallery }))
+  import("./HistoryGallery").then((m) => ({ default: m.HistoryGallery })),
 );
 
 // 引擎 seed 是 int64；取 JS 安全整数上限 2^53-1，覆盖完整的 64 位种子空间。
@@ -141,6 +142,8 @@ export function GenerationUI() {
   // 这里用 ref 读取避免频繁重订阅）。
   const upscaleOpenRef = useRef(false);
   upscaleOpenRef.current = upscaleTarget !== null;
+  // 「内核过旧、读不到默认值」只提示一次，避免每次 caps 轮询都弹（审查 S-11）。
+  const staleKernelNotified = useRef(false);
   const [showNegative, setShowNegative] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<"size" | "sampling" | null>(null);
@@ -150,14 +153,14 @@ export function GenerationUI() {
 
   const openLightbox = useCallback(
     (items: LightboxItem[], index: number) => setLightbox({ items, index }),
-    []
+    [],
   );
   const closeLightbox = useCallback(() => setLightbox(null), []);
   // 稳定引用:内联箭头会让 Lightbox 的键盘 effect 依赖每次父级渲染
   // 都变化,反复重挂 listener(审查低危项)。
   const navigateLightbox = useCallback(
     (i: number) => setLightbox((s) => (s ? { ...s, index: i } : s)),
-    []
+    [],
   );
 
   const blobCache = useBlobUrlCache();
@@ -167,19 +170,18 @@ export function GenerationUI() {
   const blobRef = useRef(blobCache);
   blobRef.current = blobCache;
   const getVideoUrl = useCallback(
-    (jobId: string, b64: string, mime: string) =>
-      blobRef.current.getVideoUrl(jobId, b64, mime),
-    []
+    (jobId: string, b64: string, mime: string) => blobRef.current.getVideoUrl(jobId, b64, mime),
+    [],
   );
   const getImageUrl = useCallback(
     (b64: string, fmt: string) => blobRef.current.getImageUrl(b64, fmt),
-    []
+    [],
   );
   // 轮询已上移至 App 级常驻（切到控制台也继续收货）；这里的
   // saveEntryPart 是模块级函数，经稳定身份转发保持 memo 子组件 props 稳定。
   const saveImageStable = useCallback(
     (jobId: string, key: string) => void saveEntryPart(jobId, key),
-    []
+    [],
   );
   const imageSnapshots = useRef<Record<GenMode, GenImages>>({
     img_gen: {
@@ -215,14 +217,17 @@ export function GenerationUI() {
       : "";
   const [detectedFamily, setDetectedFamily] = useState("custom");
   const family = activeFamilyOverride || detectedFamily;
-  const features = applyFamilyFeatureLimits(caps?.features_by_mode?.[mode] || {}, FAMILY_CONFIG[family]);
+  const features = applyFamilyFeatureLimits(
+    caps?.features_by_mode?.[mode] || {},
+    FAMILY_CONFIG[family],
+  );
   // The protocol's control_frames flag is generic; only VACE consumes it.
   const controlFramesSupported =
-    mode === "vid_gen" && !!features.control_frames && isVaceModel(caps?.model);
+    mode === "vid_gen" && featureEnabled(features, "control_frames") && isVaceModel(caps?.model);
   // MiniMax-H3 Ref2VA 半支持：vid_gen 协议已接受 ref_images（参考图像条件），
   // 但 capabilities 的 vid_gen features 未广告 ref_images，按家族声明判定。
   const refImagesSupported =
-    (mode === "img_gen" && !!features.ref_images) ||
+    (mode === "img_gen" && featureEnabled(features, "ref_images")) ||
     !!FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images");
   useEffect(() => {
     if (activeFamilyOverride) return;
@@ -243,8 +248,7 @@ export function GenerationUI() {
     };
   }, [caps?.model?.path, caps?.model?.name, activeFamilyOverride]);
   const activeJobs = jobs.filter(
-    (j) =>
-      j.status === "queued" || j.status === "generating" || j.status === "unknown"
+    (j) => j.status === "queued" || j.status === "generating" || j.status === "unknown",
   ).length;
   const currentGen = jobs.find((j) => j.status === "generating");
   // 生成过程预览（上游 #2093）：只有生成中的任务带 `preview` 帧，且
@@ -253,7 +257,7 @@ export function GenerationUI() {
   const previewB64 = currentGen?.preview?.b64_json || null;
   const previewSrc = useMemo(
     () => (previewB64 ? b64ToDataUrl(previewB64, "image/png") : null),
-    [previewB64]
+    [previewB64],
   );
   const previewLabel = useMemo(() => {
     const p = currentGen?.preview;
@@ -281,39 +285,75 @@ export function GenerationUI() {
   // Initialize / switch params from caps defaults + persisted family defaults.
   // MUST depend on `caps` too: caps load asynchronously, and without it this
   // effect never re-runs → params stays null → component returns null (black).
+  //
+  // 降级链（审查 S-11）：新内核只给 `defaults_by_mode`；旧内核/裁剪实现可能
+  // 只给 deprecated 的顶层 `defaults`（上游 api.md:486-491）；两者都没有时用
+  // 家族预设兜底，绝不 return 让界面白屏。三档都拿不到才提示内核过旧。
   useEffect(() => {
     if (!caps) return;
-    let d = caps.defaults_by_mode?.[mode];
+    const familyCfg = FAMILY_CONFIG[family];
+    const candidates: (Partial<GenParams> | undefined)[] = [
+      caps.defaults_by_mode?.[mode],
+      caps.defaults,
+      familyCfg ? familyDefaults(familyCfg, mode) : undefined,
+    ];
+    const d = candidates.find((c) => c && typeof c === "object");
     if (!d) {
       const fallback = caps.current_mode || caps.supported_modes?.[0];
-      if (!fallback) return;
-      setMode(fallback);
+      if (fallback && fallback !== mode) {
+        setMode(fallback);
+        return;
+      }
+      if (!staleKernelNotified.current) {
+        staleKernelNotified.current = true;
+        toast("内核过旧：无法读取生成默认值，已使用中性默认值，请核对参数", true);
+      }
+      // 最后一道兜底：至少给出尺寸/步数的中性默认值，保证界面可用。
+      setParams({ width: 1024, height: 1024, seed: -1, sample_params: {} } as GenParams);
       return;
     }
     try {
       const s = localStorage.getItem("sdcpp:params:" + mode);
-      setParams(s ? deepMerge(deepClone(d), JSON.parse(s)) : deepClone(d));
+      setParams(
+        reconcileOutputFormat(
+          s ? deepMerge(deepClone(d as GenParams), JSON.parse(s)) : deepClone(d as GenParams),
+          caps,
+          mode,
+        ),
+      );
     } catch {
-      setParams(deepClone(d));
+      setParams(reconcileOutputFormat(deepClone(d as GenParams), caps, mode));
     }
-  }, [mode, caps]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- family/familyCfg 变化由 mode/caps 覆盖（切换模型时 caps 必变）
+  }, [mode, caps, family]);
 
+  // 生成参数按 mode 落 localStorage 的防抖写。带「可强制 flush」的挂起记录：
+  // 切 mode 时 cleanup 会 clearTimeout，若不先 flush，最近 300ms 内的改动会
+  // 永远丢（审查 20-frontend §2.9：拖滑杆后立刻切 vid_gen，数值会自己变回去）。
+  const pendingParamsWrite = useRef<{ mode: GenMode; params: GenParams } | null>(null);
+  const flushParamsWrite = useCallback(() => {
+    const pending = pendingParamsWrite.current;
+    if (!pending) return;
+    pendingParamsWrite.current = null;
+    try {
+      localStorage.setItem("sdcpp:params:" + pending.mode, JSON.stringify(pending.params));
+    } catch {
+      /* ignore */
+    }
+  }, []);
   useEffect(() => {
     if (!params) return;
     // Debounce：拖动滑块会高频更新 params，避免每次都 JSON.stringify 落盘。
-    const t = setTimeout(() => {
-      try {
-        localStorage.setItem("sdcpp:params:" + mode, JSON.stringify(params));
-      } catch {
-        /* ignore */
-      }
-    }, 300);
+    pendingParamsWrite.current = { mode, params };
+    const t = setTimeout(flushParamsWrite, 300);
     return () => clearTimeout(t);
-  }, [params, mode]);
+  }, [params, mode, flushParamsWrite]);
 
   const switchMode = useCallback(
     (m: GenMode) => {
       if (m === mode) return;
+      // 先把当前模式在防抖窗口内的改动落盘，再切（否则这些改动会被 cleanup 吞掉）。
+      flushParamsWrite();
       imageSnapshots.current[mode] = {
         initImage,
         maskImage,
@@ -346,7 +386,8 @@ export function GenerationUI() {
       setRefImages,
       setControlFrames,
       setMode,
-    ]
+      flushParamsWrite,
+    ],
   );
 
   const handleGenerate = useCallback(async () => {
@@ -365,15 +406,18 @@ export function GenerationUI() {
       toast("队列已满", true);
       return;
     }
-    const images = filterFamilyInputs({
-      initImage,
-      maskImage,
-      controlImage,
-      ipAdapterImage,
-      endImage,
-      refImages: refImagesSupported ? refImages : [],
-      controlFrames: controlFramesSupported ? controlFrames : [],
-    }, FAMILY_CONFIG[family]);
+    const images = filterFamilyInputs(
+      {
+        initImage,
+        maskImage,
+        controlImage,
+        ipAdapterImage,
+        endImage,
+        refImages: refImagesSupported ? refImages : [],
+        controlFrames: controlFramesSupported ? controlFrames : [],
+      },
+      FAMILY_CONFIG[family],
+    );
     const missingInputs = missingRequiredInputs(FAMILY_CONFIG[family], mode, images);
     if (missingInputs.length > 0) {
       toast("请先提供: " + missingInputs.join("、"), true);
@@ -395,8 +439,11 @@ export function GenerationUI() {
         width: alignSizeUp(family, params.width),
         height: alignSizeUp(family, params.height),
         preview: resolvePreviewMode(params.preview, previewModesFromCapabilities(caps, mode)),
-        ...(features.hires === false ? { hires: { enabled: false } } : {}),
-        ...(features.vae_tiling === false ? { vae_tiling_params: { enabled: false } } : {}),
+        // 与面板显隐用同一个判定，避免「看不见但仍生效」（审查 30-api §2.5）。
+        ...(featureEnabled(features, "hires") ? {} : { hires: { enabled: false } }),
+        ...(featureEnabled(features, "vae_tiling", true)
+          ? {}
+          : { vae_tiling_params: { enabled: false } }),
       };
       if (seedRandom || params.seed < 0) {
         const rs = randSeed();
@@ -430,7 +477,7 @@ export function GenerationUI() {
               },
             },
             ...j,
-          ].slice(0, MAX_JOBS)
+          ].slice(0, MAX_JOBS),
         );
         // 提交成功即收起参数 Sheet,把画布让给显影过程。
         setSheetOpen(false);
@@ -471,7 +518,7 @@ export function GenerationUI() {
   // 入口：旧内核没有 upscale 键；内置滤镜与 latent 放大器不能用于该接口。
   const upscaleModels = useMemo(
     () => (caps?.upscalers || []).filter((u) => u.image_upscale),
-    [caps]
+    [caps],
   );
   const upscaleAvailable = caps?.upscale === true && upscaleModels.length > 0;
 
@@ -538,13 +585,13 @@ export function GenerationUI() {
               ...entries,
             ],
             MAX_RESULTS,
-            MAX_RESULTS_BYTES
-          )
+            MAX_RESULTS_BYTES,
+          ),
         );
         setUpscaleTarget(null);
         toast(
           `已放大：${result.width ?? "?"}×${result.height ?? "?"}` +
-            (result.upscaler ? `（${result.upscaler} ×${result.scale ?? 1}）` : "")
+            (result.upscaler ? `（${result.upscaler} ×${result.scale ?? 1}）` : ""),
         );
       } catch (e) {
         setUpscaleError(formatError(e));
@@ -552,7 +599,7 @@ export function GenerationUI() {
         setUpscaleBusy(false);
       }
     },
-    [upscaleTarget, upscaleBusy, setUpscaleBusy, setResults, toast]
+    [upscaleTarget, upscaleBusy, setUpscaleBusy, setResults, toast],
   );
 
   // 模态期间把整个界面设为 inert：Tab 与鼠标都不会落到被遮住的控件上
@@ -582,9 +629,9 @@ export function GenerationUI() {
     const base = defaults ? deepClone(defaults) : ({} as Partial<GenParams>);
     const cfg = FAMILY_CONFIG[family];
     const recommended = cfg ? familyDefaults(cfg, mode) : undefined;
-    const merged = (recommended
-      ? deepMerge(base as GenParams, deepClone(recommended))
-      : base) as GenParams;
+    const merged = (
+      recommended ? deepMerge(base as GenParams, deepClone(recommended)) : base
+    ) as GenParams;
     merged.prompt = params.prompt || "";
     merged.negative_prompt = params.negative_prompt || "";
     setParams(merged);
@@ -609,9 +656,13 @@ export function GenerationUI() {
           setJobs((j) =>
             j.map((x) =>
               x.id === id && typeof s === "string"
-                ? { ...x, status: s as Job["status"], preview: s === "generating" ? x.preview : undefined }
-                : x
-            )
+                ? {
+                    ...x,
+                    status: s as Job["status"],
+                    preview: s === "generating" ? x.preview : undefined,
+                  }
+                : x,
+            ),
           );
           if (typeof s === "string" && s !== "cancelled") {
             toast(ingested ? "任务已完成，结果已收入画廊" : "该任务已结束，无需取消");
@@ -631,8 +682,8 @@ export function GenerationUI() {
                     preview: undefined,
                     error: { message: "任务已失效（服务器重启或任务过期）" },
                   }
-                : x
-            )
+                : x,
+            ),
           );
           toast("任务已失效（服务器重启或任务过期）", true);
         } else {
@@ -642,7 +693,7 @@ export function GenerationUI() {
         toast("取消失败：" + formatError(e), true);
       }
     },
-    [setJobs, toast]
+    [setJobs, toast],
   );
 
   // 从列表移除单个任务（排队中的先取消，释放服务器队列槽位）。
@@ -656,7 +707,7 @@ export function GenerationUI() {
             toast(
               "取消排队任务失败，已保留任务记录：" +
                 extractApiError(cancelled.body, cancelled.status),
-              true
+              true,
             );
             return;
           }
@@ -677,7 +728,7 @@ export function GenerationUI() {
       processedJobs.delete(id);
       setJobs((j) => j.filter((x) => x.id !== id));
     },
-    [setJobs, toast]
+    [setJobs, toast],
   );
 
   // 清空整个队列（取消所有可取消的任务）。
@@ -686,9 +737,7 @@ export function GenerationUI() {
       .getState()
       .jobs.filter(
         (job) =>
-          job.status === "completed" ||
-          job.status === "failed" ||
-          job.status === "cancelled"
+          job.status === "completed" || job.status === "failed" || job.status === "cancelled",
       );
     if (terminal.length === 0) {
       toast("没有可清理的已结束任务");
@@ -711,9 +760,8 @@ export function GenerationUI() {
           const cancelled = await api.sdcppCancel(jobId);
           if (cancelled.status !== 200) {
             toast(
-              "服务器侧任务未能取消：" +
-                extractApiError(cancelled.body, cancelled.status),
-              true
+              "服务器侧任务未能取消：" + extractApiError(cancelled.body, cancelled.status),
+              true,
             );
           }
         } catch (e) {
@@ -725,17 +773,15 @@ export function GenerationUI() {
         entries.flatMap((entry) => {
           if (entry.jobId !== jobId) return [entry];
           if (imageIndex == null || !entry.result.images) {
-            entry.result.images?.forEach((image) =>
-              blobRef.current.revokeImageUrl(image.b64_json)
-            );
+            entry.result.images?.forEach((image) => blobRef.current.revokeImageUrl(image.b64_json));
             removedWholeEntry = true;
             return [];
           }
           const remaining = entry.result.images.filter(
-            (image, index) => (image.index ?? index) !== imageIndex
+            (image, index) => (image.index ?? index) !== imageIndex,
           );
           const removed = entry.result.images.find(
-            (image, index) => (image.index ?? index) === imageIndex
+            (image, index) => (image.index ?? index) === imageIndex,
           );
           if (removed) blobRef.current.revokeImageUrl(removed.b64_json);
           if (remaining.length === 0) {
@@ -743,7 +789,7 @@ export function GenerationUI() {
             return [];
           }
           return [{ ...entry, result: { ...entry.result, images: remaining } }];
-        })
+        }),
       );
       if (removedWholeEntry) {
         blobRef.current.revokeVideoUrl(jobId);
@@ -751,7 +797,7 @@ export function GenerationUI() {
         setJobs((current) => current.filter((entry) => entry.id !== jobId));
       }
     },
-    [setJobs, setResults, toast]
+    [setJobs, setResults, toast],
   );
 
   // 从某任务/结果记录恢复生成配置：写入 localStorage 后切 mode，
@@ -785,30 +831,15 @@ export function GenerationUI() {
       setMode(config.mode);
       toast(seedOffset > 0 ? `已恢复该张的配置（种子 ${p.seed}）` : "已恢复该任务的配置");
     },
-    [
-      setParams,
-      setImage,
-      setRefImages,
-      setControlFrames,
-      setSeedRandom,
-      setMode,
-      toast,
-    ]
+    [setParams, setImage, setRefImages, setControlFrames, setSeedRandom, setMode, toast],
   );
 
   const download = useCallback(
-    async (
-      b64: string,
-      fmt?: string,
-      _mime?: string,
-      seed?: number,
-      suffix?: string
-    ) => {
+    async (b64: string, fmt?: string, _mime?: string, seed?: number, suffix?: string) => {
       if (!b64) return;
       try {
         const dt = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
-        const base =
-          seed != null && seed >= 0 ? `seed_${seed}_${dt}` : `lumina_${dt}`;
+        const base = seed != null && seed >= 0 ? `seed_${seed}_${dt}` : `lumina_${dt}`;
         const name = suffix ? `${base}${suffix}` : base;
         const r = await api.saveAs(b64, fmt || "png", name);
         if (r.saved) toast("已保存：" + r.path);
@@ -816,7 +847,7 @@ export function GenerationUI() {
         toast("保存失败: " + formatError(e), true);
       }
     },
-    [toast]
+    [toast],
   );
 
   // 结果图用作 img2img 初始图片。src 可以是完整 dataURL（历史画廊读文件后
@@ -825,7 +856,7 @@ export function GenerationUI() {
   // 即被 revoke），且 sd-server 无法解码 blob: 协议（对抗性审查 B2）。
   const useAsInit = useCallback(
     (src: string, fmt?: string) => {
-      if (features.init_image === false) {
+      if (!featureEnabled(features, "init_image")) {
         toast("当前模型不支持初始图片输入", true);
         return;
       }
@@ -836,7 +867,7 @@ export function GenerationUI() {
       if (mode !== "img_gen") setMode("img_gen");
       toast("已设为初始图片，可在「图片输入」面板中调整");
     },
-    [mode, features.init_image, setImage, setMode, toast]
+    [mode, features.init_image, setImage, setMode, toast],
   );
 
   // 从 PNG Info 恢复参数（历史画廊）。
@@ -861,7 +892,8 @@ export function GenerationUI() {
               : params.seed,
           prompt: (merged.prompt as string) || params.prompt,
           negative_prompt: (merged.negative_prompt as string) || params.negative_prompt,
-          sample_params: (merged.sample_params as GenParams["sample_params"]) || params.sample_params,
+          sample_params:
+            (merged.sample_params as GenParams["sample_params"]) || params.sample_params,
           batch_count: merged.batch_count as number,
           video_frames: merged.video_frames as number,
           ...merged,
@@ -874,7 +906,7 @@ export function GenerationUI() {
         toast("参数恢复失败", true);
       }
     },
-    [caps?.loras, params, setParams, setSeedRandom, toast]
+    [caps?.loras, params, setParams, setSeedRandom, toast],
   );
 
   // 初始图片尺寸自动填充：对齐到 64 并 clamp 到 limits。
@@ -896,7 +928,7 @@ export function GenerationUI() {
       setSizeBase({ w: aw, h: ah });
       toast(`已应用图片尺寸 ${aw}×${ah}`);
     },
-    [caps?.limits, update, toast]
+    [caps?.limits, update, toast],
   );
 
   // 尺寸缩放滑块：相对基准尺寸（通常为初始图片尺寸）等比缩放宽高，
@@ -910,14 +942,11 @@ export function GenerationUI() {
       update("width", w);
       update("height", h);
     },
-    [params, sizeBase, family, caps?.limits, update]
+    [params, sizeBase, family, caps?.limits, update],
   );
 
   // 预设/手动修改尺寸后，缩放基准随之重置（滑块回到 1×）。
-  const handleSizeBaseReset = useCallback(
-    (w: number, h: number) => setSizeBase({ w, h }),
-    []
-  );
+  const handleSizeBaseReset = useCallback((w: number, h: number) => setSizeBase({ w, h }), []);
 
   const handleSeedEdit = useCallback(
     (raw: string) => {
@@ -933,17 +962,14 @@ export function GenerationUI() {
           : Math.max(-MAX_SEED, Math.min(MAX_SEED, Math.trunc(n)));
       update("seed", seed);
     },
-    [setSeedRandom, update]
+    [setSeedRandom, update],
   );
 
   const handleInsertLingbot = useCallback(() => {
     update("prompt", LINGBOT_PROMPT_TEMPLATE);
   }, [update]);
 
-  const openDashboard = useCallback(
-    () => setDashboardOpen(true),
-    [setDashboardOpen]
-  );
+  const openDashboard = useCallback(() => setDashboardOpen(true), [setDashboardOpen]);
   const toggleNegative = useCallback(() => setShowNegative((v) => !v), []);
   const toggleQueue = useCallback(() => setQueueOpen((v) => !v), []);
   const closeQueue = useCallback(() => setQueueOpen(false), []);
@@ -998,6 +1024,8 @@ export function GenerationUI() {
     onRandomSeed: randomSeed,
     onEscape: handleEscape,
     escapeActive: !!(lightbox || sheetOpen || queueOpen || upscaleTarget !== null),
+    // 参数面板不拦提交（用户可能就想按 Ctrl+Enter 提交），其余三个浮层拦。
+    blockBackgroundShortcuts: !!(lightbox || queueOpen || upscaleTarget !== null),
   });
 
   if (!caps || !params) return null;
@@ -1008,10 +1036,7 @@ export function GenerationUI() {
     sizeBase && sizeBase.w > 0 && sizeBase.h > 0
       ? Math.min(
           2,
-          Math.max(
-            0,
-            Math.sqrt((params.width / sizeBase.w) * (params.height / sizeBase.h))
-          )
+          Math.max(0, Math.sqrt((params.width / sizeBase.w) * (params.height / sizeBase.h))),
         )
       : 1;
   const negativeVisible =
@@ -1027,9 +1052,7 @@ export function GenerationUI() {
   return (
     <>
       <HeaderBar
-        modelLabel={
-          caps.model?.name || caps.model?.path?.split(/[\\/]/).pop() || "当前模型"
-        }
+        modelLabel={caps.model?.name || caps.model?.path?.split(/[\\/]/).pop() || "当前模型"}
         modelTitle={caps.model?.path || caps.model?.name || "当前模型"}
         mode={mode}
         supportedModes={caps.supported_modes || []}
@@ -1056,9 +1079,7 @@ export function GenerationUI() {
               onKeyDown={(e) => {
                 if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
                 e.preventDefault();
-                setWorkspaceTab((t) =>
-                  t === "results" ? "history" : "results"
-                );
+                setWorkspaceTab((t) => (t === "results" ? "history" : "results"));
               }}
             >
               <button
@@ -1129,7 +1150,7 @@ export function GenerationUI() {
                     onDownload={download}
                     onRemove={removeResult}
                     onSaveImage={saveImageStable}
-                    onUseAsInit={features.init_image === false ? undefined : useAsInit}
+                    onUseAsInit={featureEnabled(features, "init_image") ? useAsInit : undefined}
                     onUpscale={upscaleAvailable ? openUpscale : undefined}
                     getVideoUrl={getVideoUrl}
                     getImageUrl={getImageUrl}
@@ -1148,14 +1169,10 @@ export function GenerationUI() {
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                 >
                   <div className="history-workspace">
-                    <Suspense
-                      fallback={
-                        <span className="spinner block mx-auto my-2" />
-                      }
-                    >
+                    <Suspense fallback={<span className="spinner block mx-auto my-2" />}>
                       <HistoryGallery
                         onRestoreParams={restoreFromMetadata}
-                        onUseAsInit={features.init_image === false ? undefined : useAsInit}
+                        onUseAsInit={featureEnabled(features, "init_image") ? useAsInit : undefined}
                       />
                     </Suspense>
                   </div>
@@ -1178,6 +1195,7 @@ export function GenerationUI() {
             steps={sp?.sample_steps ?? 20}
             txtCfg={sp?.guidance?.txt_cfg ?? 7}
             limits={caps?.limits}
+            family={family}
             onUpdate={update}
             onToggleNegative={toggleNegative}
             onRandomSeed={randomSeed}

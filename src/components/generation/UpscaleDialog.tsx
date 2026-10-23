@@ -63,6 +63,18 @@ export function UpscaleDialog({
   const [repeats, setRepeats] = useState(1);
   const [tileSize, setTileSize] = useState(0);
   const [format, setFormat] = useState("png");
+  /** 同步放大的已耗时（秒）：该接口没有进度事件，至少给一个活着的时间参照。 */
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!busy) {
+      setElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const iv = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(iv);
+  }, [busy]);
 
   // 可选模型变化（换服务器/换目录）时清掉已失效的选择，避免提交一个内核
   // 不认识的名字。
@@ -201,12 +213,7 @@ export function UpscaleDialog({
             </div>
           )}
           <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={onClose}
-              disabled={busy}
-            >
+            <button type="button" className="btn btn-sm" onClick={onClose} disabled={busy}>
               取消
             </button>
             <div className="header-spacer flex-1" />
@@ -223,7 +230,7 @@ export function UpscaleDialog({
                 })
               }
             >
-              {busy ? "放大中…" : "开始放大"}
+              {busy ? (elapsed > 0 ? `放大中… ${elapsed}s` : "放大中…") : "开始放大"}
             </button>
           </div>
         </div>

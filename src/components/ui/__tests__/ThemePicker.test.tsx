@@ -12,9 +12,7 @@ describe("ThemePicker 主题选择器", () => {
 
   it("以 radiogroup 渲染全部注册主题", () => {
     render(<ThemePicker />);
-    expect(
-      screen.getByRole("radiogroup", { name: "界面主题" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "界面主题" })).toBeInTheDocument();
     const radios = screen.getAllByRole("radio");
     expect(radios).toHaveLength(THEMES.length);
     expect(screen.getByRole("radio", { name: /暗房金光/ })).toBeInTheDocument();
