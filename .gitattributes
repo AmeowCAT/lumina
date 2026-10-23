@@ -27,6 +27,16 @@
 *.sh    text eol=lf
 *.ps1   text eol=lf
 
+# 无扩展名的点文件走不到上面的 `*.ext` 规则，只剩 `* text=auto` 生效——在
+# `core.autocrlf=true` 的 Windows runner 上会被检出成 CRLF。CI 的
+# `prettier --check`（`endOfLine: lf`）因此只对 `.prettierrc` 报错，本地却是绿的
+# （工作区那份恰好是 LF）。凡是会被工具按文本解析的点文件都显式钉成 LF。
+/.prettierignore  text eol=lf
+/.gitattributes   text eol=lf
+/.gitignore       text eol=lf
+/.npmrc           text eol=lf
+/.nvmrc           text eol=lf
+
 # 二进制资源不转换（同样逐条列出，理由同上）
 *.png   binary
 *.jpg   binary
