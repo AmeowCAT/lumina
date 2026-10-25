@@ -3,7 +3,12 @@ import { AnimatePresence, motion } from "motion/react";
 import { SlidersHorizontal } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
-import { alignSizeUp, scaleSize, FAMILY_CONFIG, DISTILL_FAMILIES } from "../../config/families";
+import {
+  resolveGenerationSize,
+  scaleSize,
+  FAMILY_CONFIG,
+  DISTILL_FAMILIES,
+} from "../../config/families";
 import {
   b64ToDataUrl,
   buildRequestBody,
@@ -282,6 +287,17 @@ export function GenerationUI() {
   const [sizeBase, setSizeBase] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => setSizeBase(null), [family, mode]);
 
+  // 内核强制固定尺寸的家族（MiniT2I 512×512，上游 #2189）：把参数拉回固定值，
+  // 避免头部/参数摘要继续显示另一个家族的尺寸。提交时另有 resolveGenerationSize
+  // 兜底，这里只保证界面与请求口径一致。
+  const fixedWidth = FAMILY_CONFIG[family]?.fixedSize?.width;
+  const fixedHeight = FAMILY_CONFIG[family]?.fixedSize?.height;
+  useEffect(() => {
+    if (fixedWidth == null || fixedHeight == null || !params) return;
+    if (params.width === fixedWidth && params.height === fixedHeight) return;
+    setParams({ ...params, width: fixedWidth, height: fixedHeight });
+  }, [fixedWidth, fixedHeight, params, setParams]);
+
   // Initialize / switch params from caps defaults + persisted family defaults.
   // MUST depend on `caps` too: caps load asynchronously, and without it this
   // effect never re-runs → params stays null → component returns null (black).
@@ -434,10 +450,12 @@ export function GenerationUI() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      // 内核强制的固定尺寸优先（MiniT2I 512×512，上游 #2189），其余按空间基数对齐。
+      const finalSize = resolveGenerationSize(family, params.width, params.height);
       let activeParams: GenParams = {
         ...params,
-        width: alignSizeUp(family, params.width),
-        height: alignSizeUp(family, params.height),
+        width: finalSize.w,
+        height: finalSize.h,
         preview: resolvePreviewMode(params.preview, previewModesFromCapabilities(caps, mode)),
         // 与面板显隐用同一个判定，避免「看不见但仍生效」（审查 30-api §2.5）。
         ...(featureEnabled(features, "hires") ? {} : { hires: { enabled: false } }),
@@ -574,8 +592,9 @@ export function GenerationUI() {
               {
                 jobId: `upscale-${completedAt.toString(36)}`,
                 mode: "img_gen" as GenMode,
-                // created 与任务结果同为秒级时间戳（elapsedLabel 依赖该语义）。
-                created: Math.floor(completedAt / 1000),
+                // 与任务结果同一单位（毫秒）：内核时间戳由 toEpochMs 归一，
+                // elapsedLabel 直接拿两个毫秒值相减。
+                created: completedAt,
                 completedAt,
                 result: {
                   output_format: result.output_format || options.outputFormat,
@@ -650,6 +669,14 @@ export function GenerationUI() {
           // 无条件把本地置为 cancelled（对抗性审查 A4）。
           const d = body as Partial<Job> | null;
           const s = d?.status;
+          // 上游 #2190：生成中的任务也受理取消，返回 200 + status=generating +
+          // cancel_requested=true；内核在下一个采样检查点停下后才变 cancelled。
+          // 不能走下面的「已完成/无需取消」分支——那会把"已受理"误报成"没得取消"。
+          if (d?.cancel_requested && s === "generating") {
+            setJobs((j) => j.map((x) => (x.id === id ? { ...x, cancel_requested: true } : x)));
+            toast("已请求中断，将在当前采样步结束后停止");
+            return;
+          }
           // 竞态修复（审查 P1）：任务在两次轮询之间已完成、用户恰好点取消，
           // 返回体是 completed——轮询不会再处理它，这里直接收割结果。
           const ingested = d ? ingestCompletedJob(d as Job) : false;
@@ -668,8 +695,8 @@ export function GenerationUI() {
             toast(ingested ? "任务已完成，结果已收入画廊" : "该任务已结束，无需取消");
           }
         } else if (status === 409) {
-          // sd-server 不支持中断生成中的任务（capabilities.cancel_generating=false）
-          toast("任务正在生成，暂不支持中断", true);
+          // 旧内核（上游 #2190 之前）对生成中的任务回 409；新内核已在上面处理。
+          toast("当前内核不支持中断生成中的任务，请等待完成", true);
         } else if (status === 404 || status === 410) {
           // 任务在服务器上已不存在（重启/过期）：与轮询同款处理置为失败，
           // 避免列表里残留"永远排队"的幽灵任务（审查 P1）。

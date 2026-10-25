@@ -7,6 +7,7 @@ import { useStore } from "../../../store";
 const apiMocks = vi.hoisted(() => ({
   detectFamily: vi.fn(),
   sdcppSubmit: vi.fn(),
+  sdcppCancel: vi.fn(),
 }));
 vi.mock("../../../api", () => ({
   api: apiMocks,
@@ -103,6 +104,7 @@ describe("GenerationUI 结构（暗房重构版）", () => {
         status: "queued",
       },
     });
+    apiMocks.sdcppCancel.mockReset();
     useStore.setState({
       caps: CAPS as never,
       mode: "img_gen",
@@ -146,6 +148,41 @@ describe("GenerationUI 结构（暗房重构版）", () => {
       expect(useStore.getState().jobs[0].config?.params.preview).toBe("none");
     },
   );
+
+  it("marks a generating job as interrupt-pending when the kernel accepts the cancel", async () => {
+    // 上游 #2190：新内核对生成中的任务回 200 + status=generating +
+    // cancel_requested=true，界面不能再说「该任务已结束」。
+    apiMocks.sdcppCancel.mockResolvedValue({
+      status: 200,
+      body: { id: "job_live", kind: "img_gen", status: "generating", cancel_requested: true },
+    });
+    useStore.setState({
+      caps: {
+        ...CAPS,
+        features_by_mode: { img_gen: { cancel_generating: true } },
+      } as never,
+      jobs: [
+        {
+          id: "job_live",
+          kind: "img_gen",
+          status: "generating",
+          created: 1_760_000_000_000,
+          started: 1_760_000_001_000,
+          config: { mode: "img_gen", params: { prompt: "p" } as never },
+        },
+      ],
+    });
+    render(<GenerationUI />);
+    fireEvent.click(await screen.findByRole("button", { name: "切换任务队列面板" }));
+    fireEvent.click(await screen.findByRole("button", { name: "取消任务 job_live" }));
+    await waitFor(() => expect(apiMocks.sdcppCancel).toHaveBeenCalledWith("job_live"));
+    await waitFor(() => {
+      const toasts = useStore.getState().toasts;
+      expect(toasts[toasts.length - 1]?.msg).toBe("已请求中断，将在当前采样步结束后停止");
+    });
+    expect(useStore.getState().jobs[0]?.cancel_requested).toBe(true);
+    expect(useStore.getState().jobs[0]?.status).toBe("generating");
+  });
 
   it("blocks MiniMax references with keyframes and allows resubmission after fixing them", async () => {
     const model = {

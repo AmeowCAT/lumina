@@ -5,6 +5,7 @@ import { Slider } from "../ui/Slider";
 import { TwoTapButton } from "../ui/TwoTapButton";
 import { cn } from "../ui/cn";
 import { useTheme } from "../../lib/theme";
+import { formatNumberForInput } from "../../lib/utils";
 import { api } from "../../api";
 import { FAMILY_CONFIG } from "../../config/families";
 import { useStore } from "../../store";
@@ -303,7 +304,7 @@ export const PromptDock = memo(function PromptDock({
           />
         </ChipEditor>
         <ChipEditor
-          chipText={`CFG ${txtCfg}`}
+          chipText={`CFG ${txtCfg == null ? "—" : formatNumberForInput(txtCfg)}`}
           title="快速调整 CFG"
           moreLabel="采样全部设置 →"
           onMore={() => onOpenSheet("sampling")}

@@ -529,6 +529,7 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
             | "--disable-segmented-compute"
             | "--tokenizer"
             | "--sage-attn"
+            | "--taesd-preview-only"
             | "--conditioning-cache-size" => {
                 if caps.supports(name) == Some(false) {
                     bail!(
@@ -608,6 +609,16 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     bail!("{}", error);
                 }
             }
+            // 上游 #2164：ADetailer 检测器。老内核只把该参数当 sd-cli 的配置，
+            // sd-server 会直接报 unknown argument 退出；新内核则每次 img_gen
+            // 后自动跑一遍检测 + 局部重绘（下面还会补一条提示）。
+            "--ad-model" => {
+                if caps.supports(name) == Some(false) {
+                    bail!(
+                        "所选 sd-server 不支持 --ad-model（ADetailer）；请升级内核或移除该参数。"
+                    );
+                }
+            }
             _ => {}
         }
         // Typed value options must consume their value even if it starts with
@@ -665,6 +676,20 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
             "新版 auto-fit 会保留显式 --backend 作为计算设备分配，不再因它关闭 auto-fit（上游 #1967）。".into(),
         );
     }
+    // 上游 #2164：`--ad-model` 不再只是 `-M adetailer` 的 CLI 配置——sd-server
+    // 会给每次 img_gen 结束后的结果自动做检测 + 局部重绘（runtime.cpp 的
+    // apply_server_adetailer）；请求体里的同名检测器字段反而不参与选检测器。
+    // 界面本轮还没有这块控件，写进附加启动参数的用户必须在出图结果与耗时
+    // 变化之前知道这件事（审查 docs/UPSTREAM-SYNC-2026-10-24.md §2.3）。
+    if args
+        .iter()
+        .any(|arg| arg == "--ad-model" || arg.starts_with("--ad-model="))
+    {
+        warnings.push(
+            "已配置 ADetailer 检测器（--ad-model）：内核会在每次图片生成后自动检测并局部重绘，出图结果与耗时会变化；当前界面没有该功能的控件，如非本意请从附加启动参数中移除。"
+                .into(),
+        );
+    }
     Ok(warnings)
 }
 
@@ -679,7 +704,7 @@ mod tests {
         parse_help(&help("  --stream-layers       stream weights\n  --auto-fit            pick placements\n  -v, --verbose         print extra info\n"))
     }
     fn new() -> CliCapabilities {
-        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --conditioning-cache-size <int>   conditioning cache capacity\n  --flash-attn          on|off|auto or module assignments (default: auto)\n  --conv-direct         on|off|auto or diffusion/vae/controlnet assignments\n  --batched-cfg         on|off (default: on)\n  --params-backend      disk, cpu, or module=backend assignments\n  --rpc-servers         host:port list\n  -t, --threads <int>   thread count (<=0 uses physical cores)\n"))
+        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --taesd-preview-only  TAE for previews only\n  --ad-model <string>   ADetailer detector path\n  --conditioning-cache-size <int>   conditioning cache capacity\n  --flash-attn          on|off|auto or module assignments (default: auto)\n  --conv-direct         on|off|auto or diffusion/vae/controlnet assignments\n  --batched-cfg         on|off (default: on)\n  --params-backend      disk, cpu, or module=backend assignments\n  --rpc-servers         host:port list\n  -t, --threads <int>   thread count (<=0 uses physical cores)\n"))
     }
     fn argv(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| (*s).into()).collect()
@@ -850,15 +875,17 @@ mod tests {
         assert!(!warns_about_preserving(&both));
     }
 
-    /// 新增的三个启动参数在老内核上会被拒绝（"unknown argument"），必须在
+    /// 上游新增的启动参数在老内核上会被拒绝（"unknown argument"），必须在
     /// 送进 argv 之前报出来，而不是让 sd-server 直接退出。
     #[test]
     fn rejects_new_options_on_kernels_that_do_not_declare_them() {
         let old_help = help("  --stream-layers       stream weights\n");
         let old_caps = parse_help(&old_help);
-        let old_cases: [&[&str]; 3] = [
+        let old_cases: [&[&str]; 5] = [
             &["--tokenizer", "/models/tokenizer.json"],
             &["--sage-attn"],
+            &["--taesd-preview-only"],
+            &["--ad-model", "face.safetensors"],
             &["--conditioning-cache-size", "4"],
         ];
         for args in old_cases {
@@ -872,9 +899,11 @@ mod tests {
 
         // 新内核上放行，并校验条件缓存必须是非负整数。
         let new_caps = new();
-        let new_cases: [&[&str]; 3] = [
+        let new_cases: [&[&str]; 5] = [
             &["--tokenizer", "/models/tokenizer.json"],
             &["--sage-attn"],
+            &["--taesd-preview-only"],
+            &["--ad-model", "face.safetensors"],
             &["--conditioning-cache-size", "0"],
         ];
         for args in new_cases {
@@ -986,5 +1015,21 @@ mod tests {
         ));
         // scale 为 0 表示保留模型默认，不产生提示。
         assert!(!warns_with(&new_caps, &["--attn-scale", "0"]));
+    }
+
+    /// 上游 #2164：`--ad-model` 会让 sd-server 在每次 img_gen 后自动检测 +
+    /// 局部重绘。界面还没有这块控件，写进附加启动参数的人必须在启动前收到
+    /// 提示，否则出图结果和耗时会莫名变化。
+    #[test]
+    fn warns_about_the_automatic_adetailer_pass() {
+        let warns = |args: &[&str]| {
+            validate_args(&argv(args), &new())
+                .unwrap()
+                .iter()
+                .any(|w| w.contains("ADetailer"))
+        };
+        assert!(warns(&["--ad-model", "face_yolov8n.safetensors"]));
+        assert!(warns(&["--ad-model=D:/models/face_yolov8n.safetensors"]));
+        assert!(!warns(&["--prompt", "no detector here"]));
     }
 }

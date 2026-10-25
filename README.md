@@ -66,7 +66,7 @@ src-tauri/target/release/lumina.exe
 
 结果图上的 ✨ 按钮走内核的**独立放大**接口：不经过扩散采样、不新建任务，因此会同步等待，完成后作为一张新结果进入结果走廊。放大模型取自 `--hires-upscalers-dir` 顶层，所以模型根目录下的 ComfyUI 子目录不会被扫到。
 
-在参数面板的"采样设置"里开启**生成预览**，可在画布上查看中间结果，角标显示当前采样段的步数。预览可能增加耗时，间隔越大，更新越少。此项只在内核支持时出现；`proj` 使用 RGB 投影，`tae` / `vae` 按内核启动时配置的解码器执行，未加载 TAE 时可以回退到模型解码器，选项名称不保证画质或速度差异。
+在参数面板的"采样设置"里开启**生成预览**，可在画布上查看中间结果，角标显示当前采样段的步数。预览可能增加耗时，间隔越大，更新越少。此项只在内核支持时出现；`proj` 使用 RGB 投影，`tae` / `vae` 按内核启动时配置的解码器执行，未加载 TAE 时可以回退到模型解码器，选项名称不保证画质或速度差异。组件里选了 TAE 之后，还可以在控制台勾选「TAE 仅用于预览（`--taesd-preview-only`）」：预览用 TAE 解码，最终图仍由完整 VAE 输出。
 
 ### 键位
 
@@ -97,15 +97,15 @@ src-tauri/target/release/lumina.exe
 
 ## 与上游的关系
 
-推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`d55cc0f`](https://github.com/leejet/stable-diffusion.cpp/commit/d55cc0f75f9f9c71af2a7b2fd6cf3c6d10420151)（2026-10-18）。相对上一个对齐版本 `f0aac52` 的三个提交（MOSS 拆分 QKV 权重 #2160、Diffusers 格式 MiniMax-H3 LoRA #2159、文档）只改了权重加载路径，`examples/server/**` 与 `examples/common/**` 一行未动，因此**报文面自 `f0aac52` 未变、界面无需跟进**，只把对齐号更新到最新。那次同步本身的内容是：新增 FLUX.3 Image Klein（含 Base，#2143）、Iris-3B（#2117）、MOSS-Image（Base / SFT，#2148）三个家族；注意力与直接卷积改为内核按后端自动选择（`--flash-attn` / `--conv-direct`，#2132、#2134），旧的 `--fa` / `--diffusion-fa` 降级为兼容别名——工作台已改用新参数，遇到旧内核会自动退回旧别名；UNet 的条件与无条件分支默认合并成一次前向（`--batched-cfg`，#2085）。另有 Qwen Image 2.1 专用的 TAEQI2.1（#2123）、独立放大支持 MoSR 架构（#2128），以及 Windows 上含非 ANSI 字符的路径在读取模型、参考图与提示词文件时不再失败（#2144、#2145）。其余是内核侧修复：VAE 解码 OOM 重试改为瓦片减半（#2120）、LoRA 合并保留单一输出维度（#2116）、SD3 编码器 token 分块对齐（#2111）、sd-server 启动不再扫描当前目录（#2086）、参数与 tokenizer 诊断降为 debug（#2135）。所以：
+推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`95ff762`](https://github.com/leejet/stable-diffusion.cpp/commit/95ff76230889898e1bf40058ba272a3699b50dc6)（2026-10-23）。相对上一个对齐版本 `d55cc0f` 的 24 个提交里，有 14 个改到了 `examples/server/**` 或 `examples/common/**`，其中三项会直接影响界面：任务时间戳 `created` / `started` / `completed` 从秒改成**毫秒**（随 #2176 落地，界面统一经 `toEpochMs` 兼容新旧内核）；生成中的任务现在可以中断（#2190，`cancel_generating` 变 true，取消接口从 409 改成 200 + `cancel_requested`，任务行会显示「中断中」）；ADetailer 进入服务端（#2164，启动参数 `--ad-model` 会让每次图片生成后自动检测 + 局部重绘，界面暂未提供控件，写在附加启动参数里会在启动前提示）。另有 TAE 只用于预览的 `--taesd-preview-only`（#2184，已接成控制台开关）、视频侧的 `ref_image_args` / `ref_image_size`（#2177，MiniMax-H3 参考图行已加尺寸选项）、Wan2.2 TI2V 5B 的 `temporal_decode_frames`（#2196）、`--list-devices` 现在会列出 RPC 设备（#2182，设备预检会按需补探一次）、MiniT2I 被内核强制 512×512（#2189，界面已锁定尺寸）。模型家族新增 Fibo 2.0 Dev / Edit Turbo（#2180，家族数 60 → 62）；采样侧 `custom_sigmas: []` 现在表示「未指定」（#2172）。上游同时引入了一套 recipe 模型管理 API（#2176 / #2188，`/sdcpp/v1/recipes`、`/models/*` 与进程内换模型），Lumina 仍按自己的扫描器与显式启动参数工作，本轮不接（判断与后续计划见 [`docs/UPSTREAM-SYNC-2026-10-24.md`](docs/UPSTREAM-SYNC-2026-10-24.md)）。所以：
 
 - 界面、启动流程、参数映射有问题 → 提到[本仓库 Issues](https://github.com/AmeowCAT/lumina/issues)
 - 出图质量、加载失败、显存不足、模型不被识别 → 提到[上游仓库](https://github.com/leejet/stable-diffusion.cpp/issues)
 
 <details>
-<summary>已适配的模型家族（60 个，外加"自定义"）</summary>
+<summary>已适配的模型家族（62 个，外加"自定义"）</summary>
 
-Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、Flux.3 Image Klein（含 Base）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Z-Image L2P、Qwen-Image（含 Layered/Edit/2.1）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS）、PixArt-Σ、PixArt-α、Ming-Image 0.1 Design、Iris-3B、MOSS-Image（Base / SFT）、LLaDA-Image（含 Turbo）、SenseNova U1.5，以及"自定义"（手动配置全部组件）。
+Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、Flux.3 Image Klein（含 Base）、Fibo 2.0（Dev / Edit Turbo）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Z-Image L2P、Qwen-Image（含 Layered/Edit/2.1）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS）、PixArt-Σ、PixArt-α、Ming-Image 0.1 Design、Iris-3B、MOSS-Image（Base / SFT）、LLaDA-Image（含 Turbo）、SenseNova U1.5，以及"自定义"（手动配置全部组件）。
 
 </details>
 
@@ -117,7 +117,7 @@ Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、Flux.3 Image Klein�
 - PuLID 与 PhotoMaker 只在 `sd-cli` 通道可用：它们的身份参数（`--pulid-id-embedding`、`--pm-id-images-dir` 等）是**单次生成参数**，上游 `/sdcpp/v1` 没有开放，权重能加载但身份不会注入且几乎无日志，所以界面不提供这两个组件位。
 - MiniMax-H3 Ref2VA 只能通过 HTTP 传参考图，参考视频 / 音频目前仅 `sd-cli` 通道有，界面因此要求必须给参考图。
 - AnimateDiff 的运动模块原生训练在 16 帧，位置编码最多 32 帧，超出后画面趋于静止。
-- 上游 `/sdcpp/v1` 不开放 ADetailer，界面里没有。
+- ADetailer 自上游 #2164 起在服务端可用：启动参数写了 `--ad-model` 后，内核会对**每次**图片生成的结果自动检测并局部重绘（请求体可覆盖 `ad_prompt` / `ad_negative_prompt` / `extra_ad_args`，但检测器只认启动参数）。界面暂未提供该功能的控件，写在「附加启动参数」里的 `--ad-model` 会在启动前给出提示；不需要时请移除。
 - 独立放大（`POST /sdcpp/v1/upscale`）已接在结果图的 ✨ 按钮上，但它只认 RGB 放大器（ESRGAN 与 MoSR 的权重都可以，内置滤镜与 latent 放大器不能用于该接口）、不保留 alpha，运行时还持有生成上下文锁，会与正在进行的生成互斥。
 - 生成预览（上游 #2093）的步数按**当前采样段**计：批次换图、高噪段、二次放大都会另起一段并把步数清零，角标不是整项任务的完成度。
 - Z-Image L2P 在像素空间工作，没有 VAE 组件可选，也不能用参考图（上游 runner 直接拒绝）；它的权重文件名通常看不出线索，扫描不出家族时在控制台手动指定即可。

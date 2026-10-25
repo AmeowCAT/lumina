@@ -11,6 +11,7 @@ import {
   cacheOptionFields,
   clearLegacyLatentTiling,
   formatLayerList,
+  formatNumberForInput,
   legacyLatentTilingAxes,
   legacyTilingDroppedOnPixels,
   parseCacheOption,
@@ -42,6 +43,8 @@ interface Props {
   vaeTilingProtocol?: VaeTilingProtocol;
   /** 视频模式才显示时间维分块（审查 30-api §2.9）。 */
   mode?: GenMode;
+  /** 家族 id：Wan2.2 TI2V 5B 的组解码帧数只在它下面出现（上游 #2196）。 */
+  family?: string;
   cacheMode: string | undefined;
   /** 结构化缓存微调草稿（`cache_option` 的界面态，不直接进请求体）。 */
   cacheOptions?: CacheOptionDraft;
@@ -63,6 +66,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   showVaeTiling = true,
   vaeTilingProtocol = "pixels",
   mode = "img_gen",
+  family = "",
   cacheMode,
   cacheOptions,
   cacheOption,
@@ -91,6 +95,12 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   const temporalOverlap = tilingArgValue(
     vaeTilingParams?.extra_tiling_args,
     "temporal_tile_overlap",
+  );
+  // Wan2.2 TI2V 5B 才消费 temporal_decode_frames（上游 #2196）：每个时间分块里
+  // 一次解码的 latent 帧数，越大越吃显存。
+  const temporalDecodeFrames = tilingArgValue(
+    vaeTilingParams?.extra_tiling_args,
+    "temporal_decode_frames",
   );
   const setTemporalArg = (key: string, value: number | null) =>
     onUpdate("vae_tiling_params", {
@@ -362,6 +372,27 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                           step={1}
                         />
                       </div>
+                      {family === "wan-ti2v" && (
+                        <div className="form-row">
+                          <label className="form-label" htmlFor="vae-temporal-decode-frames">
+                            组解码帧数
+                            <span className="form-sublabel">
+                              temporal_decode_frames，默认 1（逐帧解码）；Wan2.2 TI2V 5B
+                              专用，越大越吃显存
+                            </span>
+                          </label>
+                          <NumberInput
+                            id="vae-temporal-decode-frames"
+                            value={temporalDecodeFrames ?? 0}
+                            onChange={(v) =>
+                              setTemporalArg("temporal_decode_frames", v > 0 ? v : null)
+                            }
+                            min={0}
+                            max={64}
+                            step={1}
+                          />
+                        </div>
+                      )}
                     </>
                   )}
                 </>
@@ -370,10 +401,18 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                 <div className="field-hint field-hint-flush" role="alert">
                   旧内核的 latent 单位尺寸仍在设置里：
                   {[
-                    legacyAxes.tileX != null ? `tile_size_x=${legacyAxes.tileX}` : null,
-                    legacyAxes.tileY != null ? `tile_size_y=${legacyAxes.tileY}` : null,
-                    legacyAxes.relX != null ? `rel_size_x=${legacyAxes.relX}` : null,
-                    legacyAxes.relY != null ? `rel_size_y=${legacyAxes.relY}` : null,
+                    legacyAxes.tileX != null
+                      ? `tile_size_x=${formatNumberForInput(legacyAxes.tileX)}`
+                      : null,
+                    legacyAxes.tileY != null
+                      ? `tile_size_y=${formatNumberForInput(legacyAxes.tileY)}`
+                      : null,
+                    legacyAxes.relX != null
+                      ? `rel_size_x=${formatNumberForInput(legacyAxes.relX)}`
+                      : null,
+                    legacyAxes.relY != null
+                      ? `rel_size_y=${formatNumberForInput(legacyAxes.relY)}`
+                      : null,
                   ]
                     .filter(Boolean)
                     .join("、")}

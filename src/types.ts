@@ -22,6 +22,11 @@ export interface ModelConfigSnapshot extends RuntimeDiagnostics {
   tokenizer?: string;
   /** 原生 CUDA SageAttention（--sage-attn）；不可用时内核会拒绝建上下文。 */
   sageAttn?: boolean;
+  /**
+   * TAE 只用于采样预览（--taesd-preview-only，上游 #2184）：最终图仍由完整 VAE
+   * 解码。要求组件里已选 TAE，且内核声明支持该参数。
+   */
+  taesdPreviewOnly?: boolean;
   /** 条件结果缓存上限（--conditioning-cache-size）；空 = 走内核默认。 */
   conditioningCacheSize?: string;
   extraArgs: string;
@@ -44,6 +49,8 @@ export interface Settings extends RuntimeDiagnostics {
   tokenizer?: string;
   /** 原生 CUDA SageAttention（--sage-attn）。 */
   sageAttn?: boolean;
+  /** TAE 只用于采样预览（--taesd-preview-only）；要求组件里已选 TAE。 */
+  taesdPreviewOnly?: boolean;
   /** 条件结果缓存上限（--conditioning-cache-size）；空 = 走内核默认。 */
   conditioningCacheSize?: string;
   extraArgs: string;
@@ -544,20 +551,28 @@ export interface Job {
   id: string;
   kind: GenMode;
   status: JobStatus;
-  /** 任务创建时间。单位是**秒**（上游 unix_timestamp_now），不是毫秒——
-   *  前端两处耗时换算（JobQueue `created*1000`、ResultsGrid
-   *  `completedAt/1000 - created`）都依赖此约定,上游改单位要同步改。 */
+  /**
+   * 任务创建时间。**单位随内核版本变化**：上游 #2176（recipe 模型管理）起是
+   * **毫秒**（`unix_timestamp_now_ms`），此前是秒。所有消费方先过
+   * `toEpochMs`（src/lib/utils.ts）再运算，不要直接乘除。
+   */
   created?: number;
   /**
    * 排队位次（1 起，上游 `async_jobs.cpp:167-176`）。队列里只有它还回答
    * 「前面还有几个」，缺键=旧内核或已完成。
    */
   queue_position?: number;
-  /** 真正开始采样的内核时间戳（秒）。`completed - started` 才是生成耗时，
-   *  用 `created` 到轮询时刻估算会混入排队等待与 2s 轮询抖动（审查 30-api §2.8）。 */
+  /** 真正开始采样的内核时间戳（秒/毫秒，同上经 `toEpochMs` 归一）。
+   *  `completed - started` 才是生成耗时；用 `created` 到轮询时刻估算会混入
+   *  排队等待与 2s 轮询抖动（审查 30-api §2.8）。 */
   started?: number;
-  /** 完成时间戳（秒）。 */
+  /** 完成时间戳（秒/毫秒，同上）。 */
   completed?: number;
+  /**
+   * 已受理中断请求、内核会在下一个采样检查点停止（上游 #2190）。
+   * 此时 `status` 仍是 `generating`，要等轮询到 `cancelled` 才算结束。
+   */
+  cancel_requested?: boolean;
   result?: JobResult | null;
   error?: { code?: string; message?: string } | null;
   /** 生成中的最新预览帧；完成任务不再携带该键。 */

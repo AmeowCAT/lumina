@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { useStore, type ImageSaveState, type ResultEntry } from "../store";
 import type { Job } from "../types";
-import { b64ByteLength, extractApiError, formatError, MAX_RESULTS } from "../lib/utils";
+import { b64ByteLength, extractApiError, formatError, MAX_RESULTS, toEpochMs } from "../lib/utils";
 import { flashWindow, notifyIfUnfocused } from "../lib/systemIntegration";
 import { MEMORY_BUDGET } from "../lib/memoryBudget";
 
@@ -279,7 +279,9 @@ export function ingestCompletedJob(d: Job): boolean {
       jobId: d.id,
       mode: d.kind,
       result,
-      created: d.created,
+      // 统一存毫秒（旧内核秒级 / 新内核毫秒级都经 toEpochMs 归一），
+      // ResultsGrid.elapsedLabel 依赖该单位。
+      created: toEpochMs(d.created),
       completedAt: Date.now(),
       config: cfg,
     };

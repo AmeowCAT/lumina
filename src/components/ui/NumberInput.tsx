@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type CSSProperties } from "react";
+import { formatNumberForInput } from "../../lib/utils";
 import { cn } from "./cn";
 
 interface NumberInputProps {
@@ -28,25 +29,29 @@ export function NumberInput({
 }: NumberInputProps) {
   const generatedId = useId();
   const inputId = id || generatedId;
-  const [draft, setDraft] = useState(String(value));
+  // 上游默认值/元数据里的浮点会带出 float 尾巴（0.00999999999776482582），
+  // 显示与回填统一收敛到 6 位有效数字，见 formatNumberForInput。
+  const [draft, setDraft] = useState(() => formatNumberForInput(value));
   const [editing, setEditing] = useState(false);
   const [invalid, setInvalid] = useState(false);
 
   useEffect(() => {
-    if (!editing) setDraft(String(value));
+    if (!editing) setDraft(formatNumberForInput(value));
   }, [editing, value]);
 
   const commit = () => {
     const parsed = Number(draft);
     if (!Number.isFinite(parsed)) {
       setInvalid(true);
-      setDraft(String(value));
+      setDraft(formatNumberForInput(value));
       return;
     }
     const clamped = Math.min(max ?? parsed, Math.max(min ?? parsed, parsed));
+    // 提交时同样归一：避免把 0.00999999999776482582 这类噪声写回参数/请求体。
+    const normalized = Number(formatNumberForInput(clamped));
     setInvalid(false);
-    setDraft(String(clamped));
-    onChange(clamped);
+    setDraft(formatNumberForInput(clamped));
+    onChange(normalized);
   };
 
   return (

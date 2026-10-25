@@ -172,6 +172,15 @@ pub fn detect_family(path: &str) -> &'static str {
         }
         return "flux3-klein";
     }
+    // Fibo 2.0（上游 #2180）：Fibo DiT + FLUX.2 VAE + Qwen3-VL-4B。Dev 支持文生图
+    // 与参考图编辑（CFG 5 / 20 步），Edit Turbo 只做参考图编辑（4 步 / CFG 1），
+    // 默认值不同所以拆成两族。检测要排在通用 flux 规则之前，避免 "fibo" 被吞。
+    if has_any(&t, &["fibo2", "fibo-2", "fibo_2", "fibo.2"]) {
+        if has_any(&t, &["edit", "turbo"]) {
+            return "fibo2-edit";
+        }
+        return "fibo2";
+    }
     // Iris-3B（上游 #2117）：像素空间 DiT（scale 1、下采样 16）+ Qwen3-VL-4B，
     // 不需要 VAE，宽高需为 16 的倍数（上游 docs/iris.md）。
     if is_iris(&t) {
@@ -493,6 +502,11 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "moss-image",
             "moss_image",
             "mossimage",
+            // Fibo 2.0（上游 #2180）。
+            "fibo2",
+            "fibo-2",
+            "fibo_2",
+            "fibo.2",
             "kontext",
             "sd_xl",
             "sdxl",
@@ -1284,6 +1298,48 @@ mod tests {
         assert_eq!(
             detect_family("D:\\models\\MOSS-Image\\moss_image_sft_int8_convrot_attn.safetensors"),
             "moss-image"
+        );
+    }
+
+    /// 上游 #2180：Fibo 2.0 Dev / Edit Turbo。两个变体的默认值不同（Dev 20 步 /
+    /// CFG 5，Edit Turbo 4 步 / CFG 1），检测要按文件名里的 edit/turbo 分流；
+    /// DiT 本身必须是 model，复用的 FLUX.2 VAE 与 mmproj 不能被当成主模型。
+    #[test]
+    fn detects_and_classifies_fibo2() {
+        for path in [
+            "fibo2_dev_int8_convrot.safetensors",
+            "/models/diffusion_models/fibo2_dev_bf16.safetensors",
+            "D:\\models\\Fibo-2.0-dev\\fibo2-dev.safetensors",
+        ] {
+            assert_eq!(detect_family(path), "fibo2", "{path}");
+        }
+        for path in [
+            "fibo2_edit_turbo_int8_convrot.safetensors",
+            "/models/Fibo-2.0-edit-turbo/fibo2_edit_turbo.safetensors",
+        ] {
+            assert_eq!(detect_family(path), "fibo2-edit", "{path}");
+        }
+        assert_eq!(
+            classify_file(
+                "fibo2_dev_int8_convrot.safetensors",
+                "fibo2_dev_int8_convrot",
+                "diffusion_models",
+                9000.0,
+            ),
+            "model"
+        );
+        assert_eq!(
+            classify_file("flux2_ae.safetensors", "flux2_ae", "vae", 320.0),
+            "vae"
+        );
+        assert_eq!(
+            classify_file(
+                "Qwen3-VL-4B-Instruct-mmproj-BF16.gguf",
+                "Qwen3-VL-4B-Instruct-mmproj-BF16",
+                "text_encoders",
+                800.0,
+            ),
+            "llm_vision"
         );
     }
 

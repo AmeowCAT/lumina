@@ -230,6 +230,12 @@ export interface FamilyConfig {
    * 界面据此做实时计数与超限提示（审查 F-17）。
    */
   promptTokenLimit?: number;
+  /**
+   * 内核强制固定的生成尺寸（宽、高）。目前只有 MiniT2I：上游 #2189 在
+   * `GenerationRequest::resolve` 最前面把宽高硬改成 512×512 并打警告，界面
+   * 必须同步锁定，否则显示尺寸与实际输出不一致。
+   */
+  fixedSize?: { width: number; height: number };
   sizePresetsByMode?: Partial<Record<GenMode, SizeGroup[]>>;
   /**
    * 非空表示该家族已被识别但暂时无法经 sd-server 使用，值为展示给用户的原因；
@@ -572,6 +578,59 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         sample_steps: 20,
         sample_method: "euler",
         guidance: { txt_cfg: 3.5 },
+      },
+    },
+  },
+  // Fibo 2.0 Dev / Edit Turbo（上游 #2180）：Fibo DiT + FLUX.2 VAE + Qwen3-VL-4B。
+  // 参考图 preset 由内核按模型定义自动选 `fibo2`（src/model/integrations/fibo2.cpp
+  // 的 ref_image_preset），界面不用传 --ref-image-args；宽高按 16 对齐。Dev 支持
+  // 文生图与参考图编辑，Edit Turbo 只做参考图编辑（4 步 / CFG 1）。
+  fibo2: {
+    name: "Fibo 2.0 Dev",
+    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（Dev：CFG 5 / 20 步，可文生图与参考图编辑）",
+    mode: "img",
+    fields: [
+      F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+      F("vae", "VAE (FLUX.2)", "vae", "vae"),
+      F("llm", "LLM (Qwen3-VL-4B)", "llm", "llm"),
+      F("llm_vision", "LLM Vision (mmproj，GGUF 编码器必需)", "llm_vision", "llm_vision"),
+    ],
+    fixedArgs: {},
+    generationHint:
+      "参考图编辑：单独 GGUF 文本编码器必须另配 --llm_vision 投影，BF16 权重自带投影时可留空。参考图自动按 fibo2 preset 缩放/中心裁剪，可用 --ref-image-args 覆盖（如 vae_center_crop=false）。宽高用 16 的倍数；原生 Fibo 遮罩预处理未接到 --mask。",
+    genDefaults: {
+      seed: -1,
+      width: 1024,
+      height: 1024,
+      sample_params: {
+        sample_steps: 20,
+        sample_method: "euler",
+        guidance: { txt_cfg: 5.0 },
+      },
+    },
+  },
+  "fibo2-edit": {
+    name: "Fibo 2.0 Edit Turbo",
+    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（Edit Turbo：4 步 / CFG 1，必须给参考图）",
+    mode: "img",
+    fields: [
+      F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+      F("vae", "VAE (FLUX.2)", "vae", "vae"),
+      F("llm", "LLM (Qwen3-VL-4B)", "llm", "llm"),
+      F("llm_vision", "LLM Vision (mmproj，GGUF 编码器必需)", "llm_vision", "llm_vision"),
+    ],
+    fixedArgs: {},
+    requiredInputsByMode: { img_gen: ["ref_images"] },
+    generationHint:
+      "只用于参考图编辑：4 步 / CFG 1，调高步数或 CFG 不会更好。参考图数量不限，指令里用 <image_1> / <image_2> 指代；单独 GGUF 文本编码器要另配视觉投影。",
+    genDefaults: {
+      seed: -1,
+      width: 1024,
+      height: 1024,
+      sample_params: {
+        sample_steps: 4,
+        sample_method: "euler",
+        guidance: { txt_cfg: 1.0 },
       },
     },
   },
@@ -1817,6 +1876,11 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("t5xxl", "T5 (flan-t5-large)", "t5xxl", "t5xxl"),
     ],
     fixedArgs: {},
+    // 上游 #2189：内核把宽高硬夹到 512×512（request.cpp 的
+    // `align to fixed size 512x512 for MiniT2I`），界面不能再让用户改。
+    fixedSize: { width: 512, height: 512 },
+    generationHint:
+      "像素空间模型，不需要 VAE。内核强制 512×512：改尺寸不会生效，hires 二次放大仍可用。推荐 100 步 / CFG 6。",
     genDefaults: {
       seed: -1,
       width: 512,
@@ -2014,6 +2078,9 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
       // LLaDA-Image 复用 Flux.2 的 VAE（上游 docs/llada_image.md）。
       "llada-image",
       "llada-image-turbo",
+      // Fibo 2.0 复用 Flux.2 VAE（上游 docs/fibo2.md）。
+      "fibo2",
+      "fibo2-edit",
     ],
   },
   {

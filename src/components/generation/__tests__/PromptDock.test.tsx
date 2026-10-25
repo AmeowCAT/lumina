@@ -67,6 +67,12 @@ describe("PromptDock chip editors", () => {
     expect(onUpdate).toHaveBeenCalledWith("sample_params.guidance.txt_cfg", 7.5);
   });
 
+  // 从元数据/上游默认值恢复的 CFG 可能带 float 尾巴，chip 文案同样要收敛。
+  it("collapses float noise in the CFG chip", () => {
+    renderDock({ txtCfg: 0.30000001192092896 });
+    expect(screen.getByRole("button", { name: "CFG 0.3" })).toBeTruthy();
+  });
+
   it("offers width and height sliders from the size chip", async () => {
     const user = userEvent.setup();
     renderDock();

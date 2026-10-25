@@ -5,10 +5,12 @@ export function Toggle({
   label,
   checked,
   onChange,
+  disabled,
 }: {
   label: ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   const inputId = useId();
   return (
@@ -19,6 +21,7 @@ export function Toggle({
         className="switch-root"
         checked={checked}
         onCheckedChange={onChange}
+        disabled={disabled}
       >
         <RxSwitch.Thumb className="switch-thumb" />
       </RxSwitch.Root>

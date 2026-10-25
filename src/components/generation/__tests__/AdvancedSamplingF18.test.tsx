@@ -170,6 +170,19 @@ describe("F-18 SLG 三参数", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/必须小于/);
   });
 
+  // 上游 capabilities 里的 float 默认值会带 17 位尾巴，输入框不能原样显示。
+  it("上游默认值的浮点尾巴不会显示在 SLG 输入框里", () => {
+    renderPanel({
+      slg: {
+        scale: 2,
+        layer_start: Number("0.00999999999776482582"),
+        layer_end: 0.20000000298023224,
+      },
+    });
+    expect(screen.getByLabelText(/SLG 起始比例/)).toHaveValue(0.01);
+    expect(screen.getByLabelText(/SLG 结束比例/)).toHaveValue(0.2);
+  });
+
   it("跳层索引留空 = 不下发该键（不写空数组）", async () => {
     const onUpdate = renderPanel({
       slg: { scale: 2, layers: [7, 8, 9] },

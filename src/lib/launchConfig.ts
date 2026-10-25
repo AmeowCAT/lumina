@@ -24,6 +24,7 @@ export type LaunchRuntime = Pick<
   | "vaeFormat"
   | "tokenizer"
   | "sageAttn"
+  | "taesdPreviewOnly"
   | "conditioningCacheSize"
   | "extraArgs"
   | "offloadCpu"
@@ -162,6 +163,11 @@ export function buildLaunchConfig({
   // 这里整体透传，合法性交给内核在初始化文本编码器时判定。
   if (tokenizer) args.tokenizer = tokenizer;
   if (runtimeValue(runtime, "sageAttn")) args["sage-attn"] = true;
+  // 上游 #2184：TAE 只参与采样过程预览，最终图仍由完整 VAE 解码。没有选 TAE
+  // 组件时该开关无效（内核会忽略），所以只在同时配了 taesd 时下发。
+  if (runtimeValue(runtime, "taesdPreviewOnly") && components.taesd) {
+    args["taesd-preview-only"] = true;
+  }
   if (conditioningCacheSize) {
     if (/^\d+$/.test(conditioningCacheSize)) {
       args["conditioning-cache-size"] = Number(conditioningCacheSize);

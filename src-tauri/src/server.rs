@@ -243,9 +243,17 @@ fn now_epoch_seconds() -> u64 {
 /// 探测 sd-server 编译进了哪些 ggml 后端（`--list-devices` 打印
 /// "name<TAB>description" 后退出 0）。返回 None 表示二进制不支持该参数
 /// （旧版本）或探测失败——此时跳过校验，维持旧行为。
-fn probe_backend_devices(exe: &Path) -> Option<String> {
+///
+/// `rpc_servers` 仅在「设备表补探」时传入：上游 #2182 起 `--list-devices`
+/// 会把 `--rpc-servers` 的远端设备一并列出，不传就看不到（RPC 设备名会被
+/// 误判成未编译）。远端不可达时上游 `print_devices()` 直接 exit 1，所以这次
+/// 补探必须允许失败并保留原错误。
+fn probe_backend_devices(exe: &Path, rpc_servers: Option<&str>) -> Option<String> {
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("--list-devices");
+    if let Some(spec) = rpc_servers.map(str::trim).filter(|spec| !spec.is_empty()) {
+        cmd.arg("--rpc-servers").arg(spec);
+    }
     cmd.current_dir(exe.parent().unwrap_or_else(|| Path::new(".")));
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
@@ -614,6 +622,17 @@ impl ServerManager {
                 anyhow::bail!("附加启动参数中的 {}", error);
             }
         }
+        // 设备表补探用：结构化设置与附加启动参数都算，后者覆盖前者（上游
+        // parse_options 对同名选项是最后一次赋值生效）。
+        let mut rpc_spec = args_json
+            .get("rpc-servers")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if let Some(last) = extra_arg_values(&extra_tokens, &["rpc-servers"]).pop() {
+            rpc_spec = last;
+        }
         for spec in &extra_backend_specs {
             if let Some(error) = backend_spec_static_error(spec) {
                 anyhow::bail!("附加启动参数中的 --backend 无效：{}", error);
@@ -664,7 +683,7 @@ impl ServerManager {
             let exe_for_probe = exe.clone();
             tokio::time::timeout(
                 Duration::from_secs(20),
-                tokio::task::spawn_blocking(move || probe_backend_devices(&exe_for_probe)),
+                tokio::task::spawn_blocking(move || probe_backend_devices(&exe_for_probe, None)),
             )
             .await
             .ok()
@@ -684,14 +703,39 @@ impl ServerManager {
                 );
             }
         }
-        if let Some(output) = &probe_output {
-            if let Some(error) = find_backend_error(&backend_spec, output) {
-                anyhow::bail!(error);
-            }
-            for spec in &extra_backend_specs {
-                if let Some(error) = find_backend_error(spec, output) {
-                    anyhow::bail!("附加启动参数中的 --backend 无效：{}", error);
+        if let Some(mut output) = probe_output {
+            let check = |output: &str| -> Option<String> {
+                if let Some(error) = find_backend_error(&backend_spec, output) {
+                    return Some(error);
                 }
+                extra_backend_specs
+                    .iter()
+                    .find_map(|spec| find_backend_error(spec, output))
+                    .map(|error| format!("附加启动参数中的 --backend 无效：{}", error))
+            };
+            let mut error = check(&output);
+            // 上游 #2182：`--list-devices` 只有带 `--rpc-servers` 时才列出远端
+            // 设备。没配 RPC 时不需要补探；配了而设备名被判"未编译"时再探一次
+            // （远端不可达会让补探失败，此时保留原错误，不放行也不误杀）。
+            if error.is_some() && !rpc_spec.is_empty() {
+                let exe_for_probe = exe.clone();
+                let rpc_for_probe = rpc_spec.clone();
+                let with_rpc = tokio::time::timeout(
+                    Duration::from_secs(20),
+                    tokio::task::spawn_blocking(move || {
+                        probe_backend_devices(&exe_for_probe, Some(&rpc_for_probe))
+                    }),
+                )
+                .await
+                .ok()
+                .and_then(|join| join.unwrap_or(None));
+                if let Some(with_rpc) = with_rpc {
+                    output = with_rpc;
+                    error = check(&output);
+                }
+            }
+            if let Some(error) = error {
+                anyhow::bail!(error);
             }
         }
 

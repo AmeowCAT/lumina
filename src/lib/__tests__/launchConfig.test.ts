@@ -4,6 +4,7 @@ import {
   alignVideoFrames,
   FAMILY_CONFIG,
   familyNeedsExternalTokenizer,
+  resolveGenerationSize,
   SAMPLER_NAMES,
   SCHEDULER_NAMES,
   scaleSize,
@@ -349,6 +350,34 @@ describe("launch configuration", () => {
     });
     expect(bad.args["conditioning-cache-size"]).toBeUndefined();
     expect(bad.missing).toContain("条件缓存大小（--conditioning-cache-size，非负整数）");
+  });
+
+  // 上游 #2184：--taesd-preview-only 让 TAE 只参与采样预览，最终图仍由完整
+  // VAE 解码；没有选 TAE 时该开关没有意义，不下发。
+  it("passes --taesd-preview-only only when a TAE component is selected", () => {
+    const components = {
+      vae: "/models/ae.sft",
+      clip_l: "/models/clip_l.safetensors",
+      t5xxl: "/models/t5xxl.safetensors",
+    };
+    const withoutTae = buildLaunchConfig({
+      family: "flux",
+      modelPath: "/models/flux1-dev.safetensors",
+      components,
+      runtime: { ...runtime, taesdPreviewOnly: true },
+    });
+    expect(withoutTae.args["taesd-preview-only"]).toBeUndefined();
+
+    const withTae = buildLaunchConfig({
+      family: "flux",
+      modelPath: "/models/flux1-dev.safetensors",
+      components: { ...components, taesd: "/models/taef1.safetensors" },
+      runtime: { ...runtime, taesdPreviewOnly: true },
+    });
+    expect(withTae.args.taesd).toBe("/models/taef1.safetensors");
+    expect(withTae.args["taesd-preview-only"]).toBe(true);
+    // 预览开关不能顶掉完整 VAE：最终图仍走 --vae。
+    expect(withTae.args.vae).toBe("/models/ae.sft");
   });
 
   it("requires an explicit PiD VAE format even when the filename has a hint", () => {
@@ -738,6 +767,36 @@ describe("newly supported families", () => {
     for (const family of ["pixart-sigma", "pixart-alpha", "ming-image"]) {
       expect(FAMILY_CONFIG[family], `${family} 缺少家族配置`).toBeTruthy();
     }
+  });
+
+  // 上游 #2180：Fibo 2.0 Dev / Edit Turbo。家族 id 必须与 family.rs 的
+  // detect_family 返回值一致；两者复用 FLUX.2 VAE，Edit Turbo 必须给参考图。
+  it("registers Fibo 2.0 Dev and Edit Turbo with their upstream components", () => {
+    for (const family of ["fibo2", "fibo2-edit"]) {
+      const config = FAMILY_CONFIG[family];
+      expect(config, `${family} 缺少家族配置`).toBeTruthy();
+      expect(config.fields.map((field) => field.arg)).toEqual(
+        expect.arrayContaining(["diffusion-model", "vae", "llm", "llm_vision"]),
+      );
+    }
+    expect(FAMILY_CONFIG["fibo2-edit"].requiredInputsByMode?.img_gen).toEqual(["ref_images"]);
+    expect(familyDefaults(FAMILY_CONFIG["fibo2"], "img_gen")).toMatchObject({
+      width: 1024,
+      height: 1024,
+      sample_params: { sample_steps: 20, guidance: { txt_cfg: 5 } },
+    });
+    expect(familyDefaults(FAMILY_CONFIG["fibo2-edit"], "img_gen")).toMatchObject({
+      sample_params: { sample_steps: 4, guidance: { txt_cfg: 1 } },
+    });
+  });
+
+  // 上游 #2189：MiniT2I 的宽高被内核硬夹到 512×512，界面与请求口径都要跟着锁。
+  it("locks MiniT2I to the kernel-enforced 512×512", () => {
+    expect(FAMILY_CONFIG["minit2i"].fixedSize).toEqual({ width: 512, height: 512 });
+    expect(resolveGenerationSize("minit2i", 1024, 768)).toEqual({ w: 512, h: 512 });
+    // 其它家族仍是空间基数向上对齐。
+    expect(resolveGenerationSize("flux", 1000, 1000)).toEqual({ w: 1000, h: 1000 });
+    expect(resolveGenerationSize("minimax-h3-ref2va", 1000, 700)).toEqual({ w: 1024, h: 704 });
   });
 
   it("aligns PixArt and Ming-Image dimensions up to a multiple of 16", () => {

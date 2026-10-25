@@ -130,6 +130,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           endImage={endImage}
           refImages={refImages}
           controlFrames={controlFrames}
+          refImageArgs={params.ref_image_args}
           controlFramesSupported={controlFramesSupported}
           refImagesSupported={refImagesSupported}
           strength={params.strength}
@@ -200,6 +201,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         showVaeTiling={featureEnabled(features, "vae_tiling", true)}
         vaeTilingProtocol={vaeTilingProtocol}
         mode={mode}
+        family={family}
         cacheMode={params.cache_mode}
         cacheOptions={params.cache_options}
         cacheOption={params.cache_option}

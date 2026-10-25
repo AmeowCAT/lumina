@@ -986,6 +986,12 @@
     border-color: rgb(var(--color-accent-rgb) / 0.5);
     color: var(--color-accent-hi);
   }
+  /* 内核强制固定尺寸（MiniT2I 512×512）：只读展示，不给可编辑控件。 */
+  .size-locked {
+    font: 12px/1.4 var(--font-mono);
+    color: var(--color-fg);
+    font-variant-numeric: tabular-nums;
+  }
   /* 两段式确认的武装态(LingBot 模板替换等):警示色提醒 */
   .size-preset.armed {
     background: var(--color-warn-dim);

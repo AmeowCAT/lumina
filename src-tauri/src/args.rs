@@ -81,10 +81,12 @@ pub(crate) const PATH_VALUE_ARGS: &[&str] = &[
     // ESRGAN 放大模型路径。
     "upscale-model",
     // 其余上游路径参数（common.cpp / runtime.cpp，不以 -dir 结尾的部分）。
-    // 刻意不含 `ad-model`：ADetailer 只有 `-M adetailer` 的 CLI 模式，
-    // `--ad-model` 被 common 解析后无人消费（HTTP 面是死键），列在这里做
-    // 存在性校验只会给出「被支持」的假信号（审查 S-2d / 40-cli-families
-    // §2.7）。
+    // `ad-model` 自上游 #2164 起是活键：sd-server 用它配置 ADetailer 检测器，
+    // 每次 img_gen 结束后都会跑检测 + 局部重绘（runtime.cpp 的
+    // apply_server_adetailer），请求体里的同名检测器字段反而不用于选检测器。
+    // 旧版本这一条曾按「HTTP 面死键」排除，升级内核后必须重新纳入路径存在性
+    // 预检（审查 40-cli-families §2.7 的裁定已被上游推翻）。
+    "ad-model",
     "init-img",
     "end-img",
     "mask",

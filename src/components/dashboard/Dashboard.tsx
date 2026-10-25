@@ -299,6 +299,7 @@ export function Dashboard() {
     vaeFormat: settings.vaeFormat || "",
     tokenizer: settings.tokenizer || "",
     sageAttn: !!settings.sageAttn,
+    taesdPreviewOnly: !!settings.taesdPreviewOnly,
     conditioningCacheSize: settings.conditioningCacheSize || "",
     extraArgs: settings.extraArgs,
     offloadCpu: settings.offloadCpu,
@@ -334,6 +335,7 @@ export function Dashboard() {
       vaeFormat: snapshot.vaeFormat || (snapshotFamily === "pid" ? inferPidVaeFormat(path) : ""),
       tokenizer: snapshot.tokenizer || "",
       sageAttn: !!snapshot.sageAttn,
+      taesdPreviewOnly: !!snapshot.taesdPreviewOnly,
       conditioningCacheSize: snapshot.conditioningCacheSize || "",
       extraArgs: snapshot.extraArgs,
       offloadCpu: snapshot.offloadCpu,
@@ -386,6 +388,7 @@ export function Dashboard() {
     settings.vaeFormat,
     settings.tokenizer,
     settings.sageAttn,
+    settings.taesdPreviewOnly,
     settings.conditioningCacheSize,
     settings.extraArgs,
     settings.offloadCpu,
@@ -1163,6 +1166,19 @@ export function Dashboard() {
               仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与
               --flash-attn 同时存在时，Sage 在 diffusion 内优先；把 diffusion 的注意力显式设为 off
               会同时关掉 Sage 的 Flash Attention 回退。会改变数值结果，建议固定种子对比。
+            </div>
+          </div>
+          <div className="form-row mt-2">
+            <Toggle
+              label="TAE 仅用于预览（--taesd-preview-only）"
+              checked={!!settings.taesdPreviewOnly}
+              onChange={(v) => setSettings((s) => ({ ...s, taesdPreviewOnly: v }))}
+              disabled={!components.taesd}
+            />
+            <div className="field-hint field-hint-flush mt-0.5">
+              {components.taesd
+                ? "勾选后只有采样过程的预览用 TAE 解码，最终图仍由完整 VAE 输出（上游 #2184）；旧内核不支持该参数，启动前预检会提示。"
+                : "先在组件里选好 TAE 才能启用：勾选后最终图仍由完整 VAE 解码，只有预览用 TAE。"}
             </div>
           </div>
           <div className="form-row mt-2">

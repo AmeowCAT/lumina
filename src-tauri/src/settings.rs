@@ -28,6 +28,9 @@ pub struct Settings {
     /// 原生 CUDA SageAttention（--sage-attn）。
     #[serde(default)]
     pub sage_attn: bool,
+    /// TAE 只用于采样预览（--taesd-preview-only，上游 #2184）；最终图仍走 VAE。
+    #[serde(default)]
+    pub taesd_preview_only: bool,
     /// 条件结果缓存上限（--conditioning-cache-size）；空 = 走内核默认。
     #[serde(default)]
     pub conditioning_cache_size: String,
@@ -96,6 +99,7 @@ impl Default for Settings {
             vae_format: String::new(),
             tokenizer: String::new(),
             sage_attn: false,
+            taesd_preview_only: false,
             conditioning_cache_size: String::new(),
             extra_args: String::new(),
             offload_cpu: false,
@@ -135,6 +139,9 @@ pub struct ModelConfigSnapshot {
     /// 原生 CUDA SageAttention（--sage-attn）。
     #[serde(default)]
     pub sage_attn: bool,
+    /// TAE 只用于采样预览（--taesd-preview-only），与顶层同名设置一致。
+    #[serde(default)]
+    pub taesd_preview_only: bool,
     /// 条件结果缓存上限（--conditioning-cache-size）。
     #[serde(default)]
     pub conditioning_cache_size: String,
@@ -669,11 +676,13 @@ mod tests {
             r#"{
             "tokenizer":"main=/models/tok.json,clip-l=/models/clip.json",
             "sageAttn":true,
+            "taesdPreviewOnly":true,
             "conditioningCacheSize":"8",
             "modelSnapshots": {
                 "models/pid.safetensors": {
                     "tokenizer":"/models/pid-tok.json",
                     "sageAttn":true,
+                    "taesdPreviewOnly":true,
                     "conditioningCacheSize":"12"
                 },
                 "models/legacy.safetensors": {"components":{}}
@@ -686,13 +695,19 @@ mod tests {
             "main=/models/tok.json,clip-l=/models/clip.json"
         );
         assert!(settings.sage_attn);
+        assert!(settings.taesd_preview_only);
         assert_eq!(settings.conditioning_cache_size, "8");
 
         let encoded = serde_json::to_value(&settings).unwrap();
         assert_eq!(encoded["sageAttn"], true);
+        assert_eq!(encoded["taesdPreviewOnly"], true);
         assert_eq!(encoded["conditioningCacheSize"], "8");
         assert_eq!(
             encoded["modelSnapshots"]["models/pid.safetensors"]["sageAttn"],
+            true
+        );
+        assert_eq!(
+            encoded["modelSnapshots"]["models/pid.safetensors"]["taesdPreviewOnly"],
             true
         );
         assert_eq!(
@@ -705,6 +720,7 @@ mod tests {
         let reparsed = load_file(&path).unwrap();
         assert_eq!(reparsed.tokenizer, settings.tokenizer);
         assert!(reparsed.sage_attn);
+        assert!(reparsed.taesd_preview_only);
         assert_eq!(reparsed.conditioning_cache_size, "8");
         let snapshot = reparsed
             .model_snapshots
@@ -712,18 +728,21 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.tokenizer, "/models/pid-tok.json");
         assert!(snapshot.sage_attn);
+        assert!(snapshot.taesd_preview_only);
         assert_eq!(snapshot.conditioning_cache_size, "12");
 
         let legacy = &reparsed.model_snapshots["models/legacy.safetensors"];
         assert!(
             legacy.tokenizer.is_empty()
                 && !legacy.sage_attn
+                && !legacy.taesd_preview_only
                 && legacy.conditioning_cache_size.is_empty()
         );
         let defaults: Settings = serde_json::from_str("{}").unwrap();
         assert!(
             defaults.tokenizer.is_empty()
                 && !defaults.sage_attn
+                && !defaults.taesd_preview_only
                 && defaults.conditioning_cache_size.is_empty()
         );
         fs::remove_dir_all(dir).unwrap();

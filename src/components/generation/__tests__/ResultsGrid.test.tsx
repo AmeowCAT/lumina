@@ -122,8 +122,9 @@ function imageEntry(jobId: string, images = 1, seed = 42): ResultEntry {
         b64_json: `img-${jobId}-${i}`,
       })),
     },
-    created: 1000,
-    completedAt: 4000,
+    // 内核时间戳统一为毫秒（上游 #2176 起）。
+    created: 1_760_000_000_000,
+    completedAt: 1_760_000_003_000,
     config: { mode: "img_gen", params: params(seed) } as JobConfig,
   };
 }
@@ -139,8 +140,9 @@ function videoEntry(jobId: string): ResultEntry {
       frame_count: 33,
       b64_json: `vid-${jobId}`,
     },
-    created: 1000,
-    completedAt: 4000,
+    // 内核时间戳统一为毫秒（上游 #2176 起）。
+    created: 1_760_000_000_000,
+    completedAt: 1_760_000_003_000,
     config: { mode: "vid_gen", params: params() } as JobConfig,
   };
 }
@@ -285,8 +287,9 @@ function animatedWebpEntry(jobId: string): ResultEntry {
       frame_count: 33,
       b64_json: `d2VicC0${jobId}`,
     },
-    created: 1000,
-    completedAt: 4000,
+    // 内核时间戳统一为毫秒（上游 #2176 起）。
+    created: 1_760_000_000_000,
+    completedAt: 1_760_000_003_000,
     config: { mode: "vid_gen", params: params() } as JobConfig,
   };
 }
@@ -302,8 +305,9 @@ function aviEntry(jobId: string): ResultEntry {
       frame_count: 33,
       b64_json: `YXZpLQ${jobId}`,
     },
-    created: 1000,
-    completedAt: 4000,
+    // 内核时间戳统一为毫秒（上游 #2176 起）。
+    created: 1_760_000_000_000,
+    completedAt: 1_760_000_003_000,
     config: { mode: "vid_gen", params: params() } as JobConfig,
   };
 }

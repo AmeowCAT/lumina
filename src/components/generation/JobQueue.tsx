@@ -108,6 +108,8 @@ export const JobQueue = memo(function JobQueue({
       ) : (
         jobs.map((j) => {
           const generating = j.status === "generating";
+          // 上游 #2190：取消请求已受理、内核还在当前采样步里收尾。
+          const cancelling = generating && !!j.cancel_requested;
           const terminal =
             j.status === "completed" || j.status === "failed" || j.status === "cancelled";
           const jobResult = results.find((r) => r.jobId === j.id)?.result;
@@ -126,7 +128,7 @@ export const JobQueue = memo(function JobQueue({
                   title={j.error?.message}
                   role={j.status === "failed" ? "alert" : "status"}
                 >
-                  {statusLabel(j.status, vostok)}
+                  {cancelling ? "中断中…" : statusLabel(j.status, vostok)}
                 </span>
                 {j.status === "queued" && j.queue_position != null && (
                   <span
@@ -156,6 +158,8 @@ export const JobQueue = memo(function JobQueue({
                     <button
                       className="btn btn-sm btn-danger"
                       aria-label={`取消任务 ${j.id}`}
+                      title={cancelling ? "已请求中断，等待当前采样步结束" : "取消任务"}
+                      disabled={cancelling}
                       onClick={() => onCancel(j.id)}
                     >
                       取消

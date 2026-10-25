@@ -3,6 +3,7 @@ import type { GenMode, Limits } from "../../../types";
 import {
   alignSizeUp,
   alignVideoFrames,
+  FAMILY_CONFIG,
   SIZE_SPATIAL_ALIGN,
   VIDEO_FRAME_ALIGN,
   VIDEO_FRAME_MAX,
@@ -78,88 +79,107 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
   // 上游 align_image_size 会把宽高向上对齐到家族的空间基数（MiniMax-H3 为 32）；
   // 与帧数提示同理，提前说明显示尺寸与实际输出不一致的情况。
   const spatialMultiple = SIZE_SPATIAL_ALIGN[family];
+  // MiniT2I（上游 #2189）：内核强制 512×512，界面改成只读展示。
+  const fixedSize = FAMILY_CONFIG[family]?.fixedSize;
   const alignedWidth = alignSizeUp(family, width);
   const alignedHeight = alignSizeUp(family, height);
   const sizeWillChange = alignedWidth !== width || alignedHeight !== height;
   return (
     <Panel title="尺寸与种子" forceOpen={forceOpen}>
-      <div className="size-presets">
-        {sizePresets.map((grp) => (
-          <div key={grp.label} className="size-group">
-            <span className="size-group-label">{grp.label}</span>
-            <div className="size-group-btns">
-              {grp.sizes.map(([l, w, h]) => (
-                <button
-                  key={l}
-                  className={cn("size-preset", width === w && height === h && "active")}
-                  aria-pressed={width === w && height === h}
-                  onClick={() => {
-                    onUpdate("width", w);
-                    onUpdate("height", h);
-                    onSizeBaseReset?.(w, h);
-                  }}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
+      {fixedSize ? (
+        <div className="form-row">
+          <div className="form-label">尺寸</div>
+          <div className="size-locked" data-testid="size-locked">
+            {fixedSize.width} × {fixedSize.height}
           </div>
-        ))}
-      </div>
-      <div className="form-row">
-        <label className="form-label" htmlFor="generation-width">
-          宽度
-        </label>
-        <NumberInput
-          id="generation-width"
-          value={width}
-          onChange={(value) => {
-            onUpdate("width", value);
-            onSizeBaseReset?.(value, height);
-          }}
-          min={limits?.min_width || 64}
-          max={limits?.max_width || 4096}
-          step={sizeStep}
-        />
-      </div>
-      <div className="form-row">
-        <label className="form-label" htmlFor="generation-height">
-          高度
-        </label>
-        <NumberInput
-          id="generation-height"
-          value={height}
-          onChange={(value) => {
-            onUpdate("height", value);
-            onSizeBaseReset?.(width, value);
-          }}
-          min={limits?.min_height || 64}
-          max={limits?.max_height || 4096}
-          step={sizeStep}
-        />
-        {spatialMultiple && sizeWillChange && (
           <div className="field-hint field-hint-flush mt-0.5">
-            实际生成 {alignedWidth}×{alignedHeight}（该模型按 {spatialMultiple} 向上对齐）
+            该模型由内核强制 {fixedSize.width}×{fixedSize.height}（上游
+            #2189），改尺寸不会生效；需要更大输出请用二次放大。
           </div>
-        )}
-      </div>
-      <div className="form-row">
-        <label className="form-label" htmlFor="generation-size-step">
-          像素步进
-          <span className="form-sublabel">
-            宽 / 高滑杆每跳的像素数，默认 1；填 32 则每次加减 32
-          </span>
-        </label>
-        <NumberInput
-          id="generation-size-step"
-          value={sizeStep}
-          onChange={onSizeStep}
-          min={1}
-          max={MAX_SIZE_STEP}
-          step={1}
-          className="w-20"
-        />
-      </div>
+        </div>
+      ) : (
+        <>
+          <div className="size-presets">
+            {sizePresets.map((grp) => (
+              <div key={grp.label} className="size-group">
+                <span className="size-group-label">{grp.label}</span>
+                <div className="size-group-btns">
+                  {grp.sizes.map(([l, w, h]) => (
+                    <button
+                      key={l}
+                      className={cn("size-preset", width === w && height === h && "active")}
+                      aria-pressed={width === w && height === h}
+                      onClick={() => {
+                        onUpdate("width", w);
+                        onUpdate("height", h);
+                        onSizeBaseReset?.(w, h);
+                      }}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="form-row">
+            <label className="form-label" htmlFor="generation-width">
+              宽度
+            </label>
+            <NumberInput
+              id="generation-width"
+              value={width}
+              onChange={(value) => {
+                onUpdate("width", value);
+                onSizeBaseReset?.(value, height);
+              }}
+              min={limits?.min_width || 64}
+              max={limits?.max_width || 4096}
+              step={sizeStep}
+            />
+          </div>
+          <div className="form-row">
+            <label className="form-label" htmlFor="generation-height">
+              高度
+            </label>
+            <NumberInput
+              id="generation-height"
+              value={height}
+              onChange={(value) => {
+                onUpdate("height", value);
+                onSizeBaseReset?.(width, value);
+              }}
+              min={limits?.min_height || 64}
+              max={limits?.max_height || 4096}
+              step={sizeStep}
+            />
+            {spatialMultiple && sizeWillChange && (
+              <div className="field-hint field-hint-flush mt-0.5">
+                实际生成 {alignedWidth}×{alignedHeight}（该模型按 {spatialMultiple} 向上对齐）
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {!fixedSize && (
+        <div className="form-row">
+          <label className="form-label" htmlFor="generation-size-step">
+            像素步进
+            <span className="form-sublabel">
+              宽 / 高滑杆每跳的像素数，默认 1；填 32 则每次加减 32
+            </span>
+          </label>
+          <NumberInput
+            id="generation-size-step"
+            value={sizeStep}
+            onChange={onSizeStep}
+            min={1}
+            max={MAX_SIZE_STEP}
+            step={1}
+            className="w-20"
+          />
+        </div>
+      )}
       {mode === "vid_gen" && onSizeScale && (
         <Slider
           label="尺寸缩放"

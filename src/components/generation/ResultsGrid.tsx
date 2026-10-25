@@ -6,6 +6,7 @@ import type { JobConfig, JobResult } from "../../types";
 import { UNPLAYABLE_VIDEO_HINT, isUnplayableVideoMime, type LightboxItem } from "../ui/Lightbox";
 import { useVideoPoster } from "../../hooks/useVideoPoster";
 import { useTheme } from "../../lib/theme";
+import { toEpochMs } from "../../lib/utils";
 import { cn } from "../ui/cn";
 import { IC } from "../ui/Icons";
 import { TwoTapButton } from "../ui/TwoTapButton";
@@ -178,8 +179,10 @@ function dimensionLabel(config?: JobConfig): string {
 }
 
 function elapsedLabel(created?: number, completedAt?: number): string {
-  if (created == null || created <= 0 || completedAt == null) return "";
-  const secs = Math.max(0, Math.round(completedAt / 1000 - created));
+  // created 可能是旧内核的秒级时间戳或新内核（上游 #2176 起）的毫秒；统一归一。
+  const beganAt = toEpochMs(created);
+  if (beganAt == null || completedAt == null) return "";
+  const secs = Math.max(0, Math.round((completedAt - beganAt) / 1000));
   if (secs < 60) return `${secs} 秒`;
   const m = Math.floor(secs / 60);
   const s = secs % 60;

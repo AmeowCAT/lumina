@@ -11,6 +11,7 @@ import {
   fmtSize,
   formatError,
   formatLayerList,
+  formatNumberForInput,
   hasLegacyLatentTiling,
   hasPixelTiling,
   jobElapsed,
@@ -30,8 +31,11 @@ import {
   resolveVaeTilingForProtocol,
   sanitizeCacheOptionsForMode,
   sdcppMetadataToGenParams,
+  setStringArgValue,
   setTilingArgValue,
+  stringArgValue,
   tilingArgValue,
+  toEpochMs,
   trimJobsToBudget,
   vaeTilingProtocolFromCapabilities,
   validateLingbotPrompt,
@@ -476,6 +480,17 @@ describe("buildRequestBody", () => {
       controlFrames: [],
     });
     expect(body.ref_images).toEqual(["data:image/png;base64,ref"]);
+  });
+
+  // 上游 #2177：ref_image_args 也作用于 vid_gen（MiniMax-H3 的 ref_image_size）。
+  it("forwards the video reference-image args and omits them when empty", () => {
+    const p: GenParams = { ...baseParams, ref_image_args: "ref_image_size=max" };
+    expect(buildRequestBody("vid_gen", p, {} as GenImages).ref_image_args).toBe(
+      "ref_image_size=max",
+    );
+    expect(buildRequestBody("vid_gen", baseParams, {} as GenImages)).not.toHaveProperty(
+      "ref_image_args",
+    );
   });
 
   it("omits clip_skip when -1", () => {
@@ -1572,6 +1587,29 @@ describe("extra_tiling_args 单键读写", () => {
   });
 });
 
+// 上游 #2196：Wan2.2 TI2V 5B 的 temporal_decode_frames 与非数值键 ref_image_size
+// 都是 key=value 串里的项，需要字符串版读写。
+describe("string key=value args", () => {
+  it("reads string values without disturbing the others", () => {
+    expect(stringArgValue("ref_image_size=max,preset=fibo2", "ref_image_size")).toBe("max");
+    expect(stringArgValue("preset=fibo2", "ref_image_size")).toBeNull();
+    expect(stringArgValue(undefined, "ref_image_size")).toBeNull();
+    // 空值按未设置处理（`key=` 不会让内核当成有效枚举）。
+    expect(stringArgValue("ref_image_size=", "ref_image_size")).toBeNull();
+  });
+
+  it("writes and removes a string key while keeping order", () => {
+    expect(setStringArgValue(undefined, "ref_image_size", "max")).toBe("ref_image_size=max");
+    expect(setStringArgValue("preset=fibo2", "ref_image_size", "max")).toBe(
+      "preset=fibo2,ref_image_size=max",
+    );
+    expect(setStringArgValue("ref_image_size=max,preset=fibo2", "ref_image_size", null)).toBe(
+      "preset=fibo2",
+    );
+    expect(setStringArgValue("ref_image_size=max", "ref_image_size", "")).toBe("");
+  });
+});
+
 describe("trimJobsToBudget", () => {
   const job = (id: string, b64?: string): Job => ({
     id,
@@ -1633,6 +1671,19 @@ describe("jobElapsed", () => {
     expect(jobElapsed(j, true)).toBe("15s");
   });
 
+  it("accepts millisecond timestamps from kernels after upstream #2176", () => {
+    // 同一段 15 s 时长，新内核三个字段都是毫秒。
+    const j: Job = {
+      id: "ms",
+      kind: "img_gen",
+      status: "completed",
+      created: 1_760_000_000_000,
+      started: 1_760_000_000_110,
+      completed: 1_760_000_015_110,
+    };
+    expect(jobElapsed(j, true)).toBe("15s");
+  });
+
   it("returns nothing for queued jobs and falls back to created for legacy payloads", () => {
     expect(jobElapsed({ id: "q", kind: "img_gen", status: "queued", created: 100 }, false)).toBe(
       "",
@@ -1646,5 +1697,55 @@ describe("jobElapsed", () => {
       lastPollSuccess: 130_000,
     };
     expect(jobElapsed(legacy, true)).toBe("30s");
+  });
+
+  it("falls back to the last successful poll with a millisecond created timestamp", () => {
+    const j: Job = {
+      id: "ms-fallback",
+      kind: "img_gen",
+      status: "completed",
+      created: 1_760_000_000_000,
+      lastPollSuccess: 1_760_000_030_000,
+    };
+    expect(jobElapsed(j, true)).toBe("30s");
+  });
+});
+
+// 上游 #2176：任务时间戳从秒改成毫秒，两代内核都要能算对。
+describe("toEpochMs", () => {
+  it("keeps millisecond values and scales second values", () => {
+    expect(toEpochMs(1_760_000_000)).toBe(1_760_000_000_000);
+    expect(toEpochMs(1_760_000_000_123)).toBe(1_760_000_000_123);
+  });
+
+  it("returns undefined for missing or unusable values", () => {
+    for (const value of [undefined, null, 0, -1, NaN, Infinity]) {
+      expect(toEpochMs(value)).toBeUndefined();
+    }
+  });
+});
+
+// 上游 float / PNG 元数据会带出 17 位小数尾巴；输入框显示要收敛但不能丢整数精度。
+describe("formatNumberForInput", () => {
+  it("collapses float noise from server defaults and metadata", () => {
+    // 20 位字面量在 JS 里无法精确表示，用字符串构造避免 no-loss-of-precision。
+    expect(formatNumberForInput(Number("0.00999999999776482582"))).toBe("0.01");
+    expect(formatNumberForInput(0.20000000298023224)).toBe("0.2");
+    expect(formatNumberForInput(0.30000001192092896)).toBe("0.3");
+    expect(formatNumberForInput(0.875)).toBe("0.875");
+  });
+
+  it("keeps integers exact, including large ones", () => {
+    expect(formatNumberForInput(512)).toBe("512");
+    expect(formatNumberForInput(12345678)).toBe("12345678");
+    expect(formatNumberForInput(0)).toBe("0");
+  });
+
+  it("handles negatives and non-finite input", () => {
+    expect(formatNumberForInput(-0.20000000298023224)).toBe("-0.2");
+    expect(formatNumberForInput(-0)).toBe("0");
+    for (const value of [NaN, Infinity, -Infinity]) {
+      expect(formatNumberForInput(value)).toBe("");
+    }
   });
 });

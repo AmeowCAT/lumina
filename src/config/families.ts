@@ -5,6 +5,7 @@
 
 import {
   EXTERNAL_TOKENIZER_FAMILIES,
+  FAMILY_CONFIG,
   SIZE_SPATIAL_ALIGN,
   VIDEO_FRAME_ALIGN,
 } from "./families.data";
@@ -36,6 +37,20 @@ export function alignSizeUp(family: string, dim: number): number {
   const multiple = SIZE_SPATIAL_ALIGN[family];
   if (!multiple || !Number.isFinite(dim) || dim <= 0) return dim;
   return Math.ceil(dim / multiple) * multiple;
+}
+
+/**
+ * 提交时的最终宽高：内核强制的固定尺寸优先（MiniT2I 的 512×512），其余家族
+ * 按空间基数向上对齐。界面上的滑杆与预设只是输入方式，这里才是发请求的口径。
+ */
+export function resolveGenerationSize(
+  family: string,
+  width: number,
+  height: number,
+): { w: number; h: number } {
+  const fixed = FAMILY_CONFIG[family]?.fixedSize;
+  if (fixed) return { w: fixed.width, h: fixed.height };
+  return { w: alignSizeUp(family, width), h: alignSizeUp(family, height) };
 }
 
 /**

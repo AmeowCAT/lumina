@@ -71,11 +71,19 @@ const uniq = (xs) => [...new Set(xs)].sort();
  * @type {Record<string, string>}
  */
 const KNOWN_UNSUPPORTED = {
-  ad_model: "ADetailer 只在 sd-cli 的 -M adetailer 通道可用，/sdcpp/v1 不消费（README 已知限制）",
-  ad_prompt: "同上",
-  ad_negative_prompt: "同上",
-  extra_ad_args: "同上",
-  upscale_repeats: "img_gen 的二次放大重复次数，界面未暴露；内核默认 1",
+  // 上游 #2164 起 `/sdcpp/v1` 确实会消费这三个字段：配置了启动参数
+  // `--ad-model` 时，每个 img_gen 结束后按 ad_prompt / ad_negative_prompt /
+  // extra_ad_args 做检测 + 局部重绘。界面本轮没有该功能的控件（启动参数里
+  // 写了 --ad-model 会由 cli.rs 给出警告），所以仍登记为「有意不接」，但理由
+  // 必须写清楚——旧版「/sdcpp/v1 不消费」的说法已被上游推翻。
+  ad_model:
+    "请求体里的 ad_model 不用于选检测器（只认启动参数 --ad-model）；界面未提供 ADetailer 控件，故不发",
+  ad_prompt:
+    "上游 #2164 起由服务端消费（配合启动参数 --ad-model）；界面未提供 ADetailer 控件，故不发",
+  ad_negative_prompt: "同上：上游 #2164 起由服务端消费；界面未提供 ADetailer 控件，故不发",
+  extra_ad_args: "同上：上游 #2164 起由服务端消费；界面未提供 ADetailer 控件，故不发",
+  upscale_repeats:
+    "img_gen 的二次放大重复次数，界面未暴露；内核默认 1（与 /upscale 接口的 repeats 不是同一字段）",
 };
 /**
  * @param {string} text
@@ -154,6 +162,52 @@ function report(title, items, hint) {
   return true;
 }
 
+/**
+ * 参数/字段增删之外、但会改变界面行为的「语义漂移」：单位、能力布尔量、
+ * 服务端自动后处理。这些在 `git diff` 里往往只是一行示例或一个 true/false，
+ * 只看 key 增删的漂移检查发现不了（2026-10 的时间戳事故就是这样漏掉的）。
+ * @param {string} since
+ * @param {string} ref
+ * @returns {Promise<boolean>} 是否发现语义变化
+ */
+async function semanticDrift(since, ref) {
+  const [oldApi, newApi, oldRoutes, newRoutes, oldJobs, newJobs] = await Promise.all([
+    upstreamFile("examples/server/api.md", since),
+    upstreamFile("examples/server/api.md", ref),
+    upstreamFile("examples/server/routes_sdcpp.cpp", since),
+    upstreamFile("examples/server/routes_sdcpp.cpp", ref),
+    upstreamFile("examples/server/async_jobs.cpp", since),
+    upstreamFile("examples/server/async_jobs.cpp", ref),
+  ]);
+  /** @param {string} text */
+  const cancelFlag = (text) => /"cancel_generating",\s*(true|false)/.exec(text)?.[1];
+  const findings = [];
+  if (!/milliseconds/i.test(oldApi) && /milliseconds/i.test(newApi)) {
+    findings.push(
+      "任务时间戳改成毫秒（api.md）：前端必须经 toEpochMs 归一，禁止直接乘除 1000（Job.created/started/completed）。",
+    );
+  }
+  const oldCancel = cancelFlag(oldRoutes);
+  const newCancel = cancelFlag(newRoutes);
+  if (oldCancel !== newCancel && newCancel === "true") {
+    findings.push(
+      "features.cancel_generating 变成 true：生成中的任务回 200 + cancel_requested，需处理「已请求中断」状态而不是 409。",
+    );
+  }
+  const oldAdetailer = oldJobs.includes("apply_server_adetailer");
+  const newAdetailer = newJobs.includes("apply_server_adetailer");
+  if (!oldAdetailer && newAdetailer) {
+    findings.push(
+      "sd-server 在 img_gen 后开始执行 ADetailer：启动参数 --ad-model 从死键变成「每次生成都跑检测 + 局部重绘」。",
+    );
+  }
+  return report(
+    "参数/字段之外的语义变化",
+    findings,
+    "逐个确认对应界面落点；新增检查项见 docs/UPSTREAM-SYNC-2026-10-24.md §6。",
+  );
+}
+
 /** @returns {Promise<number>} 进程退出码 */
 async function drift() {
   const since = flag("--since") || syncedRef();
@@ -198,6 +252,7 @@ async function drift() {
       "接进 types.ts + buildRequestBody，或确认不适用于本界面。",
     ),
     report("上游删除/改名的请求体字段", removedKeys, "检查 types.ts 是否仍在发送。"),
+    await semanticDrift(since, ref),
   ];
   const any = findings.some(Boolean);
   if (!any) console.log("\n✓ 两个提交之间没有参数/字段增删。");

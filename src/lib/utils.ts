@@ -424,19 +424,53 @@ export function buildRefImageArgs(
 }
 
 /**
+ * 内核任务时间戳归一成毫秒。
+ *
+ * 上游 #2176（recipe 模型管理）起 `created` / `started` / `completed` 从秒改成
+ * **毫秒**（`examples/server/runtime.cpp` 的 `unix_timestamp_now_ms`，
+ * `api.md` 里写明 "integer Unix timestamps in milliseconds"），旧内核仍是秒。
+ * 两代内核都会出现在用户机器上，因此按量级判定：秒制时间戳约 1.7e9，毫秒制约
+ * 1.7e12；阈值取 1e11（秒制要到公元 5138 年才越过，毫秒制 1973 年就已超过），
+ * 两边都不会误判。
+ */
+export function toEpochMs(value?: number | null): number | undefined {
+  if (value == null || !Number.isFinite(value) || value <= 0) return undefined;
+  return value > 1e11 ? value : value * 1000;
+}
+
+/**
+ * 数字输入框/滑杆的显示格式：整数原样，小数按 6 位有效数字收敛。
+ *
+ * 上游（C++ float + nlohmann json）和 PNG 元数据里的浮点常带出
+ * `0.00999999999776482582` / `0.20000000298023224` 这类尾巴，直接 `String(value)`
+ * 塞进 number input 会又长又难读——而这些值的语义就是 0.01 / 0.2。6 位有效数字
+ * 足够覆盖界面上的所有参数（步数、比例、强度、缩放），也不会碰整数（如
+ * lms_divisions 的 12345678）。
+ */
+export function formatNumberForInput(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  if (Number.isInteger(value)) return String(value);
+  const rounded = Number(value.toPrecision(6));
+  if (!Number.isFinite(rounded)) return "";
+  return Object.is(rounded, -0) ? "0" : String(rounded);
+}
+
+/**
  * 任务耗时的显示文案。
  *
  * 优先用内核时间戳 `completed - started`（真实采样时长）；旧内核不给
  * `started`/`completed` 时退回「created → 最近一次成功轮询」。旧实现一律用
  * created，把排队等待与 2s 轮询抖动都算进生成耗时（审查 30-api §2.8）。
+ *
+ * 时间戳单位由 [`toEpochMs`] 归一，兼容上游 #2176 前后的秒/毫秒两代内核。
  */
 export function jobElapsed(job: Job, terminal: boolean): string {
   if (job.status === "queued") return "";
-  const beginSec = job.started ?? job.created;
-  if (!beginSec) return "";
-  const endedAt = job.completed ? job.completed * 1000 : terminal ? job.lastPollSuccess : undefined;
+  const beginMs = toEpochMs(job.started ?? job.created);
+  if (!beginMs) return "";
+  const endedAt = toEpochMs(job.completed) ?? (terminal ? job.lastPollSuccess : undefined);
   if (terminal && !endedAt) return "";
-  const ms = (endedAt ?? Date.now()) - beginSec * 1000;
+  const ms = (endedAt ?? Date.now()) - beginMs;
   if (ms < 1000) return "";
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -523,6 +557,37 @@ export function setTilingArgValue(
     return eq < 0 || p.slice(0, eq).trim() !== key;
   });
   if (value != null) kept.push(`${key}=${value}`);
+  return kept.join(",");
+}
+
+/** 读取 `key=value` 串里的字符串值（`ref_image_args` 的 `ref_image_size` 这类非数值键）。 */
+export function stringArgValue(extra: string | undefined, key: string): string | null {
+  if (!extra) return null;
+  for (const part of extra.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() !== key) continue;
+    const value = part.slice(eq + 1).trim();
+    return value || null;
+  }
+  return null;
+}
+
+/** 设置/删除 `key=value` 串里的字符串键，保留其它键与顺序（新键追加在末尾）。 */
+export function setStringArgValue(
+  extra: string | undefined,
+  key: string,
+  value: string | null,
+): string {
+  const parts = (extra || "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const kept = parts.filter((p) => {
+    const eq = p.indexOf("=");
+    return eq < 0 || p.slice(0, eq).trim() !== key;
+  });
+  if (value != null && value !== "") kept.push(`${key}=${value}`);
   return kept.join(",");
 }
 
@@ -1469,6 +1534,11 @@ export function buildRequestBody(
     b.embed_image_metadata = params.embed_image_metadata !== false;
     if (params.moe_boundary != null) b.moe_boundary = params.moe_boundary;
     if (params.vace_strength != null) b.vace_strength = params.vace_strength;
+    // 上游 #2177 起 ref_image_args 也作用于 vid_gen：MiniMax-H3 Ref2VA 用
+    // `ref_image_size=match|max` 控制参考图长边（match 按画布面积，max 用
+    // 2048 px 短边）。界面只在视频侧设置该键，其它键原样透传。
+    const videoRefArgs = (params.ref_image_args || "").trim();
+    if (videoRefArgs) b.ref_image_args = videoRefArgs;
   }
 
   if (images.initImage) b.init_image = images.initImage;

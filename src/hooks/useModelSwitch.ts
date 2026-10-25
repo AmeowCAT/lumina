@@ -139,6 +139,7 @@ export function useModelSwitch() {
         vaeFormat: settings.vaeFormat,
         tokenizer: settings.tokenizer,
         sageAttn: settings.sageAttn,
+        taesdPreviewOnly: settings.taesdPreviewOnly,
         conditioningCacheSize: settings.conditioningCacheSize,
         extraArgs: settings.extraArgs,
         offloadCpu: settings.offloadCpu,

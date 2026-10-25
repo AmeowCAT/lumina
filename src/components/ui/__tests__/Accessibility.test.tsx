@@ -68,4 +68,54 @@ describe("accessible UI controls", () => {
     fireEvent.blur(input);
     expect(onChange).toHaveBeenCalledWith(2048);
   });
+
+  // 上游默认值/元数据里的 float 会带出 17 位尾巴；输入框显示与回填都要收敛。
+  it("collapses float noise in number inputs and on commit", () => {
+    const onChange = vi.fn();
+    // 20 位字面量在 JS 里无法精确表示，用字符串构造避免 no-loss-of-precision。
+    const noisyStart = Number("0.00999999999776482582");
+    const { rerender } = render(
+      <NumberInput value={noisyStart} step={0.01} onChange={onChange} ariaLabel="SLG 起始" />,
+    );
+    const input = screen.getByRole("spinbutton", { name: "SLG 起始" });
+    expect(input).toHaveValue(0.01);
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenCalledWith(0.01);
+
+    rerender(
+      <NumberInput
+        value={0.20000000298023224}
+        step={0.01}
+        onChange={onChange}
+        ariaLabel="SLG 结束"
+      />,
+    );
+    expect(screen.getByRole("spinbutton", { name: "SLG 结束" })).toHaveValue(0.2);
+  });
+
+  // 滑杆读数：0.875 不能被舍成 0.88，0.2000000029 也不能显示整串尾巴。
+  it("keeps slider readouts precise without float tails", () => {
+    const { rerender } = render(
+      <Slider label="MoE 分界" value={0.875} min={0} max={1} step={0.05} onChange={vi.fn()} />,
+    );
+    expect(screen.getByRole("slider", { name: "MoE 分界" })).toHaveAttribute(
+      "aria-valuetext",
+      "0.875",
+    );
+    rerender(
+      <Slider
+        label="MoE 分界"
+        value={0.20000000298023224}
+        min={0}
+        max={1}
+        step={0.05}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("slider", { name: "MoE 分界" })).toHaveAttribute(
+      "aria-valuetext",
+      "0.20",
+    );
+  });
 });

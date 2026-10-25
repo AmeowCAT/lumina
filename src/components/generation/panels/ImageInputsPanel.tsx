@@ -4,9 +4,16 @@ import { FAMILY_CONFIG } from "../../../config/families";
 import { useStore } from "../../../store";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
+import { Select } from "../../ui/Select";
 import { ImageUpload } from "../../ui/ImageUpload";
 import { IC } from "../../ui/Icons";
-import { featureEnabled, readFileAsDataUrl } from "../../../lib/utils";
+import {
+  featureEnabled,
+  formatNumberForInput,
+  readFileAsDataUrl,
+  setStringArgValue,
+  stringArgValue,
+} from "../../../lib/utils";
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
@@ -106,6 +113,8 @@ interface Props {
   endImage: string | null;
   refImages: string[];
   controlFrames: string[];
+  /** 视频侧参考图参数串（`ref_image_args`，MiniMax-H3 的 ref_image_size）。 */
+  refImageArgs?: string;
   controlFramesSupported: boolean;
   refImagesSupported: boolean;
   strength: number | undefined;
@@ -136,6 +145,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   endImage,
   refImages,
   controlFrames,
+  refImageArgs,
   controlFramesSupported,
   refImagesSupported,
   strength,
@@ -206,7 +216,11 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
               min={0}
               max={30}
               step={0.5}
-              hint={imgCfg != null ? undefined : `未设置，跟随文本 CFG (${txtCfg ?? 0})`}
+              hint={
+                imgCfg != null
+                  ? undefined
+                  : `未设置，跟随文本 CFG (${formatNumberForInput(txtCfg ?? 0)})`
+              }
             />
           </>
         )}
@@ -243,6 +257,30 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           onChange={onSetRefImages}
           addLabel="添加参考图片"
         />
+      )}
+      {refImagesSupported && mode === "vid_gen" && family.startsWith("minimax-h3") && (
+        <div className="form-row">
+          <label className="form-label" htmlFor="ref-image-size">
+            参考图尺寸
+            <span className="form-sublabel">
+              ref_image_size；max 保留更多身份细节，但每步都更慢
+            </span>
+          </label>
+          <Select
+            id="ref-image-size"
+            value={stringArgValue(refImageArgs, "ref_image_size") || "match"}
+            onChange={(v) =>
+              onUpdate(
+                "ref_image_args",
+                setStringArgValue(refImageArgs, "ref_image_size", v === "match" ? null : v),
+              )
+            }
+            options={[
+              { value: "match", label: "匹配画布（默认）" },
+              { value: "max", label: "最高 2048 短边（更慢）" },
+            ]}
+          />
+        </div>
       )}
       {controlFramesSupported && mode === "vid_gen" && (
         <>
