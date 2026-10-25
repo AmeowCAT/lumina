@@ -21,16 +21,20 @@ npm run lint              # ESLint（缺陷类规则 error，风格/React19 建�
 npm test                  # 前端单测
 npm run test:coverage     # 覆盖率（基线：语句约 66% / 行约 67%）
 npm run check:version     # 5 处版本号一致
+npm run format:check      # Prettier 格式门禁
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 CI（`.github/workflows/ci.yml`）会把这些再跑一遍，另外跑一次 `vite build`
 与 `npm audit --omit=dev`。
 
-> **Prettier 尚未接入**：一次 `prettier --write .` 会产生覆盖全库、无法审阅的 diff，
-> 应在单独的不含逻辑改动的 commit 里做。在那之前，ESLint 只启用能抓缺陷的规则
-> （`react-hooks/rules-of-hooks`、未使用变量、`preserve-caught-error` 等），
-> 不启用任何格式规则。
+> 本地 Rust 请保持 `rustup update stable`：CI 用 runner 自带的最新 stable，clippy
+> 新版本会新增 lint（2026-10 的 `collapsible_match` 就是本地 1.93 绿、CI 1.99 红）。
+> 升级后先跑一遍 `cargo fmt --check && cargo clippy --all-targets -- -D warnings`。
+
+> **格式由 Prettier 统一**：`npm run format` 会重写文件，提交前跑
+> `npm run format:check`（CI 同样会跑）。纯格式化改动请单独放一个 commit，便于
+> review；`npm run lint` 只保留能抓缺陷的规则，不承担格式职责。
 
 ## 改动约定
 
