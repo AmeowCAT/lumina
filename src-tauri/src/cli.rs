@@ -612,12 +612,10 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
             // 上游 #2164：ADetailer 检测器。老内核只把该参数当 sd-cli 的配置，
             // sd-server 会直接报 unknown argument 退出；新内核则每次 img_gen
             // 后自动跑一遍检测 + 局部重绘（下面还会补一条提示）。
-            "--ad-model" => {
-                if caps.supports(name) == Some(false) {
-                    bail!(
-                        "所选 sd-server 不支持 --ad-model（ADetailer）；请升级内核或移除该参数。"
-                    );
-                }
+            // 用 match guard 而不是嵌套 if：新版 clippy 的 collapsible_match
+            // 会把「单一 if + 空分支」判为可折叠，CI 上是 -D warnings。
+            "--ad-model" if caps.supports(name) == Some(false) => {
+                bail!("所选 sd-server 不支持 --ad-model（ADetailer）；请升级内核或移除该参数。");
             }
             _ => {}
         }
