@@ -5,6 +5,7 @@ import {
   buildRequestBody,
   cacheOptionFields,
   clearLegacyLatentTiling,
+  controlTypeFromMetadata,
   controlTypeSupported,
   deepClone,
   deepMerge,
@@ -1655,6 +1656,8 @@ describe("sdcppMetadataToGenParams · sdcpp.generation/v1", () => {
     },
     strength: 0.75,
     control_strength: 0.9,
+    // 内核恒定写该键，未设置时是字符串 "none"（映射器必须丢弃）。
+    control_type: "none",
     ip_adapter_strength: 0.6,
     ref_image_args: "preset=qwen,resize_before_vae=false",
     image_preprocess: { rules: ["target=ref,mode=none", "target=init,mode=fit-pad"] },
@@ -1713,6 +1716,8 @@ describe("sdcppMetadataToGenParams · sdcpp.generation/v1", () => {
     expect(p.control_strength).toBe(0.9);
     expect(p.ip_adapter_strength).toBe(0.6);
     expect(p.qwen_image_layers).toBe(3);
+    // 元数据里的 "none" 是「未设置」，不能当成一个有效控制类型回填。
+    expect(p.control_type).toBeUndefined();
     expect(p.auto_resize_ref_image).toBe(false);
     expect(p.image_preprocess).toEqual(["target=ref,mode=none", "target=init,mode=fit-pad"]);
     expect(p.hires).toMatchObject({ enabled: true, upscaler: "Lanczos", steps: 12, scale: 2 });
@@ -2118,6 +2123,27 @@ describe("controlTypeSupported", () => {
     );
     expect(controlTypeSupported(base)).toBe(false);
     expect(controlTypeSupported(null)).toBe(false);
+  });
+});
+
+// 内核 sd_control_type_name() 对「未设置」返回字符串 "none"，且该键在图片
+// 记录里恒定存在 —— 回填时必须当作未设置，否则恢复参数后会发出伪设置。
+describe("controlTypeFromMetadata", () => {
+  it("treats the kernel's none sentinel as unset", () => {
+    expect(controlTypeFromMetadata("none")).toBeUndefined();
+    expect(controlTypeFromMetadata("")).toBeUndefined();
+    expect(controlTypeFromMetadata(undefined)).toBeUndefined();
+    expect(controlTypeFromMetadata(null)).toBeUndefined();
+  });
+
+  it("keeps real control types and drops unknown values", () => {
+    for (const value of ["openpose", "depth", "scribble", "canny", "tile", "repaint"]) {
+      expect(controlTypeFromMetadata(value)).toBe(value);
+    }
+    // 别名与拼写错误不对应界面枚举，回填后会让 Select 显示空白项。
+    expect(controlTypeFromMetadata("hed")).toBeUndefined();
+    expect(controlTypeFromMetadata("Canny")).toBeUndefined();
+    expect(controlTypeFromMetadata("bogus")).toBeUndefined();
   });
 });
 

@@ -17,6 +17,7 @@ import {
   applyFamilyFeatureLimits,
   buildLaunchConfig,
   exclusiveInputConflicts,
+  familyAcceptsRefImages,
   familyDefaults,
   filterFamilyInputs,
   hasMainTokenizerSlot,
@@ -622,14 +623,21 @@ describe("launch configuration", () => {
     expect(withoutVae.missing).toContain("视频 VAE");
   });
 
-  it("treats MiniMax-H3 Ref2VA as half-supported with ref_images required", () => {
+  it("treats MiniMax-H3 Ref2VA as supported with any one reference condition", () => {
     const ref2va = FAMILY_CONFIG["minimax-h3-ref2va"];
-    // 半支持：不再整族封锁，参考图像为 vid_gen 必需输入。
+    // 上游 #2194 起参考媒体可走 HTTP，整族不再封锁。
     expect(ref2va.unsupported).toBeUndefined();
-    expect(ref2va.requiredInputsByMode).toEqual({ vid_gen: ["ref_images"] });
+    // 内核判据是「参考图 / 参考视频 / 参考音频 任一」（video.cpp 的
+    // has_references），不是「参考图必须给」——写成全部必需会把只用参考
+    // 视频/音频的用户误拦。
+    expect(ref2va.requiredInputsByMode).toBeUndefined();
+    expect(ref2va.requiredAnyInputGroupsByMode).toEqual({
+      vid_gen: [["ref_images", "ref_videos", "ref_audios"]],
+    });
     expect(ref2va.mode).toBe("vid");
     // FL2VA 无需参考输入。
     expect(FAMILY_CONFIG["minimax-h3-fl2va"].requiredInputsByMode).toBeUndefined();
+    expect(FAMILY_CONFIG["minimax-h3-fl2va"].requiredAnyInputGroupsByMode).toBeUndefined();
     // 官方推荐参数（docs/minimax_h3.md）：864×480、56 帧、24 fps、cfg 1.0。
     expect(FAMILY_CONFIG["minimax-h3-fl2va"].genDefaults).toEqual(
       expect.objectContaining({
@@ -1164,6 +1172,39 @@ describe("exclusive family inputs", () => {
       }),
     ).toEqual([]);
   });
+
+  // 上游 video.cpp 的 has_references 是「图/视频/音频任一」，所以 Ref2VA
+  // 的必备输入必须是「任一即可」组，不能写成全部必需。
+  it("requires any one reference condition for Ref2VA, not ref_images specifically", () => {
+    for (const family of ["minimax-h3-ref2va", "hyperflow-h3-flash-ref2va"]) {
+      const config = FAMILY_CONFIG[family];
+      // 完全没有任何参考条件 → 拦下，并列出三个可选项。
+      expect(missingRequiredInputs(config, "vid_gen", empty)).toEqual([
+        "参考图片 / 参考视频 / 参考音频",
+      ]);
+      // 三种条件各自单独满足即可放行。
+      expect(missingRequiredInputs(config, "vid_gen", { ...empty, refImages: ["ref"] })).toEqual(
+        [],
+      );
+      expect(
+        missingRequiredInputs(config, "vid_gen", { ...empty, refVideos: [["frame"]] }),
+      ).toEqual([]);
+      expect(
+        missingRequiredInputs(config, "vid_gen", {
+          ...empty,
+          refAudios: ["data:audio/wav;base64,AAA"],
+        }),
+      ).toEqual([]);
+      // 参考图输入行对 Ref2VA 仍然可见（内核支持），但不是「必需」。
+      expect(familyAcceptsRefImages(config, "vid_gen")).toBe(true);
+    }
+    // FL2VA 没有参考条件要求。
+    expect(missingRequiredInputs(FAMILY_CONFIG["minimax-h3-fl2va"], "vid_gen", empty)).toEqual([]);
+    expect(familyAcceptsRefImages(FAMILY_CONFIG["minimax-h3-fl2va"], "vid_gen")).toBe(false);
+    // 非 Ref2VA 家族不受影响。
+    expect(familyAcceptsRefImages(FAMILY_CONFIG.flux, "vid_gen")).toBe(false);
+    expect(familyAcceptsRefImages(undefined, "vid_gen")).toBe(false);
+  });
 });
 
 // 上游 #2324 / #2272 / #2299：H3 图像家族与 HyperFlow 蒸馏视频家族。
@@ -1211,11 +1252,13 @@ describe("H3 image / HyperFlow families", () => {
         (config.genDefaults?.sample_params as { custom_sigmas: number[] }).custom_sigmas,
       ).toHaveLength(7);
     }
-    // Ref2VA 支与 H3 Ref2VA 一样要求参考图。
-    expect(FAMILY_CONFIG["hyperflow-h3-flash-ref2va"].requiredInputsByMode).toEqual({
-      vid_gen: ["ref_images"],
+    // Ref2VA 支与 H3 Ref2VA 一样：参考条件任一即可。
+    expect(FAMILY_CONFIG["hyperflow-h3-flash-ref2va"].requiredInputsByMode).toBeUndefined();
+    expect(FAMILY_CONFIG["hyperflow-h3-flash-ref2va"].requiredAnyInputGroupsByMode).toEqual({
+      vid_gen: [["ref_images", "ref_videos", "ref_audios"]],
     });
     expect(FAMILY_CONFIG["hyperflow-h3-flash"].requiredInputsByMode).toBeUndefined();
+    expect(FAMILY_CONFIG["hyperflow-h3-flash"].requiredAnyInputGroupsByMode).toBeUndefined();
   });
 
   it("keeps HyperFlow frame presets on the 17k+5 grid within the slider cap", () => {

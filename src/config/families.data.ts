@@ -217,6 +217,15 @@ export interface FamilyConfig {
   /** Inputs that must be present before a request can be submitted. */
   requiredInputsByMode?: Partial<Record<GenMode, RequiredInput[]>>;
   /**
+   * 「任一即可」的必备输入组：每组里至少出现一个非空输入才算满足。
+   *
+   * 上游 MiniMax-H3 Ref2VA 的判据是 `ref_images_count > 0 || ref_videos_count
+   * > 0 || ref_audios_count > 0`（src/pipeline/video.cpp 的 has_references），
+   * 只给参考视频/音频同样成立——若写成 requiredInputsByMode 的「全部必需」，
+   * 只用参考媒体的用户会被界面误拦。组内每项仍然各自可选。
+   */
+  requiredAnyInputGroupsByMode?: Partial<Record<GenMode, RequiredInput[][]>>;
+  /**
    * 互斥输入组：同组里出现多于一个非空输入时当前模型无法生成（上游在
    * 生成阶段直接报错返回），提交前拦下能省一次往返并给出可读原因。
    */
@@ -1066,8 +1075,11 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     mode: "vid",
     // 上游 #2194 起 /sdcpp/v1 vid_gen 接受 ref_videos（24fps 帧数组）/
     // ref_audios / ref_video_audios（WAV），参考媒体可完整走 HTTP。
-    // 参考图仍是最低门槛：避免 ref2va 权重被无参考条件裸跑。
-    requiredInputsByMode: { vid_gen: ["ref_images"] },
+    // 必填口径与内核一致：参考图 / 参考视频 / 参考音频**任一**即可
+    // （src/pipeline/video.cpp 的 has_references），避免只用参考媒体的人被拦。
+    requiredAnyInputGroupsByMode: {
+      vid_gen: [["ref_images", "ref_videos", "ref_audios"]],
+    },
     // 同 FL2VA：上游对 MiniMax-H3 统一要求参考条件与首尾帧互斥
     // （首尾帧彼此可以共存，故拆成两条二元声明）；hires 二段采样同样
     // 与首尾帧互斥（上游 #2249）。参考视频/音频也属于 Ref2VA 参考条件，
@@ -1241,7 +1253,10 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     name: "HyperFlow H3 Flash (Ref2VA)",
     hint: "H3 蒸馏权重的参考条件支：参考图/视频/音频，6 步专用调度",
     mode: "vid",
-    requiredInputsByMode: { vid_gen: ["ref_images"] },
+    // 同 MiniMax-H3 Ref2VA：参考图 / 视频 / 音频任一即可。
+    requiredAnyInputGroupsByMode: {
+      vid_gen: [["ref_images", "ref_videos", "ref_audios"]],
+    },
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
       F("vae", "视频 VAE", "vae", "vae"),

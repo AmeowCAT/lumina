@@ -294,6 +294,8 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
         <MultiImageRow
           label={
             "参考图片" +
+            // 只在「参考图本身」是必填项时标必需；Ref2VA 属于「任一条件」，
+            // 标成必需会误导成必须给图。
             (FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images")
               ? "（必需）"
               : "")

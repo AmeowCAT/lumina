@@ -31,6 +31,7 @@ import {
 import {
   applyFamilyFeatureLimits,
   exclusiveInputConflicts,
+  familyAcceptsRefImages,
   familyDefaults,
   filterFamilyInputs,
   missingRequiredInputs,
@@ -237,11 +238,11 @@ export function GenerationUI() {
   // The protocol's control_frames flag is generic; only VACE consumes it.
   const controlFramesSupported =
     mode === "vid_gen" && featureEnabled(features, "control_frames") && isVaceModel(caps?.model);
-  // MiniMax-H3 Ref2VA 半支持：vid_gen 协议已接受 ref_images（参考图像条件），
-  // 但 capabilities 的 vid_gen features 未广告 ref_images，按家族声明判定。
+  // MiniMax-H3 Ref2VA：vid_gen 协议只广告 ref_videos/ref_audios 等，没有单独的
+  // ref_images feature，但内核支持参考图，按家族声明判定（必需或任一即可）。
   const refImagesSupported =
     (mode === "img_gen" && featureEnabled(features, "ref_images")) ||
-    !!FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images");
+    familyAcceptsRefImages(FAMILY_CONFIG[family], mode);
   // 上游 #2194：Ref2VA 参考媒体走 capabilities 的 vid_gen features；
   // 旧内核缺键 → 隐藏控件，不发死键。
   const refVideosSupported = mode === "vid_gen" && featureEnabled(features, "ref_videos");
@@ -470,7 +471,13 @@ export function GenerationUI() {
     }
     // 互斥组合（MiniMax-H3：参考图/参考媒体与首尾帧、hires 与首尾帧）上游
     // 会直接判失败，提前拦下；hires 是参数伪输入，需要 params 参与判定。
-    const inputConflicts = exclusiveInputConflicts(FAMILY_CONFIG[family], images, params);
+    // 这里必须先按 features 裁剪一次：某家族禁用 hires 时提交会把该开关
+    // 强制关掉（见下方 activeParams），用未裁剪的值报「hires 与首尾帧冲突」
+    // 会与实际发出的请求矛盾。
+    const effectiveParams: GenParams = featureEnabled(features, "hires")
+      ? params
+      : { ...params, hires: { enabled: false } };
+    const inputConflicts = exclusiveInputConflicts(FAMILY_CONFIG[family], images, effectiveParams);
     if (inputConflicts.length > 0) {
       toast(inputConflicts[0], true);
       return;

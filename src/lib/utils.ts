@@ -1490,7 +1490,11 @@ function generationV1ToGenParams(
     clip_skip: metaNum(meta.clip_skip),
     strength: metaNum(meta.strength),
     control_strength: metaNum(meta.control_strength),
-    control_type: metaStr(meta.control_type),
+    // 内核把「未设置」序列化成字符串 "none"（src/stable-diffusion.cpp 的
+    // control_type_to_str[] 首项，sd_control_type_name 恒返回合法名）。
+    // 原样回填会让每张没设控制类型的图都带上 control_type="none"，
+    // 提交时把一个界面里不存在的取值发给内核；按「未设置」丢弃。
+    control_type: controlTypeFromMetadata(meta.control_type),
     ip_adapter_strength: metaNum(meta.ip_adapter_strength),
     qwen_image_layers: metaNum(meta.qwen_image_layers),
     auto_resize_ref_image: refResizeFromRefImageArgs(metaStr(meta.ref_image_args)),
@@ -1700,6 +1704,20 @@ function previewInterval(value: number | undefined): number {
   if (n <= 0) return 1;
   // 间隔大于总步数等于没有预览；给一个远高于常见步数的上限，挡住异常输入。
   return Math.min(n, 1000);
+}
+
+/**
+ * 元数据里的 `control_type` → 界面取值。
+ *
+ * 内核 `sd_control_type_name()` 对 `SD_CONTROL_TYPE_NONE` 返回 **`"none"`**，
+ * 且该键在图片记录里恒定存在（`info["control_type"]`），所以「没设控制类型」
+ * 与「设成 none」在元数据里是同一个值。界面枚举不含 none，回填时必须丢弃，
+ * 否则恢复参数后会发出一个恒真的伪设置。
+ */
+export function controlTypeFromMetadata(value: unknown): string | undefined {
+  const v = metaStr(value);
+  if (!v || v === "none") return undefined;
+  return CONTROL_TYPES.some((o) => o.value === v) ? v : undefined;
 }
 
 /**

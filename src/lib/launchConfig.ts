@@ -464,7 +464,14 @@ export function missingRequiredInputs(
   images: GenImages,
 ): string[] {
   const required = config?.requiredInputsByMode?.[mode] || [];
-  return required.filter((input) => !hasInput(images, input)).map(requiredInputLabel);
+  const missing = required.filter((input) => !hasInput(images, input)).map(requiredInputLabel);
+  // 「任一即可」组：整组都为空才报，缺失说明用「A / B / C」列出可选项。
+  for (const group of config?.requiredAnyInputGroupsByMode?.[mode] || []) {
+    if (group.length && !group.some((input) => hasInput(images, input))) {
+      missing.push(group.map(requiredInputLabel).join(" / "));
+    }
+  }
+  return missing;
 }
 
 /** 某个必需输入位是否已经有内容（hires 是参数伪输入，只看 params）。 */
@@ -475,6 +482,22 @@ function hasInput(images: GenImages, input: RequiredInput, params?: GenParams): 
   if (input === "ref_audios") return (images.refAudios?.length ?? 0) > 0;
   if (input === "init_image") return !!images.initImage;
   return !!images.endImage;
+}
+
+/**
+ * 该家族在给定模式下是否接受参考图输入。
+ *
+ * 参考图既可来自协议能力（capabilities 的 ref_images），也可来自家族声明：
+ * Ref2VA 的 vid_gen 协议没有单列 ref_images feature（只有 ref_videos 等），
+ * 但内核对参考图是支持的，所以只要家族把它写进「必需」或「任一即可」组，
+ * 就应展示该输入行。
+ */
+export function familyAcceptsRefImages(config: FamilyConfig | undefined, mode: GenMode): boolean {
+  if (!config) return false;
+  if (config.requiredInputsByMode?.[mode]?.includes("ref_images")) return true;
+  return (config.requiredAnyInputGroupsByMode?.[mode] ?? []).some((group) =>
+    group.includes("ref_images"),
+  );
 }
 
 /**
