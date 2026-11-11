@@ -12,9 +12,11 @@ import {
   formatError,
   formatLayerList,
   formatNumberForInput,
+  generationInfoSeed,
   hasLegacyLatentTiling,
   hasPixelTiling,
   jobElapsed,
+  jobProgressSummary,
   legacyLatentTilingAxes,
   legacyTilingDroppedOnPixels,
   LINGBOT_PROMPT_TEMPLATE,
@@ -26,6 +28,8 @@ import {
   parseLayerList,
   pixelTilingDroppedOnLatent,
   previewModesFromCapabilities,
+  progressDetailLabel,
+  progressStageLabel,
   resolveCacheOption,
   resolvePreviewMode,
   resolveVaeTilingForProtocol,
@@ -1632,7 +1636,8 @@ describe("sdcppMetadataToGenParams · sdcpp.generation/v1", () => {
     expect(p.prompt).toBe("a fox");
     expect(p.negative_prompt).toBe("blurry");
     // int64 全范围：字符串 seed 必须按数值解析，不能截断成 NaN。
-    expect(p.seed).toBe(1234567890123456789);
+    // 20 位字面量在 JS 里无法精确表示，用字符串构造避免 no-loss-of-precision。
+    expect(p.seed).toBe(Number("1234567890123456789"));
     expect(p.sample_params).toMatchObject({
       sample_steps: 8,
       sample_method: "euler",
@@ -1656,7 +1661,11 @@ describe("sdcppMetadataToGenParams · sdcpp.generation/v1", () => {
     expect(p.auto_resize_ref_image).toBe(false);
     expect(p.image_preprocess).toEqual(["target=ref,mode=none", "target=init,mode=fit-pad"]);
     expect(p.hires).toMatchObject({ enabled: true, upscaler: "Lanczos", steps: 12, scale: 2 });
-    expect(p.vae_tiling_params).toMatchObject({ enabled: true, tile_size_w: 512, tile_size_h: 384 });
+    expect(p.vae_tiling_params).toMatchObject({
+      enabled: true,
+      tile_size_w: 512,
+      tile_size_h: 384,
+    });
     // LoRA 按相对路径的 basename 匹配回 capabilities 全路径，未命中跳过。
     expect(p.lora).toEqual([
       { path: "D:/loras/sub/style.safetensors", multiplier: 0.8, is_high_noise: false },
@@ -1950,6 +1959,74 @@ describe("toEpochMs", () => {
     for (const value of [undefined, null, 0, -1, NaN, Infinity]) {
       expect(toEpochMs(value)).toBeUndefined();
     }
+  });
+});
+
+// 上游 #2303：结构化进度。api.md 要求容忍未知 stage/detail/unit。
+describe("jobProgressSummary", () => {
+  it("labels known stages with detail, pass and step counts", () => {
+    expect(
+      jobProgressSummary({
+        stage: "sampling",
+        detail: "low_noise",
+        pass: 2,
+        completed: 12,
+        total: 20,
+        unit: "steps",
+      }),
+    ).toBe("采样 · 低噪段 · 第2段 · 12/20");
+    expect(jobProgressSummary({ stage: "vae_decode" })).toBe("VAE 解码");
+    expect(jobProgressSummary({ stage: "conditioning", detail: "positive_prompt" })).toBe(
+      "条件编码 · 正向提示词",
+    );
+  });
+
+  it("hides pass 1 and uncounted stages, tolerates unknown values", () => {
+    // pass=1 不显示段号；未知计数（null）不显示比例。
+    expect(
+      jobProgressSummary({ stage: "sampling", pass: 1, completed: null, total: null, unit: null }),
+    ).toBe("采样");
+    // 未知 stage/detail 原样透传，不猜不吞。
+    expect(jobProgressSummary({ stage: "warp_core", detail: "dilithium" })).toBe(
+      "warp_core · dilithium",
+    );
+    // 编码阶段按张计数，不是 steps，不显示比例。
+    expect(
+      jobProgressSummary({
+        stage: "encoding",
+        detail: "image",
+        completed: 1,
+        total: 4,
+        unit: "images",
+      }),
+    ).toBe("输出编码 · 图片");
+  });
+
+  it("exposes stage/detail label maps for unknown-value tolerance", () => {
+    expect(progressStageLabel("adetailer")).toBe("细节修复");
+    expect(progressStageLabel("brand_new_stage")).toBe("brand_new_stage");
+    expect(progressDetailLabel("high_noise")).toBe("高噪段");
+    expect(progressDetailLabel("unknown_detail")).toBe("unknown_detail");
+  });
+});
+
+// 上游 #2206：结果项 generation_info 的实际 seed 是十进制字符串。
+describe("generationInfoSeed", () => {
+  it("parses string and number seeds", () => {
+    expect(generationInfoSeed({ seed: "1234567890123456789" })).toBe(Number("1234567890123456789"));
+    expect(generationInfoSeed({ seed: "42" })).toBe(42);
+    expect(generationInfoSeed({ seed: 7 })).toBe(7);
+    expect(generationInfoSeed({ seed: 0 })).toBe(0);
+  });
+
+  it("returns undefined for missing, invalid or negative seeds", () => {
+    expect(generationInfoSeed(undefined)).toBeUndefined();
+    expect(generationInfoSeed(null)).toBeUndefined();
+    expect(generationInfoSeed({})).toBeUndefined();
+    expect(generationInfoSeed({ seed: "abc" })).toBeUndefined();
+    expect(generationInfoSeed({ seed: "" })).toBeUndefined();
+    expect(generationInfoSeed({ seed: -1 })).toBeUndefined();
+    expect(generationInfoSeed({ seed: NaN })).toBeUndefined();
   });
 });
 

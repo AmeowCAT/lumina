@@ -2,7 +2,7 @@ import { memo } from "react";
 import type { Capabilities, GenMode, Job, JobConfig } from "../../types";
 import { useStore } from "../../store";
 import { useTheme } from "../../lib/theme";
-import { jobElapsed } from "../../lib/utils";
+import { generationInfoSeed, jobElapsed, jobProgressSummary } from "../../lib/utils";
 import { IC } from "../ui/Icons";
 
 interface Props {
@@ -11,7 +11,7 @@ interface Props {
   maxQueue: number;
   mode: GenMode;
   caps: Capabilities | null;
-  onApplyConfig: (config?: JobConfig, seedOffset?: number) => void;
+  onApplyConfig: (config?: JobConfig, seedOffset?: number, actualSeed?: number) => void;
   onCancel: (id: string) => void;
   onRemove: (id: string) => void;
   onClear: () => void;
@@ -81,8 +81,6 @@ export const JobQueue = memo(function JobQueue({
   // 完成任务的大体积 result 在收割后已从 jobs 剥离（避免 300 条任务重复
   // 持有 base64），下载入口从结果画廊取回同任务结果。
   const results = useStore((s) => s.results);
-  const pct =
-    progressTotal > 0 ? Math.min(100, Math.round((progressStep / progressTotal) * 100)) : 0;
 
   return (
     <div className="job-queue">
@@ -130,6 +128,13 @@ export const JobQueue = memo(function JobQueue({
                 >
                   {cancelling ? "中断中…" : statusLabel(j.status, vostok)}
                 </span>
+                {/* 上游 #2303 的结构化进度：阶段/细节/段内计数，独立于预览；
+                    旧内核无 progress 键时不渲染，进度条回落日志解析。 */}
+                {generating && j.progress && (
+                  <span className="job-stage" title="内核执行阶段（当前采样段，非整项完成度）">
+                    {jobProgressSummary(j.progress)}
+                  </span>
+                )}
                 {j.status === "queued" && j.queue_position != null && (
                   <span
                     className="job-pos"
@@ -184,20 +189,23 @@ export const JobQueue = memo(function JobQueue({
                             : jobResult.b64_json
                               ? [{ b64_json: jobResult.b64_json }]
                               : [];
-                          // 文件名带批次信息：有固定种子时各张种子唯一
-                          // （seed+k）；随机种子时追加 1-based 批次序号，
-                          // 避免同批全部落成同名文件。
+                          // 文件名带批次信息：优先用结果项的实际 seed（上游
+                          // #2206 的 generation_info，随机种子任务也有值）；
+                          // 旧内核回落「固定种子 + 批次偏移」，随机种子追加
+                          // 1-based 批次序号，避免同批全部落成同名文件。
                           const baseSeed = j.config?.params?.seed;
                           for (let i = 0; i < images.length; i++) {
                             const img = images[i];
                             if (!img.b64_json) continue;
+                            const actual = generationInfoSeed(img.generation_info);
                             await onDownload(
                               img.b64_json,
                               jobResult.output_format,
                               jobResult.mime_type,
-                              baseSeed != null && baseSeed >= 0
-                                ? baseSeed + (img.index ?? i)
-                                : undefined,
+                              actual ??
+                                (baseSeed != null && baseSeed >= 0
+                                  ? baseSeed + (img.index ?? i)
+                                  : undefined),
                               images.length > 1 ? `_${i + 1}` : undefined,
                             );
                           }
@@ -227,18 +235,30 @@ export const JobQueue = memo(function JobQueue({
                   </button>
                 </div>
               </div>
-              {generating && progressTotal > 0 && (
-                <div
-                  className="job-progress"
-                  role="progressbar"
-                  aria-label="任务生成进度"
-                  aria-valuemin={0}
-                  aria-valuemax={progressTotal}
-                  aria-valuenow={Math.min(progressStep, progressTotal)}
-                >
-                  <div className="job-progress-fill" style={{ width: `${pct}%` }} />
-                </div>
-              )}
+              {generating &&
+                (() => {
+                  // 新内核（#2303）：优先用任务自己的结构化进度（段内步数），
+                  // 不再借用全局日志进度——后者属于「当前正在采样的那个任务」，
+                  // 多任务排队时会张冠李戴。旧内核回落全局日志解析进度。
+                  const sp = j.progress;
+                  const structured = sp?.unit === "steps" && (sp?.total ?? 0) > 0;
+                  const total = structured ? (sp!.total as number) : progressTotal;
+                  const step = structured ? Math.min(sp!.completed ?? 0, total) : progressStep;
+                  if (total <= 0) return null;
+                  const width = Math.min(100, Math.round((step / total) * 100));
+                  return (
+                    <div
+                      className="job-progress"
+                      role="progressbar"
+                      aria-label="任务生成进度"
+                      aria-valuemin={0}
+                      aria-valuemax={total}
+                      aria-valuenow={step}
+                    >
+                      <div className="job-progress-fill" style={{ width: `${width}%` }} />
+                    </div>
+                  );
+                })()}
             </div>
           );
         })

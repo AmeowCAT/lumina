@@ -90,6 +90,46 @@ describe("ResultsGrid", () => {
   });
 });
 
+// 上游 #2206：结果项携带 generation_info（实际 seed 为十进制字符串），
+// 随机种子任务也能回显真实种子，并随「应用此配置」带回。
+describe("ResultsGrid generation_info seed", () => {
+  function entryWithInfo(seed: number, info?: Record<string, unknown>): ResultEntry {
+    return {
+      jobId: "job-info",
+      mode: "img_gen",
+      result: {
+        output_format: "png",
+        images: [{ index: 0, b64_json: "aW1hZ2U=", generation_info: info }],
+      },
+      config: { mode: "img_gen", params: params(seed) } as JobConfig,
+    };
+  }
+
+  it("shows the actual seed for a random-seed job and applies it", () => {
+    const onApplyConfig = vi.fn();
+    renderGrid({
+      results: [entryWithInfo(-1, { schema: "sdcpp.generation/v1", seed: "987654321" })],
+      onApplyConfig,
+    });
+    expect(screen.getByText("种子 987654321")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "应用此图片的生成配置" }));
+    expect(onApplyConfig).toHaveBeenCalledWith(expect.anything(), 0, 987654321);
+  });
+
+  it("prefers the actual seed over the request seed plus batch offset", () => {
+    renderGrid({
+      results: [entryWithInfo(100, { seed: "555" })],
+    });
+    expect(screen.getByText("种子 555")).toBeTruthy();
+    expect(screen.queryByText("种子 100")).toBeNull();
+  });
+
+  it("falls back to the request seed for legacy kernels without generation_info", () => {
+    renderGrid({ results: [entryWithInfo(100)] });
+    expect(screen.getByText("种子 100")).toBeTruthy();
+  });
+});
+
 function unsavedEntry(jobId: string): ResultEntry {
   return {
     jobId,

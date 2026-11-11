@@ -1610,6 +1610,16 @@
     background: rgb(255 255 255 / 0.05);
     color: var(--color-warn);
   }
+  /* 上游 #2303 结构化进度的阶段文案（采样 · 低噪段 · 12/20 等） */
+  .job-stage {
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 9.5px var(--font-mono);
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+  }
   .job-prompt {
     flex: 1;
     overflow: hidden;

@@ -482,11 +482,19 @@ export interface UpscaleResponse {
   width?: number;
   height?: number;
   output_format?: string;
+  /** 多次 repeats 合并后的放大参数快照（上游 #2206）；旧内核缺该键。 */
+  generation_info?: Record<string, unknown>;
 }
 
 export interface JobImage {
   index?: number;
   b64_json: string;
+  /**
+   * 该图的实际生成参数快照（上游 #2206，`sdcpp.generation/v1`）：含每张图
+   * 的**实际 seed**（十进制字符串），与 embed_image_metadata 开关无关。
+   * 旧内核缺该键。结构宽松处理，消费方只取已知键。
+   */
+  generation_info?: Record<string, unknown>;
 }
 
 export interface JobResult {
@@ -496,6 +504,8 @@ export interface JobResult {
   frame_count?: number;
   b64_json?: string;
   images?: JobImage[];
+  /** 视频结果的请求级参数快照（上游 #2206）；旧内核缺该键。 */
+  generation_info?: Record<string, unknown>;
 }
 
 export type JobStatus = "queued" | "generating" | "completed" | "failed" | "cancelled" | "unknown";
@@ -547,6 +557,31 @@ export interface JobPreview {
   b64_json: string;
 }
 
+/**
+ * 结构化执行进度（上游 #2303，独立于预览设置，图/视频任务都有）。
+ *
+ * `completed/total` 描述的是**当前 stage/pass**，不是整项任务完成度：
+ * 批次换图、hires、高/低噪切换、ADetailer 都会让 `pass` 自增并清零计数。
+ * 未知计数为 **null**（不是估算百分比）；stage/detail/unit 可能出现未知值，
+ * 消费方必须容忍（api.md 明确要求）。终态后 elapsed 冻结、stage 保留。
+ */
+export interface JobProgress {
+  /** queued / waiting / preparing / conditioning / sampling / vae_encode /
+   *  vae_decode / audio_decode / upscaling / adetailer / encoding，可扩展。 */
+  stage: string;
+  /** 阶段细节：positive_prompt / high_noise / image 等，可为空串。 */
+  detail?: string;
+  /** 采样段序号，采样前为 0；每个新采样段（含批次/hires/ADetailer）自增。 */
+  pass?: number;
+  completed?: number | null;
+  total?: number | null;
+  /** steps（采样）/ images（输出编码）/ null（不计数）。 */
+  unit?: string | null;
+  stage_elapsed_ms?: number;
+  /** 任务执行耗时（不含排队），毫秒；执行前为 0。 */
+  elapsed_ms?: number;
+}
+
 export interface Job {
   id: string;
   kind: GenMode;
@@ -577,6 +612,8 @@ export interface Job {
   error?: { code?: string; message?: string } | null;
   /** 生成中的最新预览帧；完成任务不再携带该键。 */
   preview?: JobPreview | null;
+  /** 结构化执行进度（上游 #2303）；旧内核缺该键，界面回落日志解析进度。 */
+  progress?: JobProgress | null;
   prompt?: string;
   /** Frontend-only: snapshot of params used to submit, for task switching. */
   config?: JobConfig;

@@ -17,6 +17,7 @@ import {
   extractApiError,
   featureEnabled,
   formatError,
+  jobProgressSummary,
   LINGBOT_PROMPT_TEMPLATE,
   MAX_JOBS,
   MAX_RESULTS,
@@ -832,10 +833,16 @@ export function GenerationUI() {
   // seedOffset：批量生成时第 k 张的实际种子是 seed+k（引擎按 seed+b 递增），
   // 从单张结果恢复时传入其 index 以复现该张。
   const applyConfig = useCallback(
-    (config?: JobConfig, seedOffset = 0) => {
+    (config?: JobConfig, seedOffset = 0, actualSeed?: number) => {
       if (!config) return;
       const p = deepClone(config.params);
-      if (seedOffset > 0 && p.seed >= 0) p.seed = p.seed + seedOffset;
+      // 上游 #2206：结果项带实际 seed（随机种子任务也有值），优先于
+      // 「请求 seed + 批次偏移」的推算；旧内核无该值时走原逻辑。
+      if (actualSeed != null && Number.isFinite(actualSeed) && actualSeed >= 0) {
+        p.seed = actualSeed;
+      } else if (seedOffset > 0 && p.seed >= 0) {
+        p.seed = p.seed + seedOffset;
+      }
       // 直接写入 params（同 mode 时 mode 不变，init effect 不会重跑，必须手动 set）。
       setParams(p);
       // 恢复提交时的图片输入；无快照的旧记录清空，保证界面状态与该任务一致。
@@ -856,7 +863,11 @@ export function GenerationUI() {
         /* ignore */
       }
       setMode(config.mode);
-      toast(seedOffset > 0 ? `已恢复该张的配置（种子 ${p.seed}）` : "已恢复该任务的配置");
+      toast(
+        actualSeed != null || seedOffset > 0
+          ? `已恢复该张的配置（种子 ${p.seed}）`
+          : "已恢复该任务的配置",
+      );
     },
     [setParams, setImage, setRefImages, setControlFrames, setSeedRandom, setMode, toast],
   );
@@ -1071,10 +1082,13 @@ export function GenerationUI() {
     showNegative || !!(params.negative_prompt && params.negative_prompt.trim());
   // 进行中文案随主题语境:暗房"显影" ↔ 太空"推进"(发动机工作段)
   const developing = theme === "vostok" ? "推进中" : "显影中";
+  // 新内核（#2303）优先用结构化进度（阶段 + 段内计数），旧内核回落日志解析。
   const dreamText = currentGen
-    ? progressTotal > 0
-      ? `${developing} ${progressStep}/${progressTotal}`
-      : `${developing}…`
+    ? currentGen.progress
+      ? `${developing} · ${jobProgressSummary(currentGen.progress)}`
+      : progressTotal > 0
+        ? `${developing} ${progressStep}/${progressTotal}`
+        : `${developing}…`
     : "";
 
   return (

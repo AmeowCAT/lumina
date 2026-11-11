@@ -86,3 +86,54 @@ describe("JobQueue interrupt state", () => {
     expect(screen.queryByRole("button", { name: "取消任务 job_ms_1" })).toBeNull();
   });
 });
+
+// 上游 #2303：任务 JSON 携带结构化 progress，阶段/段内计数独立于预览与日志。
+describe("JobQueue structured progress", () => {
+  it("shows the stage summary and a per-job step progress bar", () => {
+    render(
+      <JobQueue
+        {...baseProps}
+        jobs={[
+          generatingJob({
+            progress: {
+              stage: "sampling",
+              detail: "low_noise",
+              pass: 2,
+              completed: 12,
+              total: 20,
+              unit: "steps",
+              stage_elapsed_ms: 8000,
+              elapsed_ms: 15000,
+            },
+          }),
+        ]}
+        caps={capsWith(true)}
+      />,
+    );
+    expect(screen.getByText("采样 · 低噪段 · 第2段 · 12/20")).toBeTruthy();
+    const bar = screen.getByRole("progressbar", { name: "任务生成进度" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("12");
+    expect(bar.getAttribute("aria-valuemax")).toBe("20");
+  });
+
+  it("shows uncounted stages without a progress bar", () => {
+    render(
+      <JobQueue
+        {...baseProps}
+        jobs={[
+          generatingJob({
+            progress: { stage: "conditioning", detail: "positive_prompt", pass: 0 },
+          }),
+        ]}
+        caps={capsWith(true)}
+      />,
+    );
+    expect(screen.getByText("条件编码 · 正向提示词")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("renders no stage text for legacy kernels without progress", () => {
+    render(<JobQueue {...baseProps} jobs={[generatingJob()]} caps={capsWith(true)} />);
+    expect(screen.queryByText(/采样|条件编码|VAE/)).toBeNull();
+  });
+});

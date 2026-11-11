@@ -6,7 +6,7 @@ import type { JobConfig, JobResult } from "../../types";
 import { UNPLAYABLE_VIDEO_HINT, isUnplayableVideoMime, type LightboxItem } from "../ui/Lightbox";
 import { useVideoPoster } from "../../hooks/useVideoPoster";
 import { useTheme } from "../../lib/theme";
-import { toEpochMs } from "../../lib/utils";
+import { generationInfoSeed, toEpochMs } from "../../lib/utils";
 import { cn } from "../ui/cn";
 import { IC } from "../ui/Icons";
 import { TwoTapButton } from "../ui/TwoTapButton";
@@ -100,7 +100,7 @@ interface Props {
   results: ResultEntry[];
   generating: boolean;
   onLightbox: (items: LightboxItem[], index: number) => void;
-  onApplyConfig: (config?: JobConfig, seedOffset?: number) => void;
+  onApplyConfig: (config?: JobConfig, seedOffset?: number, actualSeed?: number) => void;
   onDownload: (b64: string, fmt?: string, mime?: string, seed?: number) => void;
   onRemove: (jobId: string, imageIndex?: number) => void;
   /** 一键保存到输出目录(key = 图片索引字符串,视频为 "v") */
@@ -164,7 +164,11 @@ function saveBtnTitle(state?: ImageSaveState): string {
   }
 }
 
-function seedLabel(config?: JobConfig, index?: number): string {
+function seedLabel(config?: JobConfig, index?: number, info?: Record<string, unknown>): string {
+  // 上游 #2206：结果项携带该图的实际 seed（十进制字符串），随机种子任务
+  // 也能回显真实值；旧内核无 generation_info 时回落「请求 seed + 批次偏移」。
+  const actual = generationInfoSeed(info);
+  if (actual != null) return `种子 ${actual}`;
   const base = config?.params?.seed;
   if (base == null || base < 0) return "";
   const s = base + (index ?? 0);
@@ -206,7 +210,7 @@ function buildLightboxItems(
         items.push({
           type: "image",
           src: getImageUrl(img.b64_json, fmt),
-          title: [seedLabel(r.config, img.index), dimensionLabel(r.config)]
+          title: [seedLabel(r.config, img.index, img.generation_info), dimensionLabel(r.config)]
             .filter(Boolean)
             .join(" · "),
         });
@@ -334,7 +338,8 @@ function FeaturedResult({
         <div className="featured-batch">
           {images.map((img, ii) => {
             const src = getImageUrl(img.b64_json, fmt);
-            const seedInfo = seedLabel(entry.config, img.index ?? ii);
+            const seedInfo = seedLabel(entry.config, img.index ?? ii, img.generation_info);
+            const actualSeed = generationInfoSeed(img.generation_info);
             const key = imageKey(img.index, ii);
             const lbIndex = indexOf.get(`${entry.jobId}:${img.index ?? ii}`) ?? 0;
             const saveState = entry.saves?.[key];
@@ -377,12 +382,14 @@ function FeaturedResult({
                   <button
                     className="btn btn-sm"
                     title={
-                      entry.config && entry.config.params.seed >= 0
-                        ? `应用此配置（种子 ${entry.config.params.seed + (img.index ?? ii)}）`
-                        : "应用此配置"
+                      actualSeed != null
+                        ? `应用此配置（种子 ${actualSeed}）`
+                        : entry.config && entry.config.params.seed >= 0
+                          ? `应用此配置（种子 ${entry.config.params.seed + (img.index ?? ii)}）`
+                          : "应用此配置"
                     }
                     aria-label="应用此图片的生成配置"
-                    onClick={() => onApplyConfig(entry.config, img.index ?? ii)}
+                    onClick={() => onApplyConfig(entry.config, img.index ?? ii, actualSeed)}
                   >
                     {IC.refresh}
                   </button>
@@ -394,9 +401,10 @@ function FeaturedResult({
                         img.b64_json,
                         fmt,
                         undefined,
-                        entry.config?.params?.seed != null && entry.config.params.seed >= 0
-                          ? entry.config.params.seed + (img.index ?? ii)
-                          : undefined,
+                        actualSeed ??
+                          (entry.config?.params?.seed != null && entry.config.params.seed >= 0
+                            ? entry.config.params.seed + (img.index ?? ii)
+                            : undefined),
                       )
                     }
                   >
@@ -696,7 +704,8 @@ export const ResultsGrid = memo(function ResultsGrid({
                   return r.result.images.map((img, ii) => {
                     const fmt = r.result.output_format || "png";
                     const src = getImageUrl(img.b64_json, fmt);
-                    const seedInfo = seedLabel(r.config, img.index ?? ii);
+                    const seedInfo = seedLabel(r.config, img.index ?? ii, img.generation_info);
+                    const actualSeed = generationInfoSeed(img.generation_info);
                     const dimInfo = dimensionLabel(r.config);
                     const timeInfo = elapsedLabel(r.created, r.completedAt);
                     const key = imageKey(img.index, ii);
@@ -774,12 +783,14 @@ export const ResultsGrid = memo(function ResultsGrid({
                           <button
                             className="btn btn-sm"
                             title={
-                              r.config && r.config.params.seed >= 0
-                                ? `应用此配置（种子 ${r.config.params.seed + (img.index ?? ii)}）`
-                                : "应用此配置"
+                              actualSeed != null
+                                ? `应用此配置（种子 ${actualSeed}）`
+                                : r.config && r.config.params.seed >= 0
+                                  ? `应用此配置（种子 ${r.config.params.seed + (img.index ?? ii)}）`
+                                  : "应用此配置"
                             }
                             aria-label="应用此图片的生成配置"
-                            onClick={() => onApplyConfig(r.config, img.index ?? ii)}
+                            onClick={() => onApplyConfig(r.config, img.index ?? ii, actualSeed)}
                           >
                             {IC.refresh}
                           </button>
@@ -791,9 +802,10 @@ export const ResultsGrid = memo(function ResultsGrid({
                                 img.b64_json,
                                 fmt,
                                 undefined,
-                                r.config?.params?.seed != null && r.config.params.seed >= 0
-                                  ? r.config.params.seed + (img.index ?? ii)
-                                  : undefined,
+                                actualSeed ??
+                                  (r.config?.params?.seed != null && r.config.params.seed >= 0
+                                    ? r.config.params.seed + (img.index ?? ii)
+                                    : undefined),
                               )
                             }
                           >

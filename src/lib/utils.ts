@@ -6,6 +6,7 @@ import type {
   GenMode,
   GenParams,
   Job,
+  JobProgress,
   LoraEntry,
   ModelFile,
   SampleParams,
@@ -475,6 +476,68 @@ export function jobElapsed(job: Job, terminal: boolean): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m${s % 60}s`;
+}
+
+/**
+ * 结构化进度的阶段文案（上游 #2303）。api.md 明确要求客户端容忍未知
+ * stage/detail/unit：未知值原样返回，不猜、不吞。
+ */
+const PROGRESS_STAGE_LABELS: Record<string, string> = {
+  queued: "排队中",
+  waiting: "等待执行",
+  preparing: "准备中",
+  conditioning: "条件编码",
+  sampling: "采样",
+  vae_encode: "VAE 编码",
+  vae_decode: "VAE 解码",
+  audio_decode: "音频解码",
+  upscaling: "放大",
+  adetailer: "细节修复",
+  encoding: "输出编码",
+};
+
+export function progressStageLabel(stage: string): string {
+  return PROGRESS_STAGE_LABELS[stage] ?? stage;
+}
+
+const PROGRESS_DETAIL_LABELS: Record<string, string> = {
+  positive_prompt: "正向提示词",
+  negative_prompt: "负向提示词",
+  image_condition: "图像条件",
+  high_noise: "高噪段",
+  low_noise: "低噪段",
+  image: "图片",
+  video: "视频",
+};
+
+export function progressDetailLabel(detail: string): string {
+  return PROGRESS_DETAIL_LABELS[detail] ?? detail;
+}
+
+/**
+ * 任务行/结果卡的进度摘要：阶段 + 细节 + 段号 + 段内计数。
+ * 计数只在 `unit=steps` 且 total 已知时显示（上游：未知计数是 null，
+ * 不是估算百分比）；pass>1 才显示段号，避免单段任务噪音。
+ */
+export function jobProgressSummary(p: JobProgress): string {
+  const parts = [progressStageLabel(p.stage)];
+  if (p.detail) parts.push(progressDetailLabel(p.detail));
+  if ((p.pass ?? 0) > 1) parts.push(`第${p.pass}段`);
+  if (p.unit === "steps" && p.total != null && p.total > 0) {
+    parts.push(`${p.completed ?? 0}/${p.total}`);
+  }
+  return parts.join(" · ");
+}
+
+/**
+ * 结果项 `generation_info` 里的实际 seed（上游 #2206）：十进制字符串
+ * （保全 int64 范围），宽松兼容 number。解析失败/负值返回 undefined，
+ * 调用方回落「请求 seed + 批次偏移」的旧逻辑。
+ */
+export function generationInfoSeed(info?: Record<string, unknown> | null): number | undefined {
+  const raw = info?.seed;
+  const n = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /**
