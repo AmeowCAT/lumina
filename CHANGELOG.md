@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+（下一轮的改动写这里。发版时把本节改成 `## <版本号> — <日期>`，并在上方新开一个空的
+`[Unreleased]`。）
+
+## 0.10.0 — 2026-11-11
+
 ### 同步上游 `32d516c`（2026-11-11）
 
 - **正确性**：嵌入元数据 schema 换代兼容（上游 #2206）：`sdcpp.image.params/v1` →
@@ -35,6 +40,22 @@
 - **裁定**：SeedVR2 / RelayVSR（#2300 / #2285）走 CLI-only 的 `vid_upscale`，服务端
   无通道，不接（README 已知限制）；recipe `size_multiple` / `video_constraints` /
   幂等加载仍不消费。分析与落地记录见 `docs/UPSTREAM-SYNC-2026-11-11.md`。
+
+### 修复
+
+- **正确性**：`control_type` 元数据回填把内核的「未设置」哨兵 `"none"` 当成有效值，
+  导致每张没设控制类型的图恢复参数后都带上伪设置（界面枚举无此值、提交时又发给内核）；
+  现按未设置丢弃，未知取值同样不采信。
+- **正确性**：MiniMax-H3 Ref2VA 的必备输入口径与内核不符——上游 `has_references` 是
+  「参考图 / 参考视频 / 参考音频**任一**」，此前写成「参考图必须给」，只用参考媒体的
+  用户会被界面拦下。改为「任一即可」组校验，缺失时提示三项可选项。
+- **正确性**：上述改动后 Ref2VA 的参考图输入行改用统一的 `familyAcceptsRefImages`
+  判定（必需或任一即可），避免入口消失；「（必需）」角标仍只对真正全必需的家族显示。
+- **正确性**：二次放大（hires）与首尾帧的互斥判定改用按 features 裁剪后的参数，
+  与提交时的裁剪口径一致，避免家族禁用 hires 时仍按「开着」误报冲突。
+- **工程化**：`ServerManager` 补 `#[derive(Default)]`、`save.rs` 的
+  `manual_is_multiple_of` allow 前置 `unknown_lints`，修复本地旧 clippy 下
+  `-D warnings` 的两处存量报错。
 
 ## 0.9.1 — 2026-10-24
 
