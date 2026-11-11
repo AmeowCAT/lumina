@@ -206,6 +206,9 @@ fn parse_help(help: &str) -> CliCapabilities {
         "-t",
         "--params-backend",
         "--rpc-servers",
+        // 上游 #2316：异步队列治理参数，都收整数。
+        "--max-pending-jobs",
+        "--completed-ttl-seconds",
     ] {
         value_options.insert(name.into());
     }
@@ -530,7 +533,9 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
             | "--tokenizer"
             | "--sage-attn"
             | "--taesd-preview-only"
-            | "--conditioning-cache-size" => {
+            | "--conditioning-cache-size"
+            | "--max-pending-jobs"
+            | "--completed-ttl-seconds" => {
                 if caps.supports(name) == Some(false) {
                     bail!(
                         "所选 sd-server 不支持 {}；请清空对应设置/附加启动参数，或升级内核。",
@@ -553,6 +558,23 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                         .is_some_and(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()))
                 {
                     bail!("--conditioning-cache-size 必须是非负整数（0 表示关闭条件缓存）。");
+                }
+                // 上游 #2316：队列上限须 >0（runtime.cpp validate），TTL 须 ≥0。
+                // 完成任务默认 600s 后被清理，过期查询回 410（界面轮询已兼容）。
+                if name == "--max-pending-jobs"
+                    && !value.is_some_and(|v| {
+                        !v.is_empty()
+                            && v.chars().all(|c| c.is_ascii_digit())
+                            && v.parse::<u64>().is_ok_and(|n| n > 0)
+                    })
+                {
+                    bail!("--max-pending-jobs 必须是正整数（上游默认 64）。");
+                }
+                if name == "--completed-ttl-seconds"
+                    && !value
+                        .is_some_and(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()))
+                {
+                    bail!("--completed-ttl-seconds 必须是非负整数秒（上游默认 600；0 表示完成任务立即清理）。");
                 }
             }
             "--flash-attn" | "--conv-direct" | "--batched-cfg" => {
@@ -646,6 +668,8 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     | "--threads"
                     | "-t"
                     | "--rpc-servers"
+                    | "--max-pending-jobs"
+                    | "--completed-ttl-seconds"
             )
             || name == "--auto-fit"
                 && (caps.auto_fit == AutoFitSyntax::OnOff
@@ -702,7 +726,7 @@ mod tests {
         parse_help(&help("  --stream-layers       stream weights\n  --auto-fit            pick placements\n  -v, --verbose         print extra info\n"))
     }
     fn new() -> CliCapabilities {
-        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --taesd-preview-only  TAE for previews only\n  --ad-model <string>   ADetailer detector path\n  --conditioning-cache-size <int>   conditioning cache capacity\n  --flash-attn          on|off|auto or module assignments (default: auto)\n  --conv-direct         on|off|auto or diffusion/vae/controlnet assignments\n  --batched-cfg         on|off (default: on)\n  --params-backend      disk, cpu, or module=backend assignments\n  --rpc-servers         host:port list\n  -t, --threads <int>   thread count (<=0 uses physical cores)\n"))
+        parse_help(&help("  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --disable-prefetch    disable prefetch\n  --linear-scale        scale\n  --attn-scale          scale\n  --log-level           level\n  --tokenizer <string>  tokenizer.json path\n  --sage-attn           use native CUDA SageAttention\n  --taesd-preview-only  TAE for previews only\n  --ad-model <string>   ADetailer detector path\n  --conditioning-cache-size <int>   conditioning cache capacity\n  --flash-attn          on|off|auto or module assignments (default: auto)\n  --conv-direct         on|off|auto or diffusion/vae/controlnet assignments\n  --batched-cfg         on|off (default: on)\n  --params-backend      disk, cpu, or module=backend assignments\n  --rpc-servers         host:port list\n  --max-pending-jobs <int>   maximum pending async jobs (default: 64)\n  --completed-ttl-seconds <int>   completed job retention seconds (default: 600)\n  -t, --threads <int>   thread count (<=0 uses physical cores)\n"))
     }
     fn argv(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| (*s).into()).collect()
@@ -879,12 +903,14 @@ mod tests {
     fn rejects_new_options_on_kernels_that_do_not_declare_them() {
         let old_help = help("  --stream-layers       stream weights\n");
         let old_caps = parse_help(&old_help);
-        let old_cases: [&[&str]; 5] = [
+        let old_cases: [&[&str]; 7] = [
             &["--tokenizer", "/models/tokenizer.json"],
             &["--sage-attn"],
             &["--taesd-preview-only"],
             &["--ad-model", "face.safetensors"],
             &["--conditioning-cache-size", "4"],
+            &["--max-pending-jobs", "64"],
+            &["--completed-ttl-seconds", "600"],
         ];
         for args in old_cases {
             let err = validate_args(&argv(args), &old_caps).unwrap_err();
@@ -897,12 +923,14 @@ mod tests {
 
         // 新内核上放行，并校验条件缓存必须是非负整数。
         let new_caps = new();
-        let new_cases: [&[&str]; 5] = [
+        let new_cases: [&[&str]; 7] = [
             &["--tokenizer", "/models/tokenizer.json"],
             &["--sage-attn"],
             &["--taesd-preview-only"],
             &["--ad-model", "face.safetensors"],
             &["--conditioning-cache-size", "0"],
+            &["--max-pending-jobs", "64"],
+            &["--completed-ttl-seconds", "0"],
         ];
         for args in new_cases {
             assert!(validate_args(&argv(args), &new_caps).is_ok(), "{args:?}");
@@ -913,6 +941,25 @@ mod tests {
                 .to_string()
                 .contains("非负整数")
         );
+        // 上游 #2316：队列上限须 >0，TTL 须 ≥0（runtime.cpp validate 同口径）。
+        for bad in ["0", "-1", "abc"] {
+            assert!(
+                validate_args(&argv(&["--max-pending-jobs", bad]), &new_caps)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("正整数"),
+                "--max-pending-jobs {bad}"
+            );
+        }
+        for bad in ["-1", "abc"] {
+            assert!(
+                validate_args(&argv(&["--completed-ttl-seconds", bad]), &new_caps)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("非负整数"),
+                "--completed-ttl-seconds {bad}"
+            );
+        }
         // help 不可判定（Unknown）时按"不静默丢弃"处理：透传不报错。
         let unknown = CliCapabilities::unknown();
         assert!(validate_args(&argv(&["--tokenizer", "/x.json"]), &unknown).is_ok());

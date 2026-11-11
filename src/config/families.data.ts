@@ -1057,6 +1057,8 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
       },
     ],
+    generationHint:
+      "上游 #2249 起支持二次放大（hires）二段采样：Latent 插值或学习型放大器（--hires-upscalers-dir，训练域 1.2–2.0×），但不能与首尾帧同用。VAE 可换 Sol-H3-VAE 蒸馏解码器（上游 #2317）：时间分块默认 10/5 latent 帧，temporal_tile_frames / temporal_tile_overlap 须为 5 的倍数。长序列显存紧张时可在附加启动参数写 --model-args minimax_h3_attn_chunk_budget=0.25（GiB，默认 2，0=关闭分组，上游 #2292）。",
   },
   "minimax-h3-ref2va": {
     name: "MiniMax-H3 (Ref2VA)",
