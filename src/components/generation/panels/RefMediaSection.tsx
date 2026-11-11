@@ -5,6 +5,7 @@ import {
   readWavAsDataUrl,
   REF_VIDEO_FPS,
   REF_VIDEO_MAX_FRAMES,
+  REF_VIDEO_MIN_FRAMES,
 } from "../../../lib/refMedia";
 import { IC } from "../../ui/Icons";
 
@@ -71,7 +72,8 @@ export const RefMediaSection = memo(function RefMediaSection({
           <label className="form-label">
             参考视频
             <span className="form-sublabel">
-              按 {REF_VIDEO_FPS}fps 抽帧（服务端固定帧率），单个上限 {REF_VIDEO_MAX_FRAMES} 帧
+              按 {REF_VIDEO_FPS}fps 抽帧（服务端固定帧率），帧数对齐 17k+5； 至少{" "}
+              {REF_VIDEO_MIN_FRAMES} 帧、最多 {REF_VIDEO_MAX_FRAMES} 帧
             </span>
           </label>
           <div className="flex flex-wrap items-center gap-1.5">

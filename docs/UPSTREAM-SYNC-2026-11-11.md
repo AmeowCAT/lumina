@@ -29,7 +29,7 @@
 ```text
 $ node scripts/upstream-diff.mjs --upstream <clone> --since 95ff762 --ref origin/master
 ⚠ 上游新增的启动参数（3）
-  --control-type            ← 误报：生成期参数，sd-server 启动不认（见 §6）
+  --control-type            ← 生成期参数，但 main.cpp 也注册为启动默认值（见 §6）
   --completed-ttl-seconds
   --max-pending-jobs
 ⚠ 上游新增的请求体字段（1）
@@ -183,7 +183,9 @@ vae_decode / audio_decode / upscaling / adetailer / encoding`，可重复可跳�
 （tile/repaint 仅 Union ProMax）；别名 hed/softedge/pidi/ted→scribble、
 lineart/anime_lineart/mlsd→canny、seg→segment、inpaint/outpaint→repaint。
 **SDXL ControlNet Union 必需**，其它 ControlNet 忽略；非法值 resolve 失败 → 400。
-`--control-type` 是**生成期参数**（sd-cli），sd-server 启动不认（§6 误报说明）。
+`--control-type` 属于 `SDGenerationParams`；`sd-server` 启动**也接受**它
+（`main.cpp` 把 `default_gen_params.get_options()` 一并注册，作为默认值），
+请求体的 `control_type` 逐字段覆盖。界面走请求体字段，无需改启动参数。
 
 **落点**：`GenParams.control_type?` → `buildRequestBody` img_gen 分支
 （非空才发）→ ControlNet 输入区加「控制类型」选择器（仅当 control_image 存在
@@ -248,7 +250,9 @@ ref_video_audios` 三个布尔（旧内核缺键 → 隐藏控件）。
    `refVideoAudios: string[]`；`buildRequestBody` vid_gen 分支按 feature 发送。
 2. 图片输入面板（仅 ref2va 家族 + feature 开启时）：
    - 参考视频：选视频文件 → `<video>` + canvas **按 24fps 抽帧**（短边缩到
-     ≤1024，JPEG 0.92，帧数上限 481 ≈ 20s，超限截断并提示）；
+     ≤768——内核把参考视频缩到 768 短边、面积上限 768×1344，抽更大只增体积；
+     JPEG 0.92）；帧数**向下对齐 `17k+5`**（内核 `video.cpp` 的同一方向递减）、
+     上限 481 ≈ 20s；**少于 5 帧直接报错**（内核 `needs at least 5 frames`）；
    - 参考音频 / 视频音轨：只收 `.wav`，读 base64；音轨数超过视频数时阻止提交。
 3. `minimax-h3-ref2va` / `hyperflow-h3-flash-ref2va` 的 hint 更新（去掉
    「仅 sd-cli」措辞）；必备输入改成**「任一即可」组**
@@ -314,12 +318,14 @@ recipe 的产品政策（20 步上限等）冲突依旧，上一轮 §5 的四�
    走 `parse_image_array_json_field` / `parse_audio_array_json_field` /
    `parse_video_array_json_field`，漂移与覆盖模式都看不到。
    **修**：`extractJsonKeys` 追加这三个解析函数的键名提取。
-2. **启动参数误报生成期参数**：`--control-type` 在 `SDGenerationParams`
-   里，sd-server 启动只解析 `SDContextParams + SDSvrParams`。脚本现在把
-   common.cpp 全部 `--x` 当启动参数。**修**：提取时区分
-   `SDContextParams::get_options` / `SDSvrParams`（runtime.cpp）与
-   `SDGenerationParams::get_options` 的文本区间，生成期参数只报「请求侧新增」
-   不报「启动参数新增」。
+2. **生成期参数也是启动参数（此前的判断错误，已订正）**：曾以为
+   `--control-type` 在 `SDGenerationParams` 里就不算启动参数。实际
+   `examples/server/main.cpp::parse_args` 把三段 options 全部注册
+   （`svr_params` / `ctx_params` / `default_gen_params`），`print_usage`
+   还专门印一段 `Default Generation Options`——**sd-server 启动接受全部
+   生成期参数**，它们只作为默认值，请求体逐字段覆盖。
+   **修**：脚本把生成期参数计入「新增启动参数」（不能漏报），并单独标注
+   「既可写启动参数当默认值、也能被请求体覆盖」。
 3. **语义检查补两条**：`progress` 对象出现（api.md `progress.stage`）、
    `generation_info` 出现（api.md `sdcpp.generation/v1`）时提示界面落点，
    与现有时间戳/cancel/ADetailer 检查并列。

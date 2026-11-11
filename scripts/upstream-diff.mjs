@@ -106,10 +106,24 @@ const extractJsonKeys = (text) =>
     ].map((m) => m[1]),
   );
 /**
- * common.cpp 里 `SDContextParams::get_options`（启动参数）排在
- * `SDGenerationParams::get_options`（生成期参数）之前。生成期参数
- * （--control-type 等）sd-server 启动不认，只该报「请求侧新增」，
- * 混进启动参数报告是误报（2026-11 同步 §6）。
+ * `examples/server/main.cpp::parse_args` 把三段 options 一起注册：
+ *
+ * ```cpp
+ * std::vector<ArgOptions> options_vec = {
+ *     svr_params.get_options(),            // SDSvrParams
+ *     ctx_params.get_options(),            // SDContextParams
+ *     default_gen_params.get_options(),    // SDGenerationParams
+ * };
+ * ```
+ *
+ * 所以 **sd-server 启动接受全部生成期参数**（`-p` / `--cfg-scale` /
+ * `--sigmas` …），它们只作为「默认生成参数」，请求体逐字段覆盖；
+ * `print_usage` 也把它们印成 `Default Generation Options` 一段。
+ *
+ * 2026-11 同步一度把这一段错判成「server 不认」，据此把生成期参数从启动
+ * 参数报告里剔除，导致 `--control-type` 这类真实可用的启动参数被降级成
+ * 「生成期信息」。这里改为**全部计入启动参数**，并单独提示它们同时可被
+ * 请求体覆盖，避免同一个人再错第二次。
  * @param {string} text
  * @returns {{ context: string; generation: string }}
  */
@@ -261,17 +275,26 @@ async function drift() {
 
   const oldSplit = splitCommonArgs(oldCommon);
   const newSplit = splitCommonArgs(newCommon);
-  const oldArgs = new Set([...extractArgs(oldSplit.context), ...extractArgs(oldRuntime)]);
-  const newArgs = new Set([...extractArgs(newSplit.context), ...extractArgs(newRuntime)]);
+  // 三段 options 都被 sd-server 注册（main.cpp:parse_args），所以生成期参数
+  // 同样是「启动参数」，必须计入，否则会漏报真实可用的启动参数。
+  const oldArgs = new Set([
+    ...extractArgs(oldSplit.context),
+    ...extractArgs(oldSplit.generation),
+    ...extractArgs(oldRuntime),
+  ]);
+  const newArgs = new Set([
+    ...extractArgs(newSplit.context),
+    ...extractArgs(newSplit.generation),
+    ...extractArgs(newRuntime),
+  ]);
   const cliOnlyOld = new Set(extractArgs(oldCli));
   const cliOnlyNew = new Set(extractArgs(newCli));
   const addedArgs = [...newArgs].filter((a) => !oldArgs.has(a) && !cliOnlyNew.has(a));
   const removedArgs = [...oldArgs].filter((a) => !newArgs.has(a) && !cliOnlyOld.has(a));
-  // 生成期参数（SDGenerationParams）：sd-server 启动不认，单独信息性输出，
-  // 不再混进「新增启动参数」（--control-type 误报的修复，§6）。
+  // 生成期参数单独标注：它们既能在启动时给（作为默认值），也能被请求体覆盖。
   const oldGen = new Set(extractArgs(oldSplit.generation));
   const newGen = new Set(extractArgs(newSplit.generation));
-  const addedGenArgs = [...newGen].filter((a) => !oldGen.has(a) && !cliOnlyNew.has(a));
+  const addedGenArgs = addedArgs.filter((a) => newGen.has(a) && !oldGen.has(a));
 
   const oldKeys = new Set(extractJsonKeys(oldCommon));
   const newKeys = new Set(extractJsonKeys(newCommon));
@@ -295,11 +318,11 @@ async function drift() {
     await semanticDrift(since, ref),
   ];
   if (addedGenArgs.length) {
-    console.log(
-      `\nℹ 上游新增的生成期参数（${addedGenArgs.length}，sd-cli / 请求侧，不是启动参数）`,
-    );
+    console.log(`\nℹ 其中${addedGenArgs.length}个属于生成期参数（Default Generation Options）`);
     for (const item of addedGenArgs) console.log(`  ${item}`);
-    console.log("  → 对应请求体字段见上方「新增的请求体字段」；启动参数报告不再包含它们。");
+    console.log(
+      "  → 既可写在启动参数里当默认值（main.cpp 注册了三段 options），也能被请求体逐字段覆盖。",
+    );
   }
   const any = findings.some(Boolean);
   if (!any) console.log("\n✓ 两个提交之间没有参数/字段增删。");

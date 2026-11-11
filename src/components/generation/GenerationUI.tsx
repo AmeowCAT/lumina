@@ -36,7 +36,7 @@ import {
   filterFamilyInputs,
   missingRequiredInputs,
 } from "../../lib/launchConfig";
-import { validateRefMediaCounts } from "../../lib/refMedia";
+import { validateRefMedia } from "../../lib/refMedia";
 import type { GenImages, GenMode, GenParams, Job, JobConfig, UpscaleResponse } from "../../types";
 import { Lightbox, type LightboxItem } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
@@ -482,8 +482,9 @@ export function GenerationUI() {
       toast(inputConflicts[0], true);
       return;
     }
-    // 上游 #2194：视频音轨按序配对参考视频，数量不得超过视频数。
-    const mediaError = validateRefMediaCounts(images.refVideos ?? [], images.refVideoAudios ?? []);
+    // 上游 #2194 + video.cpp 约束：参考视频至少 5 帧（按 24fps 归一），
+    // 音轨按序配对视频且数量不得更多。
+    const mediaError = validateRefMedia(images.refVideos ?? [], images.refVideoAudios ?? []);
     if (mediaError) {
       toast(mediaError, true);
       return;
