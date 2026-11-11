@@ -148,7 +148,16 @@ pub fn detect_family(path: &str) -> &'static str {
         return "minimax-h3-image";
     }
     // P-H3-Image（上游 #2272）：H3 DiT + 单帧 VAE + Qwen3-VL-4B + 文本连接器。
-    if has_any(&t, &["p-h3-image", "p_h3_image", "p-h3_image", "ph3-image", "ph3_image"]) {
+    if has_any(
+        &t,
+        &[
+            "p-h3-image",
+            "p_h3_image",
+            "p-h3_image",
+            "ph3-image",
+            "ph3_image",
+        ],
+    ) {
         return "p-h3-image";
     }
     // HyperFlow H3 Flash（上游 #2299）：MiniMax-H3 的蒸馏视频权重，
@@ -628,7 +637,10 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     }
     // Embedding connectors (LTX, LLaDA-Image, P-H3-Image)。P-H3 的官方名是
     // p-h3-image_text_connector.safetensors（单数 connector，上游 #2272）。
-    if has_any(&test, &["embeddings_connector", "connectors", "text_connector"]) {
+    if has_any(
+        &test,
+        &["embeddings_connector", "connectors", "text_connector"],
+    ) {
         return "embeddings";
     }
     // TAE (Tiny AutoEncoder) — must precede the generic VAE rules: every TAE

@@ -59,6 +59,7 @@ pub struct StopResult {
     pub pid: Option<u32>,
 }
 
+#[derive(Default)]
 pub struct ServerManager {
     child: Option<Child>,
     model: String,

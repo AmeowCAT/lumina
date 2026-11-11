@@ -257,6 +257,9 @@ fn days_to_date(mut days: u64) -> (u64, u64, u64) {
     (year, month as u64, days + 1)
 }
 
+// manual_is_multiple_of 是较新 clippy 才有的 lint；旧工具链上先放行
+// unknown_lints，避免 -D warnings 把 allow 本身判成错误。
+#[allow(unknown_lints)]
 #[allow(clippy::manual_is_multiple_of)]
 fn is_leap(y: u64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
