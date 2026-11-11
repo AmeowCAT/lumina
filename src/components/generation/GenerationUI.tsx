@@ -902,8 +902,9 @@ export function GenerationUI() {
     (metadata: Record<string, unknown>, _imageSrc: string) => {
       try {
         if (!params) return;
-        // sd-server 元数据是 sdcpp.image.params/v1 schema，
-        // 由 sdcppMetadataToGenParams 映射为 GenParams（含 Beta 参数回填）。
+        // sd-server 元数据：上游 #2206 起是 sdcpp.generation/v1 schema，
+        // 旧图仍是 sdcpp.image.params/v1；sdcppMetadataToGenParams 按 schema
+        // 分流映射为 GenParams（含 Beta 参数回填）。
         const merged = {
           ...deepClone(params),
           ...sdcppMetadataToGenParams(metadata, caps?.loras),

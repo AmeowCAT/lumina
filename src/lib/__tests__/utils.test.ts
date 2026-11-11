@@ -1566,6 +1566,234 @@ describe("sdcppMetadataToGenParams", () => {
   });
 });
 
+// 上游 #2206：嵌入元数据换成 sdcpp.generation/v1（src/generation_info.cpp）。
+// 键位与旧 schema 完全不同：prompt 扁平化、seed 是十进制字符串、采样段叫
+// sample_params、video 帧数在顶层、image_preprocess 包 rules、LoRA 记 path。
+describe("sdcppMetadataToGenParams · sdcpp.generation/v1", () => {
+  const imageMeta = {
+    schema: "sdcpp.generation/v1",
+    kind: "image",
+    prompt: "a fox",
+    negative_prompt: "blurry",
+    width: 1024,
+    height: 1024,
+    clip_skip: 2,
+    seed: "1234567890123456789",
+    sample_params: {
+      sample_steps: 8,
+      sample_method: "euler",
+      scheduler: "beta",
+      eta: 1,
+      flow_shift: 1.15,
+      extra_sample_args: "alpha=0.8,beta=0.5",
+      custom_sigmas: [0.1, 0.2],
+      guidance: {
+        txt_cfg: 1.0,
+        img_cfg: 5,
+        distilled_guidance: 0,
+        slg: { scale: 2, layers: [7, 8, 9], layer_start: 0.01, layer_end: 0.2 },
+      },
+    },
+    strength: 0.75,
+    control_strength: 0.9,
+    ip_adapter_strength: 0.6,
+    ref_image_args: "preset=qwen,resize_before_vae=false",
+    image_preprocess: { rules: ["target=ref,mode=none", "target=init,mode=fit-pad"] },
+    increase_ref_index: false,
+    qwen_image_layers: 3,
+    hires: {
+      enabled: true,
+      upscaler: "Lanczos",
+      scale: 2,
+      target_width: 0,
+      target_height: 0,
+      steps: 12,
+      denoising_strength: 0.4,
+      upscale_tile_size: 512,
+    },
+    vae_tiling_params: {
+      enabled: true,
+      tile_size_w: 512,
+      tile_size_h: 384,
+      target_overlap: 0.3,
+      rel_size_w: 0.5,
+      rel_size_h: 0.25,
+    },
+    loras: [
+      { path: "sub/style.safetensors", multiplier: 0.8, is_high_noise: false },
+      { path: "missing.safetensors", multiplier: 1 },
+    ],
+  };
+
+  it("maps the flat image record with string seed and request-style sampling keys", () => {
+    const p = sdcppMetadataToGenParams(imageMeta, [
+      { name: "style", path: "D:/loras/sub/style.safetensors" },
+    ]);
+    expect(p.prompt).toBe("a fox");
+    expect(p.negative_prompt).toBe("blurry");
+    // int64 全范围：字符串 seed 必须按数值解析，不能截断成 NaN。
+    expect(p.seed).toBe(1234567890123456789);
+    expect(p.sample_params).toMatchObject({
+      sample_steps: 8,
+      sample_method: "euler",
+      scheduler: "beta",
+      eta: 1,
+      flow_shift: 1.15,
+      beta_alpha: 0.8,
+      beta_beta: 0.5,
+      custom_sigmas: [0.1, 0.2],
+      guidance: {
+        txt_cfg: 1.0,
+        img_cfg: 5,
+        slg: { scale: 2, layers: [7, 8, 9], layer_start: 0.01, layer_end: 0.2 },
+      },
+    });
+    expect(p.clip_skip).toBe(2);
+    expect(p.strength).toBe(0.75);
+    expect(p.control_strength).toBe(0.9);
+    expect(p.ip_adapter_strength).toBe(0.6);
+    expect(p.qwen_image_layers).toBe(3);
+    expect(p.auto_resize_ref_image).toBe(false);
+    expect(p.image_preprocess).toEqual(["target=ref,mode=none", "target=init,mode=fit-pad"]);
+    expect(p.hires).toMatchObject({ enabled: true, upscaler: "Lanczos", steps: 12, scale: 2 });
+    expect(p.vae_tiling_params).toMatchObject({ enabled: true, tile_size_w: 512, tile_size_h: 384 });
+    // LoRA 按相对路径的 basename 匹配回 capabilities 全路径，未命中跳过。
+    expect(p.lora).toEqual([
+      { path: "D:/loras/sub/style.safetensors", multiplier: 0.8, is_high_noise: false },
+    ]);
+  });
+
+  it("maps the video record with top-level frames and high-noise pass", () => {
+    const p = sdcppMetadataToGenParams({
+      schema: "sdcpp.generation/v1",
+      kind: "video",
+      prompt: "panning",
+      negative_prompt: "",
+      width: 832,
+      height: 480,
+      seed: "7",
+      sample_params: { sample_steps: 20, scheduler: "discrete" },
+      video_frames: 56,
+      fps: 24,
+      moe_boundary: 0.8,
+      vace_strength: 1.0,
+      high_noise_sample_params: {
+        sample_steps: 8,
+        scheduler: "beta",
+        extra_sample_args: "beta=0.4",
+      },
+    });
+    expect(p.video_frames).toBe(56);
+    expect(p.fps).toBe(24);
+    expect(p.seed).toBe(7);
+    expect(p.moe_boundary).toBe(0.8);
+    expect(p.vace_strength).toBe(1.0);
+    expect(p.high_noise_sample_params).toMatchObject({
+      sample_steps: 8,
+      scheduler: "beta",
+      beta_beta: 0.4,
+    });
+  });
+
+  it("normalizes cache_dit to the request-side cache-dit and rebuilds the draft", () => {
+    const p = sdcppMetadataToGenParams({
+      schema: "sdcpp.generation/v1",
+      kind: "image",
+      seed: "1",
+      cache: {
+        mode: "cache_dit",
+        residual_diff_threshold: 0.12,
+        Fn_compute_blocks: 1,
+        Bn_compute_blocks: 0,
+        max_warmup_steps: 4,
+        scm_mask: "1,1,0",
+        scm_policy_dynamic: true,
+      },
+    });
+    // 元数据枚举是下划线（generation_info.cpp modes[]），请求体只认连字符。
+    expect(p.cache_mode).toBe("cache-dit");
+    expect(p.cache_options).toEqual({ threshold: 0.12, Fn: 1, Bn: 0, warmup: 4 });
+    expect(p.scm_mask).toBe("1,1,0");
+    expect(p.scm_policy_dynamic).toBe(true);
+    // 新 schema 没有原始 option 串，恢复只能靠结构化草稿。
+    expect(p.cache_option).toBeUndefined();
+  });
+
+  it("rebuilds easycache and spectrum drafts from structured cache params", () => {
+    const easy = sdcppMetadataToGenParams({
+      schema: "sdcpp.generation/v1",
+      seed: "1",
+      cache: {
+        mode: "easycache",
+        reuse_threshold: 0.25,
+        start_percent: 0.1,
+        end_percent: 0.9,
+        error_decay_rate: 0.95,
+        use_relative_threshold: true,
+        reset_error_on_compute: false,
+      },
+    });
+    expect(easy.cache_mode).toBe("easycache");
+    expect(easy.cache_options).toEqual({
+      threshold: 0.25,
+      start: 0.1,
+      end: 0.9,
+      decay: 0.95,
+      relative: true,
+      reset: false,
+    });
+
+    const spectrum = sdcppMetadataToGenParams({
+      schema: "sdcpp.generation/v1",
+      seed: "1",
+      cache: {
+        mode: "spectrum",
+        spectrum_w: 0.6,
+        spectrum_m: 4,
+        spectrum_lam: 0.1,
+        spectrum_window_size: 3,
+        spectrum_flex_window: 1,
+        spectrum_warmup_steps: 5,
+        spectrum_stop_percent: 0.8,
+      },
+    });
+    expect(spectrum.cache_options).toEqual({
+      w: 0.6,
+      m: 4,
+      lam: 0.1,
+      window: 3,
+      flex: 1,
+      warmup: 5,
+      stop: 0.8,
+    });
+  });
+
+  it("keeps the legacy schema path untouched for old images", () => {
+    const p = sdcppMetadataToGenParams({
+      schema: "sdcpp.image.params/v1",
+      mode: "img_gen",
+      seed: 42,
+      width: 512,
+      height: 512,
+      prompt: { positive: "old", negative: "bad" },
+      sampling: { steps: 4, method: "euler" },
+    });
+    expect(p.prompt).toBe("old");
+    expect(p.seed).toBe(42);
+    expect(p.sample_params).toMatchObject({ sample_steps: 4, sample_method: "euler" });
+  });
+
+  it("ignores a non-numeric string seed instead of producing NaN", () => {
+    const p = sdcppMetadataToGenParams({
+      schema: "sdcpp.generation/v1",
+      seed: "not-a-number",
+      width: 512,
+      height: 512,
+    });
+    expect(p.seed).toBeUndefined();
+  });
+});
+
 // 审查 20-frontend §2.3：结果侧有字节预算，任务侧的 config.images 此前只有条数上限。
 // 审查 30-api §2.9：视频时间维分块存在 extra_tiling_args 里，界面按单键读写。
 describe("extra_tiling_args 单键读写", () => {

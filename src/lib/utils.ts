@@ -1308,13 +1308,195 @@ export function matchAvailableLora(
   );
 }
 
-/** 把 sd-server 嵌入图片的 `sdcpp.image.params/v1` 元数据映射为 GenParams。
- * 元数据中的 LoRA 只有文件名，需用 `availableLoras` 按名字匹配回完整路径，
- * 匹配不到的 LoRA 跳过（无法恢复路径）。 */
+/**
+ * 新 schema（上游 #2206，`sdcpp.generation/v1`）的采样参数段：键名与请求体
+ * 一致（sample_method / sample_steps / guidance.slg.layer_start…），不同于
+ * 旧 schema 的 `sampling`（method / steps / slg.start…）。
+ */
+function mapGenerationSampleParams(s: unknown): SampleParams | undefined {
+  if (!isMetaObj(s)) return undefined;
+  const g = isMetaObj(s.guidance) ? s.guidance : {};
+  const slg = isMetaObj(g.slg) ? g.slg : undefined;
+  return {
+    sample_steps: metaNum(s.sample_steps),
+    eta: metaNum(s.eta),
+    flow_shift: metaNum(s.flow_shift),
+    shifted_timestep: metaNum(s.shifted_timestep),
+    sample_method: metaStr(s.sample_method),
+    scheduler: metaStr(s.scheduler),
+    custom_sigmas: metaNumArr(s.custom_sigmas),
+    ...parseExtraSampleArgs(s.extra_sample_args),
+    guidance: {
+      txt_cfg: metaNum(g.txt_cfg),
+      img_cfg: metaNum(g.img_cfg),
+      distilled_guidance: metaNum(g.distilled_guidance),
+      slg: slg
+        ? {
+            scale: metaNum(slg.scale) ?? 0,
+            layers: metaNumArr(slg.layers),
+            layer_start: metaNum(slg.layer_start),
+            layer_end: metaNum(slg.layer_end),
+          }
+        : undefined,
+    },
+  };
+}
+
+/**
+ * 新 schema 的 cache 段只存结构化参数（没有旧 schema 的 requested_option
+ * 原始串），按 F-18 草稿键重建；taylorseer 的 n_derivatives / skip_interval
+ * 草稿无法表达，恢复时丢弃（见 docs/UPSTREAM-SYNC-2026-11-11.md §9.3）。
+ * 注意 mode 枚举差异：元数据写 `cache_dit`（下划线），请求体只认
+ * `cache-dit`（连字符），必须归一，否则恢复后提交会被内核 400。
+ */
+function mapGenerationCache(cache: Record<string, unknown>): {
+  mode?: string;
+  draft: CacheOptionDraft;
+  scmMask?: string;
+  scmPolicyDynamic?: boolean;
+} {
+  const rawMode = metaStr(cache.mode);
+  const mode = rawMode === "cache_dit" ? "cache-dit" : rawMode;
+  const draft: CacheOptionDraft = {};
+  if (mode === "easycache" || mode === "ucache") {
+    draft.threshold = metaNum(cache.reuse_threshold);
+    draft.start = metaNum(cache.start_percent);
+    draft.end = metaNum(cache.end_percent);
+    draft.decay = metaNum(cache.error_decay_rate);
+    draft.relative = metaBool(cache.use_relative_threshold);
+    draft.reset = metaBool(cache.reset_error_on_compute);
+  } else if (mode === "dbcache" || mode === "taylorseer" || mode === "cache-dit") {
+    draft.threshold = metaNum(cache.residual_diff_threshold);
+    draft.Fn = metaNum(cache.Fn_compute_blocks);
+    draft.Bn = metaNum(cache.Bn_compute_blocks);
+    draft.warmup = metaNum(cache.max_warmup_steps);
+  } else if (mode === "spectrum") {
+    draft.w = metaNum(cache.spectrum_w);
+    draft.m = metaNum(cache.spectrum_m);
+    draft.lam = metaNum(cache.spectrum_lam);
+    draft.window = metaNum(cache.spectrum_window_size);
+    draft.flex = metaNum(cache.spectrum_flex_window);
+    draft.warmup = metaNum(cache.spectrum_warmup_steps);
+    draft.stop = metaNum(cache.spectrum_stop_percent);
+  }
+  return {
+    mode,
+    // prevMode 传同一模式：sanitize 在 prev/next 的 threshold/warmup 目标字段
+    // 不同时会丢弃这两键（防跨模式串值），元数据恢复不存在模式切换。
+    draft: sanitizeCacheOptionsForMode(mode, draft, mode),
+    scmMask: metaStr(cache.scm_mask),
+    scmPolicyDynamic: metaBool(cache.scm_policy_dynamic),
+  };
+}
+
+/**
+ * `sdcpp.generation/v1`（上游 #2206 起，src/generation_info.cpp）→ GenParams。
+ * 与旧 schema 的关键差异：prompt 扁平化、seed 是十进制字符串、采样段叫
+ * sample_params、video 帧数在顶层、image_preprocess 包一层 rules、
+ * LoRA 记 path（相对 lora-model-dir）而非 basename。
+ */
+function generationV1ToGenParams(
+  meta: Record<string, unknown>,
+  availableLoras?: { name: string; path: string }[],
+): Partial<GenParams> {
+  const seedRaw = meta.seed;
+  const seed =
+    typeof seedRaw === "string" && seedRaw.trim() !== "" ? Number(seedRaw) : metaNum(seedRaw);
+  const preprocess = isMetaObj(meta.image_preprocess) ? meta.image_preprocess : {};
+  const hires = isMetaObj(meta.hires) ? meta.hires : undefined;
+  const cache = isMetaObj(meta.cache) ? meta.cache : undefined;
+  const vaeTiling = isMetaObj(meta.vae_tiling_params) ? meta.vae_tiling_params : undefined;
+
+  const out: Partial<GenParams> = {
+    prompt: metaStr(meta.prompt),
+    negative_prompt: metaStr(meta.negative_prompt),
+    width: metaNum(meta.width),
+    height: metaNum(meta.height),
+    seed: seed != null && Number.isFinite(seed) ? seed : undefined,
+    sample_params: mapGenerationSampleParams(meta.sample_params),
+    high_noise_sample_params: mapGenerationSampleParams(meta.high_noise_sample_params),
+    video_frames: metaNum(meta.video_frames),
+    fps: metaNum(meta.fps),
+    moe_boundary: metaNum(meta.moe_boundary),
+    vace_strength: metaNum(meta.vace_strength),
+    clip_skip: metaNum(meta.clip_skip),
+    strength: metaNum(meta.strength),
+    control_strength: metaNum(meta.control_strength),
+    ip_adapter_strength: metaNum(meta.ip_adapter_strength),
+    qwen_image_layers: metaNum(meta.qwen_image_layers),
+    auto_resize_ref_image: refResizeFromRefImageArgs(metaStr(meta.ref_image_args)),
+    ref_image_args: metaStr(meta.ref_image_args),
+    image_preprocess: metaRuleList(preprocess.rules),
+    increase_ref_index: metaBool(meta.increase_ref_index),
+  };
+
+  if (hires) {
+    out.hires = {
+      enabled: metaBool(hires.enabled) ?? true,
+      upscaler: metaStr(hires.upscaler),
+      steps: metaNum(hires.steps),
+      scale: metaNum(hires.scale),
+      target_width: metaNum(hires.target_width),
+      target_height: metaNum(hires.target_height),
+      denoising_strength: metaNum(hires.denoising_strength),
+      custom_sigmas: metaNumArr(hires.custom_sigmas),
+      upscale_tile_size: metaNum(hires.upscale_tile_size),
+    };
+  }
+  if (cache) {
+    const mapped = mapGenerationCache(cache);
+    out.cache_mode = mapped.mode;
+    if (Object.keys(mapped.draft).length) out.cache_options = mapped.draft;
+    out.scm_mask = mapped.scmMask;
+    out.scm_policy_dynamic = mapped.scmPolicyDynamic;
+  }
+  if (vaeTiling) {
+    // 新 schema 恒写像素键（tile_size_w/h），与请求体同名；旧图兼容分支
+    // 在 sdcppMetadataToGenParams 的旧映射里保留 latent 键处理。
+    out.vae_tiling_params = {
+      enabled: metaBool(vaeTiling.enabled) ?? true,
+      temporal_tiling: metaBool(vaeTiling.temporal_tiling),
+      target_overlap: metaNum(vaeTiling.target_overlap),
+      extra_tiling_args: metaStr(vaeTiling.extra_tiling_args),
+      tile_size_w: metaNum(vaeTiling.tile_size_w),
+      tile_size_h: metaNum(vaeTiling.tile_size_h),
+      rel_size_w: metaNum(vaeTiling.rel_size_w),
+      rel_size_h: metaNum(vaeTiling.rel_size_h),
+    };
+  }
+  if (Array.isArray(meta.loras) && availableLoras?.length) {
+    const loras: LoraEntry[] = [];
+    for (const raw of meta.loras) {
+      if (!isMetaObj(raw)) continue;
+      // path 可能是相对 lora-model-dir 的子目录路径或原始绝对路径；
+      // matchAvailableLora 按 stem 逐级归一，传整路径即可命中文件名。
+      const path = metaStr(raw.path) ?? metaStr(raw.name);
+      if (!path) continue;
+      const found = matchAvailableLora(availableLoras, path);
+      if (found) {
+        loras.push({
+          path: found.path,
+          multiplier: metaNum(raw.multiplier) ?? 1,
+          is_high_noise: metaBool(raw.is_high_noise),
+        });
+      }
+    }
+    if (loras.length) out.lora = loras;
+  }
+  return out;
+}
+
+/** 把 sd-server 嵌入图片的元数据映射为 GenParams：上游 #2206 起是
+ * `sdcpp.generation/v1`（键位全变，见 generationV1ToGenParams），旧图仍是
+ * `sdcpp.image.params/v1`，按 schema 分流。元数据中的 LoRA 只有文件名/相对
+ * 路径，需用 `availableLoras` 匹配回完整路径，匹配不到的跳过。 */
 export function sdcppMetadataToGenParams(
   meta: Record<string, unknown>,
   availableLoras?: { name: string; path: string }[],
 ): Partial<GenParams> {
+  if (meta.schema === "sdcpp.generation/v1") {
+    return generationV1ToGenParams(meta, availableLoras);
+  }
   const prompt = isMetaObj(meta.prompt) ? meta.prompt : {};
   const sampling = mapSamplingMetadata(meta.sampling);
   const highNoise = mapSamplingMetadata(meta.high_noise_sampling);
