@@ -1485,6 +1485,7 @@ function generationV1ToGenParams(
     clip_skip: metaNum(meta.clip_skip),
     strength: metaNum(meta.strength),
     control_strength: metaNum(meta.control_strength),
+    control_type: metaStr(meta.control_type),
     ip_adapter_strength: metaNum(meta.ip_adapter_strength),
     qwen_image_layers: metaNum(meta.qwen_image_layers),
     auto_resize_ref_image: refResizeFromRefImageArgs(metaStr(meta.ref_image_args)),
@@ -1696,6 +1697,33 @@ function previewInterval(value: number | undefined): number {
   return Math.min(n, 1000);
 }
 
+/**
+ * 控制图类型枚举（上游 #2284 `--control-type` / 请求体 control_type）。
+ * 别名（hed/softedge/pidi/ted→scribble，lineart/anime_lineart/mlsd→canny，
+ * seg→segment，inpaint/outpaint→repaint）内核也认，界面只列正名。
+ * tile / repaint 仅 SDXL Union ProMax 变体支持。
+ */
+export const CONTROL_TYPES: { value: string; label: string }[] = [
+  { value: "openpose", label: "OpenPose 姿态" },
+  { value: "depth", label: "Depth 深度" },
+  { value: "scribble", label: "Scribble 涂鸦" },
+  { value: "canny", label: "Canny 边缘" },
+  { value: "normal", label: "Normal 法线" },
+  { value: "segment", label: "Segment 分割" },
+  { value: "tile", label: "Tile 分块（ProMax）" },
+  { value: "repaint", label: "Repaint 重绘（ProMax）" },
+];
+
+/**
+ * 内核是否接受 control_type：capabilities 的 img_gen 默认值里出现该键
+ * （上游 #2284 起）才显示控件。旧内核缺键 → 隐藏，避免发出死键。
+ * 注意这只代表「内核认识该字段」，模型是否 Union 由用户自行判断。
+ */
+export function controlTypeSupported(caps: Capabilities | null | undefined): boolean {
+  const defaults = caps?.defaults_by_mode?.img_gen ?? caps?.defaults;
+  return !!defaults && "control_type" in defaults;
+}
+
 /** Build the `/sdcpp/v1/img_gen|vid_gen` request body (mirrors webui). */
 export interface BuildRequestBodyOptions {
   /** 启动期 `--ref-image-args preset=…`（来自设置的 refImagePreset）。 */
@@ -1766,6 +1794,9 @@ export function buildRequestBody(
     if (refImageArgs) b.ref_image_args = refImageArgs;
     b.increase_ref_index = !!params.increase_ref_index;
     b.control_strength = params.control_strength ?? 0.9;
+    // 上游 #2284：SDXL ControlNet Union 必需的控制类型；其它 ControlNet
+    // 忽略该键。空串不发（等价于未设置），非法枚举由控件侧拦截。
+    if (params.control_type) b.control_type = params.control_type;
     b.ip_adapter_strength = params.ip_adapter_strength ?? 1.0;
     b.embed_image_metadata = params.embed_image_metadata !== false;
   }

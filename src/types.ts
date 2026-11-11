@@ -353,6 +353,13 @@ export interface GenParams {
   image_preprocess?: string[];
   increase_ref_index?: boolean;
   control_strength?: number;
+  /**
+   * 控制图类型（上游 #2284 SDXL ControlNet Union / #2187 Z-Image ControlNet）：
+   * openpose / depth / scribble / canny / normal / segment / tile / repaint
+   * （tile/repaint 仅 Union ProMax）。**Union 模型必需**，其它 ControlNet
+   * 忽略；非法值内核 resolve 失败 → 400。旧内核无此字段，不发。
+   */
+  control_type?: string;
   ip_adapter_strength?: number;
   embed_image_metadata?: boolean;
   video_frames?: number;

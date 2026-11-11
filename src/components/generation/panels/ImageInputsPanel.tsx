@@ -8,6 +8,7 @@ import { Select } from "../../ui/Select";
 import { ImageUpload } from "../../ui/ImageUpload";
 import { IC } from "../../ui/Icons";
 import {
+  CONTROL_TYPES,
   featureEnabled,
   formatNumberForInput,
   readFileAsDataUrl,
@@ -119,6 +120,10 @@ interface Props {
   refImagesSupported: boolean;
   strength: number | undefined;
   controlStrength: number | undefined;
+  /** 控制图类型（上游 #2284，SDXL ControlNet Union 必需）。 */
+  controlType: string | undefined;
+  /** 内核默认值里是否出现 control_type 键（旧内核隐藏控件）。 */
+  controlTypeSupported: boolean;
   ipAdapterStrength: number | undefined;
   /** VACE 的条件强度（审查 50-ux F-18：上游 webui 有、Lumina 请求体已接但无控件）。 */
   vaceStrength: number | undefined;
@@ -150,6 +155,8 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   refImagesSupported,
   strength,
   controlStrength,
+  controlType,
+  controlTypeSupported,
   ipAdapterStrength,
   vaceStrength,
   imgCfg,
@@ -209,6 +216,24 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
               max={1}
               step={0.05}
             />
+            {/* 上游 #2284：SDXL ControlNet Union 必需的控制类型；其它
+                ControlNet 忽略。仅新内核（默认值含 control_type 键）显示。 */}
+            {controlTypeSupported && (
+              <div className="form-row">
+                <label className="form-label" htmlFor="control-type">
+                  控制类型
+                  <span className="form-sublabel">
+                    control_type；SDXL ControlNet Union 模型必需，其它 ControlNet 忽略
+                  </span>
+                </label>
+                <Select
+                  id="control-type"
+                  value={controlType ?? ""}
+                  onChange={(v) => onUpdate("control_type", v || undefined)}
+                  options={[{ value: "", label: "未设置（非 Union 模型）" }, ...CONTROL_TYPES]}
+                />
+              </div>
+            )}
             <Slider
               label="CFG (图像)"
               value={imgCfg}

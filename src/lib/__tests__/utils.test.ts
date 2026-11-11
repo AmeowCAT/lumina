@@ -5,6 +5,7 @@ import {
   buildRequestBody,
   cacheOptionFields,
   clearLegacyLatentTiling,
+  controlTypeSupported,
   deepClone,
   deepMerge,
   extractApiError,
@@ -274,6 +275,24 @@ describe("buildRequestBody", () => {
     expect(body.seed).toBe(42);
     expect(body.batch_count).toBe(1);
     expect(body.output_format).toBeUndefined();
+  });
+
+  // 上游 #2284：SDXL ControlNet Union 必需 control_type；其它 ControlNet
+  // 忽略该键。空值不发（等价未设置），vid_gen 不带（上游只在 img_gen 消费）。
+  describe("control_type (upstream #2284)", () => {
+    it("sends a non-empty control_type on img_gen only", () => {
+      const p: GenParams = { ...baseParams, control_type: "canny" };
+      expect(buildRequestBody("img_gen", p, {} as GenImages).control_type).toBe("canny");
+      expect(buildRequestBody("vid_gen", p, {} as GenImages).control_type).toBeUndefined();
+    });
+
+    it("omits the key when unset or empty", () => {
+      expect(buildRequestBody("img_gen", baseParams, {} as GenImages).control_type).toBeUndefined();
+      expect(
+        buildRequestBody("img_gen", { ...baseParams, control_type: "" }, {} as GenImages)
+          .control_type,
+      ).toBeUndefined();
+    });
   });
 
   // 上游 #2028 把请求字段 auto_resize_ref_image 换成了 ref_image_args，
@@ -2027,6 +2046,42 @@ describe("generationInfoSeed", () => {
     expect(generationInfoSeed({ seed: "" })).toBeUndefined();
     expect(generationInfoSeed({ seed: -1 })).toBeUndefined();
     expect(generationInfoSeed({ seed: NaN })).toBeUndefined();
+  });
+});
+
+// 上游 #2284：control_type 控件只在默认值含该键的新内核上显示。
+describe("controlTypeSupported", () => {
+  const base = {
+    model: { name: "m", stem: "m", path: "m" },
+    current_mode: "img_gen",
+    supported_modes: ["img_gen"],
+    output_formats_by_mode: { img_gen: ["png"] },
+    features_by_mode: { img_gen: {} },
+    limits: {},
+    samplers: [],
+    schedulers: [],
+    loras: [],
+    upscalers: [],
+  } as unknown as Capabilities;
+
+  it("detects the key in mode defaults or the legacy mirror", () => {
+    expect(
+      controlTypeSupported({
+        ...base,
+        defaults_by_mode: { img_gen: { control_type: "" } as GenParams },
+      }),
+    ).toBe(true);
+    expect(controlTypeSupported({ ...base, defaults: { control_type: "" } as GenParams })).toBe(
+      true,
+    );
+  });
+
+  it("hides the control for legacy kernels and missing capabilities", () => {
+    expect(controlTypeSupported({ ...base, defaults_by_mode: { img_gen: {} as GenParams } })).toBe(
+      false,
+    );
+    expect(controlTypeSupported(base)).toBe(false);
+    expect(controlTypeSupported(null)).toBe(false);
   });
 });
 

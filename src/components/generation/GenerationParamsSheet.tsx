@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Capabilities, Features, GenMode, GenParams } from "../../types";
 import { FAMILY_CONFIG, SIZE_PRESETS, VIDEO_FRAME_PRESETS } from "../../config/families";
 import {
+  controlTypeSupported,
   featureEnabled,
   previewModesFromCapabilities,
   vaeTilingProtocolFromCapabilities,
@@ -135,6 +136,8 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           refImagesSupported={refImagesSupported}
           strength={params.strength}
           controlStrength={params.control_strength}
+          controlType={params.control_type}
+          controlTypeSupported={controlTypeSupported(caps)}
           ipAdapterStrength={params.ip_adapter_strength}
           vaceStrength={params.vace_strength}
           imgCfg={sp?.guidance?.img_cfg}
