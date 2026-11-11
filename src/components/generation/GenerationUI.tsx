@@ -440,8 +440,9 @@ export function GenerationUI() {
       toast("请先提供: " + missingInputs.join("、"), true);
       return;
     }
-    // 互斥组合（MiniMax-H3：参考图与首尾帧）上游会直接判失败，提前拦下。
-    const inputConflicts = exclusiveInputConflicts(FAMILY_CONFIG[family], images);
+    // 互斥组合（MiniMax-H3：参考图与首尾帧、hires 与首尾帧）上游会直接判
+    // 失败，提前拦下；hires 是参数伪输入，需要 params 参与判定。
+    const inputConflicts = exclusiveInputConflicts(FAMILY_CONFIG[family], images, params);
     if (inputConflicts.length > 0) {
       toast(inputConflicts[0], true);
       return;

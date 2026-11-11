@@ -141,6 +141,24 @@ pub fn detect_family(path: &str) -> &'static str {
     ) {
         return "hunyuan-video";
     }
+    // MiniMax-H3-Image（上游 #2324）：图像权重 minimax_h3_image_*，复用 H3
+    // 文本编码器但 VAE 专用。必须先于下面的视频规则，否则被 minimax_h3
+    // 子串吞进 FL2VA 视频家族。
+    if has_any(&t, &["minimax_h3_image", "minimax-h3-image"]) {
+        return "minimax-h3-image";
+    }
+    // P-H3-Image（上游 #2272）：H3 DiT + 单帧 VAE + Qwen3-VL-4B + 文本连接器。
+    if has_any(&t, &["p-h3-image", "p_h3_image", "p-h3_image", "ph3-image", "ph3_image"]) {
+        return "p-h3-image";
+    }
+    // HyperFlow H3 Flash（上游 #2299）：MiniMax-H3 的蒸馏视频权重，
+    // FL2VA / Ref2VA 两支组件相同、默认调度不同，拆成两族。
+    if has_any(&t, &["hyperflow"]) {
+        if has_any(&t, &["ref2va"]) {
+            return "hyperflow-h3-flash-ref2va";
+        }
+        return "hyperflow-h3-flash";
+    }
     // MiniMax-H3 权重文件名：minimax_h3_fl2va[-pruned] / minimax_h3_ref2va[-pruned]。
     // Ref2VA 变体单独成族——其参考视频/音频输入目前只有 sd-cli 通道。
     if has_any(&t, &["minimax-h3", "minimax_h3", "minimaxh3"]) {
@@ -581,6 +599,10 @@ fn is_diffusion_model_name(test: &str) -> bool {
             "minit2i",
             "mini-t2i",
             "minimax",
+            // P-H3-Image / HyperFlow H3 Flash（上游 #2272 / #2299）。
+            "p-h3",
+            "p_h3",
+            "hyperflow",
             "sensenova",
             // LLaDA-Image 扩散模型（llada-image-f16.gguf / llada-image-turbo-f16.gguf）；
             // 文本编码器带 text_encoder 标记，在 is_llm_encoder 里先被拦下。
@@ -604,8 +626,9 @@ pub fn classify_file(name: &str, stem: &str, dir_base: &str, size_mb: f64) -> &'
     if has_any(&test, &["audio_vae", "audio-vae"]) {
         return "audio_vae";
     }
-    // Embedding connectors (LTX, LLaDA-Image)
-    if has_any(&test, &["embeddings_connector", "connectors"]) {
+    // Embedding connectors (LTX, LLaDA-Image, P-H3-Image)。P-H3 的官方名是
+    // p-h3-image_text_connector.safetensors（单数 connector，上游 #2272）。
+    if has_any(&test, &["embeddings_connector", "connectors", "text_connector"]) {
         return "embeddings";
     }
     // TAE (Tiny AutoEncoder) — must precede the generic VAE rules: every TAE
@@ -1052,6 +1075,97 @@ mod tests {
                 9000.0,
             ),
             "model"
+        );
+    }
+
+    #[test]
+    fn detects_minimax_h3_image_before_video() {
+        // 上游 #2324：图像权重必须先于 minimax_h3 视频子串规则命中。
+        assert_eq!(
+            detect_family("minimax_h3_image_pruned_bf16.safetensors"),
+            "minimax-h3-image"
+        );
+        assert_eq!(
+            detect_family("minimax_h3_image_pruned_int8_convrot.safetensors"),
+            "minimax-h3-image"
+        );
+        assert_eq!(
+            detect_family("MiniMax-H3-Image.safetensors"),
+            "minimax-h3-image"
+        );
+        // 视频权重不受影响。
+        assert_eq!(
+            detect_family("minimax_h3_fl2va-Q4_K_M.gguf"),
+            "minimax-h3-fl2va"
+        );
+    }
+
+    #[test]
+    fn detects_p_h3_image_and_hyperflow() {
+        // 上游 #2272 / #2299。
+        assert_eq!(
+            detect_family("p-h3-image_int8_convrot.safetensors"),
+            "p-h3-image"
+        );
+        assert_eq!(detect_family("P-H3-Image-bf16.safetensors"), "p-h3-image");
+        assert_eq!(
+            detect_family("hyperflow-h3-flash-fl2va-Q4_K_M.gguf"),
+            "hyperflow-h3-flash"
+        );
+        assert_eq!(
+            detect_family("hyperflow-h3-flash-ref2va-Q4_K_M.gguf"),
+            "hyperflow-h3-flash-ref2va"
+        );
+    }
+
+    #[test]
+    fn classifies_p_h3_image_components() {
+        // 文本连接器官方名是单数 text_connector，不能落进 llm 或 model。
+        assert_eq!(
+            classify_file(
+                "p-h3-image_text_connector.safetensors",
+                "p-h3-image_text_connector",
+                "text_encoders",
+                300.0,
+            ),
+            "embeddings"
+        );
+        assert_eq!(
+            classify_file(
+                "p-h3-image_vae_bf16.safetensors",
+                "p-h3-image_vae_bf16",
+                "vae",
+                500.0,
+            ),
+            "vae"
+        );
+        assert_eq!(
+            classify_file(
+                "qwen3vl_4b_bf16.safetensors",
+                "qwen3vl_4b_bf16",
+                "text_encoders",
+                8000.0,
+            ),
+            "llm"
+        );
+        assert_eq!(
+            classify_file(
+                "p-h3-image_int8_convrot.safetensors",
+                "p-h3-image_int8_convrot",
+                "diffusion_models",
+                4000.0,
+            ),
+            "model"
+        );
+        // H3-Image 专用 VAE 与视频 VAE 都归 vae（音频规则不命中）。
+        assert_eq!(
+            classify_file(
+                "minimax_h3_image_vae_fp16.safetensors",
+                "minimax_h3_image_vae_fp16",
+                "vae",
+                600.0,
+            ),
+            "vae"
         );
     }
 

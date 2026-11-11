@@ -18,11 +18,25 @@ export function familyNeedsExternalTokenizer(family: string): boolean {
   return (EXTERNAL_TOKENIZER_FAMILIES as readonly string[]).includes(family);
 }
 
+/**
+ * H3 架构的**视频**家族（MiniMax-H3 FL2VA/Ref2VA + HyperFlow H3 Flash 两支，
+ * 上游 #2299）：共用 17k+5 帧网格、固定 24fps、参考图尺寸等 H3 特有 UI。
+ * 注意排除 minimax-h3-image——它是图像家族，不走视频对齐。
+ */
+export function isH3VideoFamily(family: string): boolean {
+  return (
+    family === "minimax-h3-fl2va" ||
+    family === "minimax-h3-ref2va" ||
+    family.startsWith("hyperflow-h3")
+  );
+}
+
 /** 返回该家族下 `frames` 实际生效的帧数；不对齐的家族原样返回。 */
 export function alignVideoFrames(family: string, frames: number): number {
   // MiniMax-H3：17k+5 网格向上取整、最小 5（src/stable-diffusion.cpp
   // align_video_frames）。50 → 56，5 → 5，6 → 22。
-  if (family.startsWith("minimax-h3")) {
+  // HyperFlow H3 Flash（上游 #2299）共用 H3 架构与帧网格。
+  if (isH3VideoFamily(family)) {
     if (!Number.isFinite(frames)) return frames;
     if (frames <= 5) return 5;
     return Math.ceil((frames - 5) / 17) * 17 + 5;

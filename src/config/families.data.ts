@@ -245,7 +245,12 @@ export interface FamilyConfig {
   unsupported?: string;
 }
 
-export type RequiredInput = "init_image" | "end_image" | "ref_images";
+/**
+ * 输入位标识。前三项是图片输入；`hires` 是参数伪输入（二次放大开关），
+ * 只用于互斥声明（上游 #2249：MiniMax-H3 的 latent hires 与首尾帧互斥），
+ * 不会出现在 requiredInputsByMode 里。
+ */
+export type RequiredInput = "init_image" | "end_image" | "ref_images" | "hires";
 
 export const PID_VAE_FORMATS = [
   { value: "flux", label: "Flux / Z-Image" },
@@ -292,6 +297,8 @@ export const VIDEO_FRAME_PRESETS: Record<string, number[]> = {
   "hunyuan-video": [17, 33, 49],
   // 全部落在 17k+5 网格上（约 1 / 2.3 / 5.2 / 10.1 / 15.1 秒 @24fps）。
   "minimax-h3-fl2va": [22, 56, 124, 243, 362],
+  // HyperFlow H3 Flash 与 H3 共用 17k+5 帧网格（上游 #2299）。
+  "hyperflow-h3-flash": [22, 56, 124, 243, 362],
 };
 
 /** 帧数滑杆上限（家族缺省 121）。MiniMax-H3 放宽到 481（17×28+5 ≈ 20s @24fps）。 */
@@ -299,6 +306,8 @@ export const VIDEO_FRAME_MAX: Record<string, number> = {
   sd: 32,
   "minimax-h3-fl2va": 481,
   "minimax-h3-ref2va": 481,
+  "hyperflow-h3-flash": 481,
+  "hyperflow-h3-flash-ref2va": 481,
 };
 
 /**
@@ -337,6 +346,11 @@ export const SIZE_SPATIAL_ALIGN: Record<string, number> = {
   "sensenova-u1": 32,
   "minimax-h3-fl2va": 32,
   "minimax-h3-ref2va": 32,
+  // H3 图像家族与 HyperFlow 蒸馏权重同为 32 对齐（上游 #2324 / #2272 / #2299）。
+  "minimax-h3-image": 32,
+  "p-h3-image": 32,
+  "hyperflow-h3-flash": 32,
+  "hyperflow-h3-flash-ref2va": 32,
   // Qwen Image 2.1：上游要求宽高为 32 的倍数（docs/qwen_image_2.1.md）。
   "qwen-image-2.1": 32,
   // LLaDA-Image：文生图按 16 向上取整，但编辑路径要求 32 整除，统一按 32
@@ -1031,6 +1045,16 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         inputs: ["ref_images", "end_image"],
         message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
       },
+      // 上游 #2249：latent hires 二段采样与首尾帧互斥（首尾帧 latent 按
+      // 一段分辨率编码，二段画布无法复用），内核直接判失败。
+      {
+        inputs: ["hires", "init_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
+      {
+        inputs: ["hires", "end_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
     ],
   },
   "minimax-h3-ref2va": {
@@ -1043,7 +1067,8 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     // 无参考条件裸跑。待上游 server 开放视频/音频参考后再升级。
     requiredInputsByMode: { vid_gen: ["ref_images"] },
     // 同 FL2VA：上游对 MiniMax-H3 统一要求参考条件与首尾帧互斥
-    // （首尾帧彼此可以共存，故拆成两条二元声明）。
+    // （首尾帧彼此可以共存，故拆成两条二元声明）；hires 二段采样同样
+    // 与首尾帧互斥（上游 #2249）。
     exclusiveInputGroups: [
       {
         inputs: ["ref_images", "init_image"],
@@ -1052,6 +1077,14 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       {
         inputs: ["ref_images", "end_image"],
         message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["hires", "init_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
+      {
+        inputs: ["hires", "end_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
       },
     ],
     fields: [
@@ -1062,6 +1095,175 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
+  },
+  // MiniMax-H3-Image（上游 #2324，docs/minimax_h3_image.md）：文生图 + 参考图
+  // 编辑共用一个 checkpoint。文本编码器复用 H3 视频的 Qwen3-VL-32B，VAE 必须
+  // 用图像专用版（视频 VAE / P-H3 VAE 都不兼容）。6 步专用调度以数值数组
+  // 下发（请求体 custom_sigmas 不认 CLI 预设名），调度长度即步数。
+  "minimax-h3-image": {
+    name: "MiniMax-H3-Image",
+    hint: "文生图 + 参考图编辑：Diffusion + 图像专用 VAE + Qwen3-VL 32B（可复用 H3 视频的编码器）",
+    mode: "img",
+    fields: [
+      F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+      F("vae", "图像 VAE", "vae", "vae"),
+      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision", false),
+    ],
+    fixedArgs: { "flash-attn": "off,diffusion=on" },
+    genDefaults: {
+      seed: -1,
+      width: 1024,
+      height: 1024,
+      sample_params: {
+        sample_steps: 6,
+        sample_method: "euler",
+        guidance: { txt_cfg: 1.0 },
+        custom_sigmas: [
+          1.0, 0.9675236940383911, 0.8875485062599182, 0.75, 0.5327739119529724,
+          0.23200887441635132, 0.0,
+        ],
+      },
+    },
+    generationHint:
+      "上游 docs/minimax_h3_image.md：Euler / CFG 1 / 6 步专用调度（custom_sigmas，步数由调度表决定，改步数不生效）；宽高按 32 对齐，从 1024×1024 起步。参考图编辑用 <Picture N> 编号（最多 16 张），提示词不加自动前缀；视频 VAE 与 P-H3-Image VAE 不兼容。",
+  },
+  // P-H3-Image（上游 #2272，docs/p_h3_image.md）：H3 DiT + 单帧 VAE +
+  // Qwen3-VL-4B + 文本连接器。官方 PrunaAI 包的编码器已内置连接器；复用裸
+  // Qwen3-VL-4B 时才需要 --embeddings-connectors 单独传。上游默认 2912²
+  // （8.5MP）极吃显存，按 docs 口径采用并在提示里建议小画布起步。
+  "p-h3-image": {
+    name: "P-H3-Image",
+    hint: "文生图 + 参考图编辑：Diffusion + 单帧 VAE + Qwen3-VL-4B + 文本连接器",
+    mode: "img",
+    fields: [
+      F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+      F("vae", "图像 VAE", "vae", "vae"),
+      F("llm", "LLM (Qwen3-VL 4B)", "llm", "llm"),
+      F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision", false),
+      F(
+        "embeddings",
+        "文本连接器 (可选)",
+        "embeddings-connectors",
+        "embeddings",
+        false,
+        "官方 PrunaAI 包已内置连接器；复用裸 Qwen3-VL-4B 时必传 p-h3-image_text_connector.safetensors",
+      ),
+    ],
+    fixedArgs: { "flash-attn": "off,diffusion=on" },
+    genDefaults: {
+      seed: -1,
+      width: 2912,
+      height: 2912,
+      sample_params: {
+        sample_steps: 8,
+        sample_method: "euler",
+        guidance: { txt_cfg: 1.0 },
+        custom_sigmas: [
+          1.0, 0.984753, 0.967905, 0.951688, 0.925372, 0.881923, 0.810083, 0.528718, 0.0,
+        ],
+      },
+      // docs：保持默认 VAE 分块 256px。
+      vae_tiling_params: { enabled: true, tile_size_w: 256, tile_size_h: 256 },
+    },
+    generationHint:
+      "上游 docs/p_h3_image.md：Euler / CFG 1 / 8 步专用调度（custom_sigmas，步数由调度表决定）；上游默认 2912×2912（8.5MP，显存需求极高，建议 1024² 起步），宽高为 32 的倍数；VAE 分块保持 256px。普通编辑指令会自动加「Edit <Picture 1>.」前缀，以 Edit <Picture N> 或 subject_definitions: 开头的提示词原样使用。",
+  },
+  // HyperFlow H3 Flash（上游 #2299，docs/minimax_h3.md §HyperFlow）：
+  // MiniMax-H3 的蒸馏视频权重，组件与输入同 H3，采样换 4/6/8 步专用调度
+  // （预设已含 flow shift 12，保持默认）。FL2VA / Ref2VA 两支拆族。
+  "hyperflow-h3-flash": {
+    name: "HyperFlow H3 Flash",
+    hint: "H3 蒸馏视频权重：组件同 MiniMax-H3 FL2VA，6 步专用调度（可换 4/8 步）",
+    mode: "vid",
+    fields: [
+      F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+      F("vae", "视频 VAE", "vae", "vae"),
+      F("audio_vae", "音频 VAE (可选)", "audio-vae", "audio_vae", false),
+      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+    ],
+    fixedArgs: { "flash-attn": "off,diffusion=on" },
+    genDefaults: {
+      seed: -1,
+      width: 864,
+      height: 480,
+      sample_params: {
+        sample_steps: 6,
+        sample_method: "euler",
+        guidance: { txt_cfg: 1.0 },
+        custom_sigmas: [1.0, 0.982655942, 0.914642572, 0.674755692, 0.385223746, 0.159055337, 0.0],
+      },
+      video_frames: 56,
+      fps: 24,
+    },
+    exclusiveInputGroups: [
+      {
+        inputs: ["ref_images", "init_image"],
+        message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_images", "end_image"],
+        message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["hires", "init_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
+      {
+        inputs: ["hires", "end_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
+    ],
+    generationHint:
+      "上游 docs/minimax_h3.md §HyperFlow H3 Flash：Euler / CFG 1，默认 6 步调度表（hyperflow-h3-flash-6）；4 步 [1.0, 0.962575853, 0.755781889, 0.312497854, 0.0]、8 步 [1.0, 0.993909776, 0.9842875, 0.966063678, 0.923076928, 0.834942341, 0.696852028, 0.468753338, 0.0] 可在高级采样里替换 custom_sigmas。调度已含 flow shift 12，保持默认；帧数按 17k+5 向上对齐、24fps。",
+  },
+  "hyperflow-h3-flash-ref2va": {
+    name: "HyperFlow H3 Flash (Ref2VA)",
+    hint: "H3 蒸馏权重的参考图像条件支：组件同 MiniMax-H3 Ref2VA，6 步专用调度",
+    mode: "vid",
+    requiredInputsByMode: { vid_gen: ["ref_images"] },
+    fields: [
+      F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
+      F("vae", "视频 VAE", "vae", "vae"),
+      F("audio_vae", "音频 VAE (可选)", "audio-vae", "audio_vae", false),
+      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+    ],
+    fixedArgs: { "flash-attn": "off,diffusion=on" },
+    genDefaults: {
+      seed: -1,
+      width: 864,
+      height: 480,
+      sample_params: {
+        sample_steps: 6,
+        sample_method: "euler",
+        guidance: { txt_cfg: 1.0 },
+        custom_sigmas: [1.0, 0.982655942, 0.914642572, 0.674755692, 0.385223746, 0.159055337, 0.0],
+      },
+      video_frames: 56,
+      fps: 24,
+    },
+    exclusiveInputGroups: [
+      {
+        inputs: ["ref_images", "init_image"],
+        message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_images", "end_image"],
+        message: "MiniMax-H3 的参考图不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["hires", "init_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
+      {
+        inputs: ["hires", "end_image"],
+        message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
+    ],
+    generationHint:
+      "采样默认值同 HyperFlow H3 Flash（6 步调度表）；参考条件与首尾帧互斥，二次放大（hires）同样不能与首尾帧同用。",
   },
   zimage: {
     name: "Z-Image",
@@ -2106,7 +2308,23 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
   { hint: "LTX-AV 的视频 TAE（128ch latent）", families: ["ltx", "ltx25"] },
   {
     hint: "taeh3（MiniMax-H3 视频 TAE，24ch latent；上游 #1874 起支持）",
-    families: ["minimax-h3-fl2va", "minimax-h3-ref2va"],
+    families: [
+      "minimax-h3-fl2va",
+      "minimax-h3-ref2va",
+      // HyperFlow H3 Flash 共用 H3 组件与 latent 空间（上游 #2299）。
+      "hyperflow-h3-flash",
+      "hyperflow-h3-flash-ref2va",
+    ],
+  },
+  {
+    // H3-Image 用专用图像 VAE，上游没有为它记录 TAE 组合；视频 taeh3
+    // 是否兼容图像 latent 未经确认，别让默认文案暗示存在现成权重。
+    hint: "MiniMax-H3-Image 使用专用图像 VAE；TAE 兼容性未经上游确认，显存不足时优先降低分辨率或启用 VAE 分块",
+    families: ["minimax-h3-image"],
+  },
+  {
+    hint: "P-H3-Image 使用单帧 VAE；TAE 兼容性未经上游确认，显存不足时优先降低分辨率（上游默认 2912² 极重）",
+    families: ["p-h3-image"],
   },
   {
     // Qwen Image 2.1 用专门的 TAEQI2.1（64ch latent、16x 空间缩放、支持

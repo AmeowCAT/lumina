@@ -11,7 +11,7 @@ import {
   VIDEO_FRAME_MAX,
   VIDEO_FRAME_PRESETS,
 } from "../../config/families";
-import type { Features, GenImages } from "../../types";
+import type { Features, GenImages, GenParams } from "../../types";
 import type { LaunchRuntime } from "../launchConfig";
 import {
   applyFamilyFeatureLimits,
@@ -121,7 +121,13 @@ describe("alignVideoFrames", () => {
 
   it("aligns MiniMax-H3 upward to 17k+5 with a floor of 5", () => {
     // 上游 align_video_frames：max(frames,5) 后递增到 %17==5（src/stable-diffusion.cpp）。
-    for (const family of ["minimax-h3-fl2va", "minimax-h3-ref2va"]) {
+    // HyperFlow H3 Flash（上游 #2299）共用 H3 架构与帧网格。
+    for (const family of [
+      "minimax-h3-fl2va",
+      "minimax-h3-ref2va",
+      "hyperflow-h3-flash",
+      "hyperflow-h3-flash-ref2va",
+    ]) {
       expect(alignVideoFrames(family, 5)).toBe(5);
       expect(alignVideoFrames(family, 1)).toBe(5);
       expect(alignVideoFrames(family, 6)).toBe(22);
@@ -161,7 +167,14 @@ describe("alignVideoFrames", () => {
 // 上游 align_image_size 向上进位（src/stable-diffusion.cpp）。
 describe("alignSizeUp", () => {
   it("aligns MiniMax-H3 dimensions up to a multiple of 32", () => {
-    for (const family of ["minimax-h3-fl2va", "minimax-h3-ref2va"]) {
+    for (const family of [
+      "minimax-h3-fl2va",
+      "minimax-h3-ref2va",
+      "minimax-h3-image",
+      "p-h3-image",
+      "hyperflow-h3-flash",
+      "hyperflow-h3-flash-ref2va",
+    ]) {
       expect(alignSizeUp(family, 864)).toBe(864);
       expect(alignSizeUp(family, 480)).toBe(480);
       // 通用视频预设里会被静默改动的尺寸：720 → 736、1080 → 1088。
@@ -1048,6 +1061,116 @@ describe("exclusive family inputs", () => {
     expect(exclusiveInputConflicts(FAMILY_CONFIG.flux, both)).toEqual([]);
     expect(exclusiveInputConflicts(FAMILY_CONFIG.sd, both)).toEqual([]);
     expect(exclusiveInputConflicts(undefined, both)).toEqual([]);
+  });
+
+  // 上游 #2249：MiniMax-H3 的 latent hires 二段采样与首尾帧互斥（首尾帧
+  // latent 按一段分辨率编码，二段画布无法复用）。hires 是参数伪输入。
+  it("flags H3 hires combined with keyframes, for all four H3 video families", () => {
+    const hiresOn = { hires: { enabled: true } } as GenParams;
+    const hiresOff = { hires: { enabled: false } } as GenParams;
+    for (const family of [
+      "minimax-h3-fl2va",
+      "minimax-h3-ref2va",
+      "hyperflow-h3-flash",
+      "hyperflow-h3-flash-ref2va",
+    ]) {
+      const config = FAMILY_CONFIG[family];
+      expect(
+        exclusiveInputConflicts(
+          config,
+          { ...empty, initImage: "data:image/png;base64,init" },
+          hiresOn,
+        ),
+      ).toEqual(["MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用"]);
+      expect(
+        exclusiveInputConflicts(
+          config,
+          { ...empty, endImage: "data:image/png;base64,end" },
+          hiresOn,
+        ),
+      ).toEqual(["MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用"]);
+      // hires 关闭、或没有首尾帧时不拦。
+      expect(
+        exclusiveInputConflicts(
+          config,
+          { ...empty, initImage: "data:image/png;base64,init" },
+          hiresOff,
+        ),
+      ).toEqual([]);
+      expect(exclusiveInputConflicts(config, empty, hiresOn)).toEqual([]);
+      // 不传 params（旧调用形状）时 hires 视为未开启，不误报。
+      expect(
+        exclusiveInputConflicts(config, { ...empty, initImage: "data:image/png;base64,init" }),
+      ).toEqual([]);
+    }
+  });
+});
+
+// 上游 #2324 / #2272 / #2299：H3 图像家族与 HyperFlow 蒸馏视频家族。
+describe("H3 image / HyperFlow families", () => {
+  it("registers the four new families with docs-based defaults", () => {
+    const h3img = FAMILY_CONFIG["minimax-h3-image"];
+    expect(h3img.mode).toBe("img");
+    expect(h3img.genDefaults).toMatchObject({
+      width: 1024,
+      height: 1024,
+      sample_params: { sample_steps: 6, sample_method: "euler", guidance: { txt_cfg: 1.0 } },
+    });
+    // 6 步专用调度：请求体只认数值数组，长度 = 步数 + 1。
+    expect(
+      (h3img.genDefaults?.sample_params as { custom_sigmas: number[] }).custom_sigmas,
+    ).toHaveLength(7);
+
+    const ph3 = FAMILY_CONFIG["p-h3-image"];
+    expect(ph3.mode).toBe("img");
+    expect(ph3.genDefaults).toMatchObject({
+      width: 2912,
+      height: 2912,
+      sample_params: { sample_steps: 8, sample_method: "euler", guidance: { txt_cfg: 1.0 } },
+      vae_tiling_params: { enabled: true, tile_size_w: 256, tile_size_h: 256 },
+    });
+    expect(
+      (ph3.genDefaults?.sample_params as { custom_sigmas: number[] }).custom_sigmas,
+    ).toHaveLength(9);
+    // 文本连接器是可选槽位（官方包内置），走 --embeddings-connectors。
+    const connector = ph3.fields.find((f) => f.key === "embeddings");
+    expect(connector?.arg).toBe("embeddings-connectors");
+    expect(connector?.required).toBe(false);
+
+    for (const family of ["hyperflow-h3-flash", "hyperflow-h3-flash-ref2va"]) {
+      const config = FAMILY_CONFIG[family];
+      expect(config.mode).toBe("vid");
+      expect(config.genDefaults).toMatchObject({
+        width: 864,
+        height: 480,
+        video_frames: 56,
+        fps: 24,
+        sample_params: { sample_steps: 6, sample_method: "euler", guidance: { txt_cfg: 1.0 } },
+      });
+      expect(
+        (config.genDefaults?.sample_params as { custom_sigmas: number[] }).custom_sigmas,
+      ).toHaveLength(7);
+    }
+    // Ref2VA 支与 H3 Ref2VA 一样要求参考图。
+    expect(FAMILY_CONFIG["hyperflow-h3-flash-ref2va"].requiredInputsByMode).toEqual({
+      vid_gen: ["ref_images"],
+    });
+    expect(FAMILY_CONFIG["hyperflow-h3-flash"].requiredInputsByMode).toBeUndefined();
+  });
+
+  it("keeps HyperFlow frame presets on the 17k+5 grid within the slider cap", () => {
+    const presets = VIDEO_FRAME_PRESETS["hyperflow-h3-flash"];
+    expect(presets).toBeDefined();
+    for (const frames of presets) {
+      expect(alignVideoFrames("hyperflow-h3-flash", frames)).toBe(frames);
+      expect(frames).toBeLessThanOrEqual(VIDEO_FRAME_MAX["hyperflow-h3-flash"]);
+    }
+    expect(VIDEO_FRAME_MAX["hyperflow-h3-flash-ref2va"]).toBe(481);
+  });
+
+  it("aligns the image families to 32 and resolves sizes accordingly", () => {
+    expect(resolveGenerationSize("minimax-h3-image", 1000, 700)).toEqual({ w: 1024, h: 704 });
+    expect(resolveGenerationSize("p-h3-image", 1024, 1024)).toEqual({ w: 1024, h: 1024 });
   });
 });
 

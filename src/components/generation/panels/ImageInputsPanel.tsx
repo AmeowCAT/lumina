@@ -1,6 +1,6 @@
 import { memo, useRef } from "react";
 import type { Features, GenMode } from "../../../types";
-import { FAMILY_CONFIG } from "../../../config/families";
+import { FAMILY_CONFIG, isH3VideoFamily } from "../../../config/families";
 import { useStore } from "../../../store";
 import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
@@ -283,7 +283,7 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           addLabel="添加参考图片"
         />
       )}
-      {refImagesSupported && mode === "vid_gen" && family.startsWith("minimax-h3") && (
+      {refImagesSupported && mode === "vid_gen" && isH3VideoFamily(family) && (
         <div className="form-row">
           <label className="form-label" htmlFor="ref-image-size">
             参考图尺寸

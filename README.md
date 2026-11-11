@@ -103,9 +103,9 @@ src-tauri/target/release/lumina.exe
 - 出图质量、加载失败、显存不足、模型不被识别 → 提到[上游仓库](https://github.com/leejet/stable-diffusion.cpp/issues)
 
 <details>
-<summary>已适配的模型家族（62 个，外加"自定义"）</summary>
+<summary>已适配的模型家族（66 个，外加"自定义"）</summary>
 
-Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、Flux.3 Image Klein（含 Base）、Fibo 2.0（Dev / Edit Turbo）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA）、Z-Image（含 Turbo）、Z-Image L2P、Qwen-Image（含 Layered/Edit/2.1）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS）、PixArt-Σ、PixArt-α、Ming-Image 0.1 Design、Iris-3B、MOSS-Image（Base / SFT）、LLaDA-Image（含 Turbo）、SenseNova U1.5，以及"自定义"（手动配置全部组件）。
+Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、Flux.3 Image Klein（含 Base）、Fibo 2.0（Dev / Edit Turbo）、SDXL、SD 1.x/2.x（含 AnimateDiff img2video）、SD3/3.5、PiD / PiD 1.5、Wan T2V、Wan I2V/FLF2V、Wan TI2V、Wan2.2 A14B、LingBot Video、HunyuanVideo 1.5、MiniMax-H3（FL2VA / Ref2VA / Image）、HyperFlow H3 Flash（FL2VA / Ref2VA）、P-H3-Image、Z-Image（含 Turbo）、Z-Image L2P、Qwen-Image（含 Layered/Edit/2.1）、Mage-Flow（含 Turbo/Edit/Edit Turbo）、Chroma（含 Radiance）、LTX-Video（2.3 / 2.5）、Ideogram4、HiDream-O1、ERNIE-Image（含 Turbo）、Anima、Krea2（含 Turbo）、SeFi-Image（含 Turbo）、Lens（含 Turbo）、Boogu Image（Base/Edit/Turbo）、LongCat、Ovis-Image、MiniT2I、Distilled SD（SSD-1B/SDXS）、PixArt-Σ、PixArt-α、Ming-Image 0.1 Design、Iris-3B、MOSS-Image（Base / SFT）、LLaDA-Image（含 Turbo）、SenseNova U1.5，以及"自定义"（手动配置全部组件）。
 
 </details>
 

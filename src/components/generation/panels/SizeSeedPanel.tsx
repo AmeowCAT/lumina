@@ -4,6 +4,7 @@ import {
   alignSizeUp,
   alignVideoFrames,
   FAMILY_CONFIG,
+  isH3VideoFamily,
   SIZE_SPATIAL_ALIGN,
   VIDEO_FRAME_ALIGN,
   VIDEO_FRAME_MAX,
@@ -253,7 +254,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
               // 提前说明避免"设了 34 却出 33 帧 / 设了 50 却出 56 帧"。
               alignVideoFrames(family, videoFrames || 33) !== (videoFrames || 33)
                 ? `实际生成 ${alignVideoFrames(family, videoFrames || 33)} 帧（${
-                    family.startsWith("minimax-h3")
+                    isH3VideoFamily(family)
                       ? "该模型按 17k+5 向上对齐"
                       : `该模型按 ${VIDEO_FRAME_ALIGN[family]}n+1 对齐`
                   }）`
@@ -281,9 +282,10 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             min={1}
             max={60}
             hint={
-              // 引擎对 MiniMax-H3 强制 24 fps（src/stable-diffusion.cpp
-              // GenerationRequest），其他取值会被静默覆盖，提前说明。
-              family.startsWith("minimax-h3") ? "该模型固定 24 fps，其他值会被引擎覆盖" : undefined
+              // 引擎对 MiniMax-H3 / HyperFlow H3 Flash 强制 24 fps
+              // （src/stable-diffusion.cpp GenerationRequest），其他取值会被
+              // 静默覆盖，提前说明。
+              isH3VideoFamily(family) ? "该模型固定 24 fps，其他值会被引擎覆盖" : undefined
             }
           />
         </>
