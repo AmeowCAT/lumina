@@ -105,12 +105,19 @@ interface StoreState {
   endImage: string | null;
   refImages: string[];
   controlFrames: string[];
+  /** Ref2VA 参考媒体（上游 #2194）：视频帧数组 / 独立音频 / 视频音轨。 */
+  refVideos: string[][];
+  refAudios: string[];
+  refVideoAudios: string[];
   setImage: (
     which: "initImage" | "maskImage" | "controlImage" | "ipAdapterImage" | "endImage",
     v: string | null,
   ) => void;
   setRefImages: (updater: (r: string[]) => string[]) => void;
   setControlFrames: (updater: (r: string[]) => string[]) => void;
+  setRefVideos: (updater: (r: string[][]) => string[][]) => void;
+  setRefAudios: (updater: (r: string[]) => string[]) => void;
+  setRefVideoAudios: (updater: (r: string[]) => string[]) => void;
   seedRandom: boolean;
   setSeedRandom: (v: boolean) => void;
   /**
@@ -318,9 +325,15 @@ export const useStore = create<StoreState>((set, get) => ({
   endImage: null,
   refImages: [],
   controlFrames: [],
+  refVideos: [],
+  refAudios: [],
+  refVideoAudios: [],
   setImage: (which, v) => set({ [which]: v } as Partial<StoreState>),
   setRefImages: (updater) => set((s) => ({ refImages: updater(s.refImages) })),
   setControlFrames: (updater) => set((s) => ({ controlFrames: updater(s.controlFrames) })),
+  setRefVideos: (updater) => set((s) => ({ refVideos: updater(s.refVideos) })),
+  setRefAudios: (updater) => set((s) => ({ refAudios: updater(s.refAudios) })),
+  setRefVideoAudios: (updater) => set((s) => ({ refVideoAudios: updater(s.refVideoAudios) })),
   seedRandom: true,
   setSeedRandom: (v) => set({ seedRandom: v }),
   sizeStep: DEFAULT_SIZE_STEP,
@@ -336,6 +349,9 @@ export const useStore = create<StoreState>((set, get) => ({
       endImage: null,
       refImages: [],
       controlFrames: [],
+      refVideos: [],
+      refAudios: [],
+      refVideoAudios: [],
     }),
   logs: [],
   lastProgress: false,

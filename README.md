@@ -115,7 +115,7 @@ Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、Flux.3 Image Klein�
 - 监听地址固定 `127.0.0.1`，只有端口可配，不支持对外提供服务（`--listen-ip` / `--listen-port` 写在附加启动参数里会被拒绝，含短别名 `-l`）。
 - 提示词里的 LoRA 标签（`<lora:...>`）不生效，这是服务端 API 的限制，LoRA 请在参数面板里选。
 - PuLID 与 PhotoMaker 只在 `sd-cli` 通道可用：它们的身份参数（`--pulid-id-embedding`、`--pm-id-images-dir` 等）是**单次生成参数**，上游 `/sdcpp/v1` 没有开放，权重能加载但身份不会注入且几乎无日志，所以界面不提供这两个组件位。
-- MiniMax-H3 Ref2VA 只能通过 HTTP 传参考图，参考视频 / 音频目前仅 `sd-cli` 通道有，界面因此要求必须给参考图。
+- MiniMax-H3 Ref2VA 的参考图 / 参考视频 / 参考音频均可经 HTTP 传入（上游 #2194）：参考视频在界面里按 **24fps 抽帧**（服务端 JSON 通道固定按 24fps 解释，单个上限 481 帧），音频只收 **WAV**，视频音轨按顺序与参考视频配对且数量不得更多。参考条件（图/视频/音频）与首尾帧互斥；界面仍以参考图为最低门槛，避免 Ref2VA 权重无参考条件裸跑。
 - AnimateDiff 的运动模块原生训练在 16 帧，位置编码最多 32 帧，超出后画面趋于静止。
 - ADetailer 自上游 #2164 起在服务端可用：启动参数写了 `--ad-model` 后，内核会对**每次**图片生成的结果自动检测并局部重绘（请求体可覆盖 `ad_prompt` / `ad_negative_prompt` / `extra_ad_args`，但检测器只认启动参数）。界面暂未提供该功能的控件，写在「附加启动参数」里的 `--ad-model` 会在启动前给出提示；不需要时请移除。
 - 独立放大（`POST /sdcpp/v1/upscale`）已接在结果图的 ✨ 按钮上，但它只认 RGB 放大器（ESRGAN 与 MoSR 的权重都可以，内置滤镜与 latent 放大器不能用于该接口）、不保留 alpha，运行时还持有生成上下文锁，会与正在进行的生成互斥。

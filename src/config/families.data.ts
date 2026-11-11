@@ -246,11 +246,12 @@ export interface FamilyConfig {
 }
 
 /**
- * 输入位标识。前三项是图片输入；`hires` 是参数伪输入（二次放大开关），
- * 只用于互斥声明（上游 #2249：MiniMax-H3 的 latent hires 与首尾帧互斥），
- * 不会出现在 requiredInputsByMode 里。
+ * 输入位标识。图片输入之外有两个伪输入：`hires` 是参数开关（二次放大），
+ * `ref_videos` / `ref_audios` 是 Ref2VA 参考媒体（上游 #2194），都只用于
+ * 互斥声明，不会出现在 requiredInputsByMode 里。
  */
-export type RequiredInput = "init_image" | "end_image" | "ref_images" | "hires";
+export type RequiredInput =
+  "init_image" | "end_image" | "ref_images" | "hires" | "ref_videos" | "ref_audios";
 
 export const PID_VAE_FORMATS = [
   { value: "flux", label: "Flux / Z-Image" },
@@ -1059,16 +1060,16 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "minimax-h3-ref2va": {
     name: "MiniMax-H3 (Ref2VA)",
-    hint: "参考图像条件音视频生成；参考视频/音频仍仅 sd-cli 可用",
+    hint: "参考图像/视频/音频条件音视频生成（上游 #2194 起服务端已开放参考媒体）",
     mode: "vid",
-    // 半支持：sd-server 的 JSON 协议已接受 ref_images（参考图像条件可完整
-    // 走 HTTP），但参考视频/音频仅有 sd-cli 通道（examples/cli/main.cpp
-    // 本地加载 WAV/帧目录），故参考图设为必需输入，避免 ref2va 权重被
-    // 无参考条件裸跑。待上游 server 开放视频/音频参考后再升级。
+    // 上游 #2194 起 /sdcpp/v1 vid_gen 接受 ref_videos（24fps 帧数组）/
+    // ref_audios / ref_video_audios（WAV），参考媒体可完整走 HTTP。
+    // 参考图仍是最低门槛：避免 ref2va 权重被无参考条件裸跑。
     requiredInputsByMode: { vid_gen: ["ref_images"] },
     // 同 FL2VA：上游对 MiniMax-H3 统一要求参考条件与首尾帧互斥
     // （首尾帧彼此可以共存，故拆成两条二元声明）；hires 二段采样同样
-    // 与首尾帧互斥（上游 #2249）。
+    // 与首尾帧互斥（上游 #2249）。参考视频/音频也属于 Ref2VA 参考条件，
+    // 同样不能与首尾帧同用（上游 #2194）。
     exclusiveInputGroups: [
       {
         inputs: ["ref_images", "init_image"],
@@ -1085,6 +1086,22 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       {
         inputs: ["hires", "end_image"],
         message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
+      },
+      {
+        inputs: ["ref_videos", "init_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_videos", "end_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_audios", "init_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_audios", "end_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
       },
     ],
     fields: [
@@ -1220,7 +1237,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "hyperflow-h3-flash-ref2va": {
     name: "HyperFlow H3 Flash (Ref2VA)",
-    hint: "H3 蒸馏权重的参考图像条件支：组件同 MiniMax-H3 Ref2VA，6 步专用调度",
+    hint: "H3 蒸馏权重的参考条件支：参考图/视频/音频，6 步专用调度",
     mode: "vid",
     requiredInputsByMode: { vid_gen: ["ref_images"] },
     fields: [
@@ -1261,9 +1278,25 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         inputs: ["hires", "end_image"],
         message: "MiniMax-H3 的二次放大（hires）暂不支持与首帧 / 尾帧同时使用",
       },
+      {
+        inputs: ["ref_videos", "init_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_videos", "end_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_audios", "init_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
+      },
+      {
+        inputs: ["ref_audios", "end_image"],
+        message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
+      },
     ],
     generationHint:
-      "采样默认值同 HyperFlow H3 Flash（6 步调度表）；参考条件与首尾帧互斥，二次放大（hires）同样不能与首尾帧同用。",
+      "采样默认值同 HyperFlow H3 Flash（6 步调度表）；参考条件（图/视频/音频）与首尾帧互斥，二次放大（hires）同样不能与首尾帧同用。参考视频按 24fps 抽帧，音频只收 WAV。",
   },
   zimage: {
     name: "Z-Image",

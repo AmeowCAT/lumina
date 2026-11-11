@@ -35,6 +35,7 @@ import {
   filterFamilyInputs,
   missingRequiredInputs,
 } from "../../lib/launchConfig";
+import { validateRefMediaCounts } from "../../lib/refMedia";
 import type { GenImages, GenMode, GenParams, Job, JobConfig, UpscaleResponse } from "../../types";
 import { Lightbox, type LightboxItem } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
@@ -110,9 +111,15 @@ export function GenerationUI() {
   const endImage = useStore((s) => s.endImage);
   const refImages = useStore((s) => s.refImages);
   const controlFrames = useStore((s) => s.controlFrames);
+  const refVideos = useStore((s) => s.refVideos);
+  const refAudios = useStore((s) => s.refAudios);
+  const refVideoAudios = useStore((s) => s.refVideoAudios);
   const setImage = useStore((s) => s.setImage);
   const setRefImages = useStore((s) => s.setRefImages);
   const setControlFrames = useStore((s) => s.setControlFrames);
+  const setRefVideos = useStore((s) => s.setRefVideos);
+  const setRefAudios = useStore((s) => s.setRefAudios);
+  const setRefVideoAudios = useStore((s) => s.setRefVideoAudios);
   const seedRandom = useStore((s) => s.seedRandom);
   const setSeedRandom = useStore((s) => s.setSeedRandom);
   const sizeStep = useStore((s) => s.sizeStep);
@@ -235,6 +242,12 @@ export function GenerationUI() {
   const refImagesSupported =
     (mode === "img_gen" && featureEnabled(features, "ref_images")) ||
     !!FAMILY_CONFIG[family]?.requiredInputsByMode?.[mode]?.includes("ref_images");
+  // 上游 #2194：Ref2VA 参考媒体走 capabilities 的 vid_gen features；
+  // 旧内核缺键 → 隐藏控件，不发死键。
+  const refVideosSupported = mode === "vid_gen" && featureEnabled(features, "ref_videos");
+  const refAudiosSupported = mode === "vid_gen" && featureEnabled(features, "ref_audios");
+  const refVideoAudiosSupported =
+    mode === "vid_gen" && featureEnabled(features, "ref_video_audios");
   useEffect(() => {
     if (activeFamilyOverride) return;
     const p = caps?.model?.path || caps?.model?.name || "";
@@ -379,6 +392,9 @@ export function GenerationUI() {
         endImage,
         refImages: [...refImages],
         controlFrames: [...controlFrames],
+        refVideos: refVideos.map((frames) => [...frames]),
+        refAudios: [...refAudios],
+        refVideoAudios: [...refVideoAudios],
       };
       const next = imageSnapshots.current[m];
       setImage("initImage", next.initImage);
@@ -388,6 +404,9 @@ export function GenerationUI() {
       setImage("endImage", next.endImage);
       setRefImages(() => [...next.refImages]);
       setControlFrames(() => [...next.controlFrames]);
+      setRefVideos(() => (next.refVideos ?? []).map((frames) => [...frames]));
+      setRefAudios(() => [...(next.refAudios ?? [])]);
+      setRefVideoAudios(() => [...(next.refVideoAudios ?? [])]);
       setMode(m);
     },
     [
@@ -399,9 +418,15 @@ export function GenerationUI() {
       endImage,
       refImages,
       controlFrames,
+      refVideos,
+      refAudios,
+      refVideoAudios,
       setImage,
       setRefImages,
       setControlFrames,
+      setRefVideos,
+      setRefAudios,
+      setRefVideoAudios,
       setMode,
       flushParamsWrite,
     ],
@@ -432,6 +457,9 @@ export function GenerationUI() {
         endImage,
         refImages: refImagesSupported ? refImages : [],
         controlFrames: controlFramesSupported ? controlFrames : [],
+        refVideos: refVideosSupported ? refVideos : [],
+        refAudios: refAudiosSupported ? refAudios : [],
+        refVideoAudios: refVideoAudiosSupported ? refVideoAudios : [],
       },
       FAMILY_CONFIG[family],
     );
@@ -440,11 +468,17 @@ export function GenerationUI() {
       toast("请先提供: " + missingInputs.join("、"), true);
       return;
     }
-    // 互斥组合（MiniMax-H3：参考图与首尾帧、hires 与首尾帧）上游会直接判
-    // 失败，提前拦下；hires 是参数伪输入，需要 params 参与判定。
+    // 互斥组合（MiniMax-H3：参考图/参考媒体与首尾帧、hires 与首尾帧）上游
+    // 会直接判失败，提前拦下；hires 是参数伪输入，需要 params 参与判定。
     const inputConflicts = exclusiveInputConflicts(FAMILY_CONFIG[family], images, params);
     if (inputConflicts.length > 0) {
       toast(inputConflicts[0], true);
+      return;
+    }
+    // 上游 #2194：视频音轨按序配对参考视频，数量不得超过视频数。
+    const mediaError = validateRefMediaCounts(images.refVideos ?? [], images.refVideoAudios ?? []);
+    if (mediaError) {
+      toast(mediaError, true);
       return;
     }
     // 锁必须在所有早退检查之后上：否则"缺少输入"这类 return 会让锁
@@ -493,6 +527,9 @@ export function GenerationUI() {
                   ...images,
                   refImages: [...images.refImages],
                   controlFrames: [...images.controlFrames],
+                  refVideos: (images.refVideos ?? []).map((frames) => [...frames]),
+                  refAudios: [...(images.refAudios ?? [])],
+                  refVideoAudios: [...(images.refVideoAudios ?? [])],
                 },
               },
             },
@@ -527,7 +564,14 @@ export function GenerationUI() {
     endImage,
     refImages,
     controlFrames,
+    refVideos,
+    refAudios,
+    refVideoAudios,
     controlFramesSupported,
+    refImagesSupported,
+    refVideosSupported,
+    refAudiosSupported,
+    refVideoAudiosSupported,
     seedRandom,
     update,
     setJobs,
@@ -855,6 +899,9 @@ export function GenerationUI() {
       setImage("endImage", img?.endImage ?? null);
       setRefImages(() => img?.refImages ?? []);
       setControlFrames(() => img?.controlFrames ?? []);
+      setRefVideos(() => (img?.refVideos ?? []).map((frames) => [...frames]));
+      setRefAudios(() => [...(img?.refAudios ?? [])]);
+      setRefVideoAudios(() => [...(img?.refVideoAudios ?? [])]);
       // 恢复配置的意图是复现：种子已是提交时的具体值，关闭随机开关。
       if (p.seed >= 0) setSeedRandom(false);
       // 跨 mode 时还要写入 localStorage，供 mode 切换后的 init effect 读取。
@@ -870,7 +917,18 @@ export function GenerationUI() {
           : "已恢复该任务的配置",
       );
     },
-    [setParams, setImage, setRefImages, setControlFrames, setSeedRandom, setMode, toast],
+    [
+      setParams,
+      setImage,
+      setRefImages,
+      setControlFrames,
+      setRefVideos,
+      setRefAudios,
+      setRefVideoAudios,
+      setSeedRandom,
+      setMode,
+      toast,
+    ],
   );
 
   const download = useCallback(
@@ -1277,6 +1335,12 @@ export function GenerationUI() {
               endImage={endImage}
               refImages={refImages}
               controlFrames={controlFrames}
+              refVideos={refVideos}
+              refAudios={refAudios}
+              refVideoAudios={refVideoAudios}
+              refVideosSupported={refVideosSupported}
+              refAudiosSupported={refAudiosSupported}
+              refVideoAudiosSupported={refVideoAudiosSupported}
               params={params}
               seedRandom={seedRandom}
               sizeScale={sizeScale}
@@ -1288,6 +1352,9 @@ export function GenerationUI() {
               onSetImage={setImage}
               onSetRefImages={setRefImages}
               onSetControlFrames={setControlFrames}
+              onSetRefVideos={setRefVideos}
+              onSetRefAudios={setRefAudios}
+              onSetRefVideoAudios={setRefVideoAudios}
               onInitSize={handleInitSize}
               onSizeScale={handleSizeScale}
               onSizeBaseReset={handleSizeBaseReset}

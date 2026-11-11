@@ -43,6 +43,16 @@ export interface GenerationParamsSheetProps {
   endImage: string | null;
   refImages: string[];
   controlFrames: string[];
+  /** Ref2VA 参考媒体（上游 #2194）。 */
+  refVideos: string[][];
+  refAudios: string[];
+  refVideoAudios: string[];
+  refVideosSupported: boolean;
+  refAudiosSupported: boolean;
+  refVideoAudiosSupported: boolean;
+  onSetRefVideos: (updater: (r: string[][]) => string[][]) => void;
+  onSetRefAudios: (updater: (r: string[]) => string[]) => void;
+  onSetRefVideoAudios: (updater: (r: string[]) => string[]) => void;
   params: GenParams;
   seedRandom: boolean;
   sizeScale: number;
@@ -83,6 +93,15 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
     endImage,
     refImages,
     controlFrames,
+    refVideos,
+    refAudios,
+    refVideoAudios,
+    refVideosSupported,
+    refAudiosSupported,
+    refVideoAudiosSupported,
+    onSetRefVideos,
+    onSetRefAudios,
+    onSetRefVideoAudios,
     params,
     seedRandom,
     sizeScale,
@@ -134,6 +153,15 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           refImageArgs={params.ref_image_args}
           controlFramesSupported={controlFramesSupported}
           refImagesSupported={refImagesSupported}
+          refVideos={refVideos}
+          refAudios={refAudios}
+          refVideoAudios={refVideoAudios}
+          refVideosSupported={refVideosSupported}
+          refAudiosSupported={refAudiosSupported}
+          refVideoAudiosSupported={refVideoAudiosSupported}
+          onSetRefVideos={onSetRefVideos}
+          onSetRefAudios={onSetRefAudios}
+          onSetRefVideoAudios={onSetRefVideoAudios}
           strength={params.strength}
           controlStrength={params.control_strength}
           controlType={params.control_type}

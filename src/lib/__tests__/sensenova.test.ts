@@ -17,6 +17,9 @@ const images: GenImages = {
   endImage: "last",
   refImages: ["reference"],
   controlFrames: ["frame"],
+  refVideos: [],
+  refAudios: [],
+  refVideoAudios: [],
 };
 
 describe("SenseNova U1.5 integration", () => {
@@ -81,6 +84,9 @@ describe("SenseNova U1.5 integration", () => {
       endImage: null,
       refImages: [],
       controlFrames: [],
+      refVideos: [],
+      refAudios: [],
+      refVideoAudios: [],
     });
     expect(images.refImages).toEqual(["reference"]);
     expect(filterFamilyInputs(images, FAMILY_CONFIG.flux)).toEqual(images);

@@ -936,6 +936,35 @@ describe("newly supported families", () => {
     expect(filterFamilyInputs(images, FAMILY_CONFIG["ming-image"]).refImages).toEqual([]);
   });
 
+  // 上游 #2194：参考媒体随 filterFamilyInputs 透传；家族禁用对应 feature
+  // 时清空，避免把上一个模型的媒体带进不支持的模型。
+  it("passes ref media through and clears it when the family disables the feature", () => {
+    const images: GenImages = {
+      initImage: null,
+      maskImage: null,
+      controlImage: null,
+      ipAdapterImage: null,
+      endImage: null,
+      refImages: [],
+      controlFrames: [],
+      refVideos: [["frame"]],
+      refAudios: ["data:audio/wav;base64,AAA"],
+      refVideoAudios: ["data:audio/wav;base64,BBB"],
+    };
+    const kept = filterFamilyInputs(images, FAMILY_CONFIG["minimax-h3-ref2va"]);
+    expect(kept.refVideos).toEqual([["frame"]]);
+    expect(kept.refAudios).toEqual(["data:audio/wav;base64,AAA"]);
+    expect(kept.refVideoAudios).toEqual(["data:audio/wav;base64,BBB"]);
+
+    const disabled = filterFamilyInputs(images, {
+      ...FAMILY_CONFIG["minimax-h3-ref2va"],
+      disabledFeatures: ["ref_videos", "ref_audios", "ref_video_audios"],
+    });
+    expect(disabled.refVideos).toEqual([]);
+    expect(disabled.refAudios).toEqual([]);
+    expect(disabled.refVideoAudios).toEqual([]);
+  });
+
   // 上游 #2075：Z-Image L2P 用 16×16 patch + 小型卷积解码器取代 VAE，
   // 家族 id 必须与 family.rs 的返回值一致，且不能出现 VAE / TAE 槽位
   // （给了也只会白读文件，FakeVAE 分支优先）。
@@ -1103,6 +1132,37 @@ describe("exclusive family inputs", () => {
         exclusiveInputConflicts(config, { ...empty, initImage: "data:image/png;base64,init" }),
       ).toEqual([]);
     }
+  });
+
+  // 上游 #2194：参考视频/音频也属于 Ref2VA 参考条件，与首尾帧互斥。
+  it("flags H3 reference media combined with keyframes on ref2va families", () => {
+    for (const family of ["minimax-h3-ref2va", "hyperflow-h3-flash-ref2va"]) {
+      const config = FAMILY_CONFIG[family];
+      expect(
+        exclusiveInputConflicts(config, {
+          ...empty,
+          refVideos: [["frame"]],
+          initImage: "data:image/png;base64,init",
+        }),
+      ).toEqual(["MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用"]);
+      expect(
+        exclusiveInputConflicts(config, {
+          ...empty,
+          refAudios: ["data:audio/wav;base64,AAA"],
+          endImage: "data:image/png;base64,end",
+        }),
+      ).toEqual(["MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用"]);
+      // 只给参考媒体（Ref2VA 正常用法）不算冲突。
+      expect(exclusiveInputConflicts(config, { ...empty, refVideos: [["frame"]] })).toEqual([]);
+    }
+    // FL2VA 没有参考媒体控件，也不声明媒体互斥。
+    expect(
+      exclusiveInputConflicts(FAMILY_CONFIG["minimax-h3-fl2va"], {
+        ...empty,
+        refVideos: [["frame"]],
+        initImage: "data:image/png;base64,init",
+      }),
+    ).toEqual([]);
   });
 });
 

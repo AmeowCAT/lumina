@@ -6,6 +6,7 @@ import { Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
 import { ImageUpload } from "../../ui/ImageUpload";
+import { RefMediaSection } from "./RefMediaSection";
 import { IC } from "../../ui/Icons";
 import {
   CONTROL_TYPES,
@@ -118,6 +119,16 @@ interface Props {
   refImageArgs?: string;
   controlFramesSupported: boolean;
   refImagesSupported: boolean;
+  /** Ref2VA 参考媒体（上游 #2194）：仅 ref2va 家族且内核声明 feature 时渲染。 */
+  refVideos: string[][];
+  refAudios: string[];
+  refVideoAudios: string[];
+  refVideosSupported: boolean;
+  refAudiosSupported: boolean;
+  refVideoAudiosSupported: boolean;
+  onSetRefVideos: (updater: (r: string[][]) => string[][]) => void;
+  onSetRefAudios: (updater: (r: string[]) => string[]) => void;
+  onSetRefVideoAudios: (updater: (r: string[]) => string[]) => void;
   strength: number | undefined;
   controlStrength: number | undefined;
   /** 控制图类型（上游 #2284，SDXL ControlNet Union 必需）。 */
@@ -153,6 +164,15 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   refImageArgs,
   controlFramesSupported,
   refImagesSupported,
+  refVideos,
+  refAudios,
+  refVideoAudios,
+  refVideosSupported,
+  refAudiosSupported,
+  refVideoAudiosSupported,
+  onSetRefVideos,
+  onSetRefAudios,
+  onSetRefVideoAudios,
   strength,
   controlStrength,
   controlType,
@@ -307,6 +327,20 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           />
         </div>
       )}
+      {mode === "vid_gen" &&
+        (family === "minimax-h3-ref2va" || family === "hyperflow-h3-flash-ref2va") && (
+          <RefMediaSection
+            refVideos={refVideos}
+            refAudios={refAudios}
+            refVideoAudios={refVideoAudios}
+            videosSupported={refVideosSupported}
+            audiosSupported={refAudiosSupported}
+            videoAudiosSupported={refVideoAudiosSupported}
+            onSetRefVideos={onSetRefVideos}
+            onSetRefAudios={onSetRefAudios}
+            onSetRefVideoAudios={onSetRefVideoAudios}
+          />
+        )}
       {controlFramesSupported && mode === "vid_gen" && (
         <>
           <MultiImageRow

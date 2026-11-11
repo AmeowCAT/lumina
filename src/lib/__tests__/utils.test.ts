@@ -295,6 +295,42 @@ describe("buildRequestBody", () => {
     });
   });
 
+  // 上游 #2194：Ref2VA 参考媒体只在 vid_gen 发送；空数组不发（等价未设置）。
+  describe("ref media (upstream #2194)", () => {
+    const media: GenImages = {
+      ...({} as GenImages),
+      refVideos: [["frame1", "frame2"]],
+      refAudios: ["data:audio/wav;base64,AAA"],
+      refVideoAudios: ["data:audio/wav;base64,BBB"],
+    };
+
+    it("sends ref_videos / ref_audios / ref_video_audios on vid_gen", () => {
+      const body = buildRequestBody("vid_gen", baseParams, media);
+      expect(body.ref_videos).toEqual([["frame1", "frame2"]]);
+      expect(body.ref_audios).toEqual(["data:audio/wav;base64,AAA"]);
+      expect(body.ref_video_audios).toEqual(["data:audio/wav;base64,BBB"]);
+    });
+
+    it("never sends ref media on img_gen", () => {
+      const body = buildRequestBody("img_gen", baseParams, media);
+      expect(body.ref_videos).toBeUndefined();
+      expect(body.ref_audios).toBeUndefined();
+      expect(body.ref_video_audios).toBeUndefined();
+    });
+
+    it("omits empty arrays", () => {
+      const body = buildRequestBody("vid_gen", baseParams, {
+        ...({} as GenImages),
+        refVideos: [],
+        refAudios: [],
+        refVideoAudios: [],
+      });
+      expect(body.ref_videos).toBeUndefined();
+      expect(body.ref_audios).toBeUndefined();
+      expect(body.ref_video_audios).toBeUndefined();
+    });
+  });
+
   // 上游 #2028 把请求字段 auto_resize_ref_image 换成了 ref_image_args，
   // 旧内核只认前者、新内核只认后者，且两边都会忽略未知键，所以双发才能同时
   // 覆盖新旧 sd-server（不能只删旧键——旧内核上开关会失效）。

@@ -435,6 +435,9 @@ export function filterFamilyInputs(images: GenImages, config?: FamilyConfig): Ge
     endImage: disabled.has("end_image") ? null : images.endImage,
     refImages: disabled.has("ref_images") ? [] : images.refImages,
     controlFrames: disabled.has("control_frames") ? [] : images.controlFrames,
+    refVideos: disabled.has("ref_videos") ? [] : (images.refVideos ?? []),
+    refAudios: disabled.has("ref_audios") ? [] : (images.refAudios ?? []),
+    refVideoAudios: disabled.has("ref_video_audios") ? [] : (images.refVideoAudios ?? []),
   };
 }
 
@@ -448,6 +451,10 @@ export function requiredInputLabel(input: RequiredInput): string {
       return "结束帧";
     case "hires":
       return "二次放大（hires）";
+    case "ref_videos":
+      return "参考视频";
+    case "ref_audios":
+      return "参考音频";
   }
 }
 
@@ -460,10 +467,12 @@ export function missingRequiredInputs(
   return required.filter((input) => !hasInput(images, input)).map(requiredInputLabel);
 }
 
-/** 某个必需输入位是否已经有图片（hires 是参数伪输入，只看 params）。 */
+/** 某个必需输入位是否已经有内容（hires 是参数伪输入，只看 params）。 */
 function hasInput(images: GenImages, input: RequiredInput, params?: GenParams): boolean {
   if (input === "hires") return !!params?.hires?.enabled;
   if (input === "ref_images") return images.refImages.length > 0;
+  if (input === "ref_videos") return (images.refVideos?.length ?? 0) > 0;
+  if (input === "ref_audios") return (images.refAudios?.length ?? 0) > 0;
   if (input === "init_image") return !!images.initImage;
   return !!images.endImage;
 }

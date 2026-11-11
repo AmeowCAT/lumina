@@ -561,6 +561,11 @@ function jobImagesBytes(job: Job): number {
     images.endImage,
     ...images.refImages,
     ...images.controlFrames,
+    // Ref2VA 参考媒体（上游 #2194）：抽帧数组可达数十 MB，必须计入预算，
+    // 否则任务输入层会悄悄超出总账。
+    ...(images.refVideos ?? []).flat(),
+    ...(images.refAudios ?? []),
+    ...(images.refVideoAudios ?? []),
   ];
   let total = 0;
   for (const src of all) if (src) total += b64ByteLength(src);
@@ -1827,6 +1832,13 @@ export function buildRequestBody(
   if (images.refImages?.length) b.ref_images = images.refImages;
   // VACE 条件帧：顺序即条件帧顺序，上游按请求顺序保留。
   if (mode === "vid_gen" && images.controlFrames?.length) b.control_frames = images.controlFrames;
+  // 上游 #2194：Ref2VA 参考视频（帧数组的数组，JSON 通道固定按 24fps 解释）
+  // 与参考音频 / 视频音轨（base64 WAV）。调用方按家族能力裁剪后传入。
+  if (mode === "vid_gen") {
+    if (images.refVideos?.length) b.ref_videos = images.refVideos;
+    if (images.refAudios?.length) b.ref_audios = images.refAudios;
+    if (images.refVideoAudios?.length) b.ref_video_audios = images.refVideoAudios;
+  }
 
   if (sp?.eta != null) sampleParams.eta = sp.eta;
   if (sp?.flow_shift != null) sampleParams.flow_shift = sp.flow_shift;

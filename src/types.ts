@@ -155,6 +155,10 @@ export interface Features {
   ip_adapter_image?: boolean;
   end_image?: boolean;
   ref_images?: boolean;
+  /** 上游 #2194：vid_gen 接受参考视频（帧数组）/ 参考音频 / 视频音轨（WAV）。 */
+  ref_videos?: boolean;
+  ref_audios?: boolean;
+  ref_video_audios?: boolean;
   lora?: boolean;
   hires?: boolean;
   control_frames?: boolean;
@@ -538,6 +542,16 @@ export interface GenImages {
   refImages: string[];
   /** vid_gen 的 VACE 条件帧，按请求顺序作为条件帧序列。 */
   controlFrames: string[];
+  /**
+   * Ref2VA 参考视频（上游 #2194）：每个视频是一组按 24fps 抽取的帧
+   * （dataURL）。JSON 通道固定按 24fps 解释，抽帧器必须同帧率采样。
+   * 可选字段：旧记录/旧内核没有参考媒体。
+   */
+  refVideos?: string[][];
+  /** Ref2VA 独立参考音频（base64 WAV dataURL）。 */
+  refAudios?: string[];
+  /** 与 refVideos 按序配对的音轨（base64 WAV dataURL），数量 ≤ 视频数。 */
+  refVideoAudios?: string[];
 }
 
 export interface JobConfig {
