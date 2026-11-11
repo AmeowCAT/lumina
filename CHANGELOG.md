@@ -5,8 +5,36 @@
 
 ## [Unreleased]
 
-（下一轮的改动写这里。发版时把本节改成 `## <版本号> — <日期>`，并在上方新开一个空的
-`[Unreleased]`。）
+### 同步上游 `32d516c`（2026-11-11）
+
+- **正确性**：嵌入元数据 schema 换代兼容（上游 #2206）：`sdcpp.image.params/v1` →
+  `sdcpp.generation/v1`（prompt 扁平化、seed 变十进制字符串、sampling → sample_params、
+  cache 只存结构化参数、LoRA 记相对路径）。参数恢复按 schema 分流，新图旧图都能
+  完整回填；`cache_dit`（元数据枚举）归一为请求体的 `cache-dit`，避免恢复后提交 400。
+- **新增**：结果项 `generation_info` 的实际种子回显（上游 #2206）：随机种子任务的
+  结果卡/下载文件名显示每张图的真实 seed，「应用此配置」优先带回实际种子。
+- **新增**：结构化执行进度（上游 #2303）：任务行显示阶段文案（条件编码/采样/VAE 解码/
+  输出编码…）与段内步数进度条，多任务不再借用全局日志进度；旧内核无 `progress` 键时
+  回落日志解析，任务栏全局进度不变。
+- **新增**：Ref2VA 参考视频/音频输入（上游 #2194）：参考视频按 **24fps 抽帧**（服务端
+  JSON 通道固定帧率，短边 ≤1024、单个上限 481 帧），参考音频/视频音轨只收 **WAV**
+  （RIFF 头校验），音轨按序配对视频且数量不得更多；参考媒体与首尾帧互斥在提交前拦截。
+- **新增**：`control_type` 选择器（上游 #2284 / #2187）：SDXL ControlNet Union 必需的
+  控制类型（8 个枚举，tile/repaint 标注 ProMax），仅新内核显示；其它 ControlNet 忽略。
+- **新增**：MiniMax-H3-Image（#2324）、P-H3-Image（#2272）、HyperFlow H3 Flash 两支
+  （#2299）家族，家族数 62 → 66。专用 sigmas 调度按上游数值数组下发（请求体不认 CLI
+  预设名）；P-H3-Image 文本连接器走 `--embeddings-connectors`（官方包内置时可选）。
+- **新增**：MiniMax-H3 latent hires 二段采样（上游 #2249）：与首尾帧互斥的提交前校验；
+  H3 家族提示补 Sol-H3-VAE 时间分块（5 的倍数）与 `minimax_h3_attn_chunk_budget` 写法。
+- **工程化**：队列治理参数预检（上游 #2316）：`--max-pending-jobs`（正整数）/
+  `--completed-ttl-seconds`（非负整数秒）写入附加启动参数时校验取值、旧内核报不支持；
+  完成任务默认 600s 后清理、过期查询 410 的轮询兼容早已实现。
+- **工程化**：`upstream-diff.mjs` 补三个盲区：请求体键提取覆盖
+  `parse_*_array_json_field`（ref_videos 等不再漏报）；生成期参数（`--control-type`）
+  不再误报为启动参数；语义检查新增结构化 progress 与元数据 schema 换代两条。
+- **裁定**：SeedVR2 / RelayVSR（#2300 / #2285）走 CLI-only 的 `vid_upscale`，服务端
+  无通道，不接（README 已知限制）；recipe `size_multiple` / `video_constraints` /
+  幂等加载仍不消费。分析与落地记录见 `docs/UPSTREAM-SYNC-2026-11-11.md`。
 
 ## 0.9.1 — 2026-10-24
 

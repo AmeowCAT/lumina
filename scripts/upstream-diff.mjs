@@ -92,11 +92,33 @@ const KNOWN_UNSUPPORTED = {
 const extractArgs = (text) =>
   uniq([...text.matchAll(/"(--[a-z0-9][a-z0-9-]*)"/g)].map((m) => m[1]));
 /**
+ * 请求体字段不止 `load_if_exists` 一条通道：图片/音频/视频数组走
+ * `parse_*_array_json_field`（上游 #2194 的 ref_videos/ref_audios/
+ * ref_video_audios 就是这样漏报的，2026-11 同步 §6）。
  * @param {string} text
  * @returns {string[]}
  */
 const extractJsonKeys = (text) =>
-  uniq([...text.matchAll(/load_if_exists\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1]));
+  uniq(
+    [
+      ...text.matchAll(/load_if_exists\(\s*"([a-z0-9_]+)"/g),
+      ...text.matchAll(/parse_(?:image|audio|video)_array_json_field\(\s*j,\s*"([a-z0-9_]+)"/g),
+    ].map((m) => m[1]),
+  );
+/**
+ * common.cpp 里 `SDContextParams::get_options`（启动参数）排在
+ * `SDGenerationParams::get_options`（生成期参数）之前。生成期参数
+ * （--control-type 等）sd-server 启动不认，只该报「请求侧新增」，
+ * 混进启动参数报告是误报（2026-11 同步 §6）。
+ * @param {string} text
+ * @returns {{ context: string; generation: string }}
+ */
+const splitCommonArgs = (text) => {
+  const idx = text.indexOf("SDGenerationParams::get_options");
+  return idx >= 0
+    ? { context: text.slice(0, idx), generation: text.slice(idx) }
+    : { context: text, generation: "" };
+};
 
 /**
  * 读上游某个提交上的文件：本地克隆用 git show，否则走 raw.githubusercontent。
@@ -201,6 +223,17 @@ async function semanticDrift(since, ref) {
       "sd-server 在 img_gen 后开始执行 ADetailer：启动参数 --ad-model 从死键变成「每次生成都跑检测 + 局部重绘」。",
     );
   }
+  // 2026-11 同步新增的两条语义检查（§6）：结构化进度与元数据 schema 换代。
+  if (!oldApi.includes("progress.stage") && newApi.includes("progress.stage")) {
+    findings.push(
+      "任务 JSON 新增结构化 progress（stage/detail/pass/completed/total/unit，上游 #2303）：界面应优先读 job.progress，日志解析仅作旧内核回落。",
+    );
+  }
+  if (!oldApi.includes("sdcpp.generation/v1") && newApi.includes("sdcpp.generation/v1")) {
+    findings.push(
+      "元数据 schema 换成 sdcpp.generation/v1、结果项携带 generation_info（实际 seed，上游 #2206）：sdcppMetadataToGenParams 必须按 schema 分流，结果卡回显实际种子。",
+    );
+  }
   return report(
     "参数/字段之外的语义变化",
     findings,
@@ -226,12 +259,19 @@ async function drift() {
     upstreamFile(FILES.cli, ref),
   ]);
 
-  const oldArgs = new Set([...extractArgs(oldCommon), ...extractArgs(oldRuntime)]);
-  const newArgs = new Set([...extractArgs(newCommon), ...extractArgs(newRuntime)]);
+  const oldSplit = splitCommonArgs(oldCommon);
+  const newSplit = splitCommonArgs(newCommon);
+  const oldArgs = new Set([...extractArgs(oldSplit.context), ...extractArgs(oldRuntime)]);
+  const newArgs = new Set([...extractArgs(newSplit.context), ...extractArgs(newRuntime)]);
   const cliOnlyOld = new Set(extractArgs(oldCli));
   const cliOnlyNew = new Set(extractArgs(newCli));
   const addedArgs = [...newArgs].filter((a) => !oldArgs.has(a) && !cliOnlyNew.has(a));
   const removedArgs = [...oldArgs].filter((a) => !newArgs.has(a) && !cliOnlyOld.has(a));
+  // 生成期参数（SDGenerationParams）：sd-server 启动不认，单独信息性输出，
+  // 不再混进「新增启动参数」（--control-type 误报的修复，§6）。
+  const oldGen = new Set(extractArgs(oldSplit.generation));
+  const newGen = new Set(extractArgs(newSplit.generation));
+  const addedGenArgs = [...newGen].filter((a) => !oldGen.has(a) && !cliOnlyNew.has(a));
 
   const oldKeys = new Set(extractJsonKeys(oldCommon));
   const newKeys = new Set(extractJsonKeys(newCommon));
@@ -254,6 +294,13 @@ async function drift() {
     report("上游删除/改名的请求体字段", removedKeys, "检查 types.ts 是否仍在发送。"),
     await semanticDrift(since, ref),
   ];
+  if (addedGenArgs.length) {
+    console.log(
+      `\nℹ 上游新增的生成期参数（${addedGenArgs.length}，sd-cli / 请求侧，不是启动参数）`,
+    );
+    for (const item of addedGenArgs) console.log(`  ${item}`);
+    console.log("  → 对应请求体字段见上方「新增的请求体字段」；启动参数报告不再包含它们。");
+  }
   const any = findings.some(Boolean);
   if (!any) console.log("\n✓ 两个提交之间没有参数/字段增删。");
   return any ? (strict ? 1 : 0) : 0;
