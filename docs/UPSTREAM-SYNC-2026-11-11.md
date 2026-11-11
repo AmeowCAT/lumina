@@ -251,8 +251,12 @@ ref_video_audios` 三个布尔（旧内核缺键 → 隐藏控件）。
      ≤1024，JPEG 0.92，帧数上限 481 ≈ 20s，超限截断并提示）；
    - 参考音频 / 视频音轨：只收 `.wav`，读 base64；音轨数超过视频数时阻止提交。
 3. `minimax-h3-ref2va` / `hyperflow-h3-flash-ref2va` 的 hint 更新（去掉
-   「仅 sd-cli」措辞）；`requiredInputsByMode` 保持 ref_images 必需
-   （上游 Ref2VA 语义：参考条件至少一路，界面以参考图为最低门槛）。
+   「仅 sd-cli」措辞）；必备输入改成**「任一即可」组**
+   `requiredAnyInputGroupsByMode: { vid_gen: [["ref_images",
+"ref_videos", "ref_audios"]] }`——内核判据是
+   `has_references = ref_images_count > 0 || ref_videos_count > 0 ||
+ref_audios_count > 0`（`src/pipeline/video.cpp`），只给参考视频/音频同样
+   成立，写成「参考图全部必需」会把这类用户误拦（审查修正）。
 4. 互斥声明沿用（参考条件 vs 首尾帧）；`ref_videos`/`ref_audios` 加入互斥组。
 5. 内存：帧数组进 job config 快照，受 `MAX_JOB_CONFIG_BYTES` 约束；
    481 帧 × ~100KB ≈ 48MB 上限，抽帧分辨率封顶就是为了这个。
@@ -380,19 +384,19 @@ npm run check:version && npm run build
 
 本轮按 §8 的拆分实施（对齐号放在最后）：
 
-| 项                          | 状态 | 落点                                                                                                                                           |
-| --------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| P0 元数据双 schema          | 完成 | `sdcppMetadataToGenParams` 按 schema 分流 + `generationV1ToGenParams`（字符串 seed、cache_dit 归一、草稿重建、LoRA path 匹配）；双 schema 夹具 |
-| P1 结构化进度               | 完成 | `JobProgress` 类型、`jobProgressSummary` / 阶段文案映射、JobQueue 阶段文案 + 段内进度条、GenerationUI 页头；旧内核回落日志解析                 |
-| P1 generation_info 实际种子 | 完成 | 三处宽松类型、ResultsGrid 种子回显、applyConfig 第三参、下载文件名优先实际种子                                                                 |
-| P1 control_type             | 完成 | GenParams + buildRequestBody（仅 img_gen 非空发送）、ImageInputsPanel 枚举选择器（capabilities 含键才显示）、新 schema 回填                    |
-| P1 新家族 ×4                | 完成 | family.rs 识别/分类（text_connector→embeddings）+ 用例；families.data.ts 四条配置（数值 sigmas）、32 对齐、17k+5 帧网格、TAE 提示；README 66   |
-| P1 H3 hires 互斥            | 完成 | RequiredInput 增 hires 伪输入、exclusiveInputConflicts 接受 params、四个 H3 视频家族声明；FL2VA generationHint 补 Sol-H3-VAE/attn 预算         |
-| P1 Ref2VA 参考媒体          | 完成 | refMedia.ts（24fps 抽帧/WAV 校验/配对校验）、RefMediaSection、store/快照/模式切换/应用配置全链路、filterFamilyInputs 裁剪、字节预算计入        |
-| P2 队列参数预检             | 完成 | cli.rs 三处登记 + 取值校验 + 新旧内核用例                                                                                                      |
-| P2 裁定登记                 | 完成 | UPSTREAM-SYNC.md 裁定表（SeedVR2/RelayVSR、队列参数、attn 预算、recipe 演进）、README 已知限制                                                 |
-| P2 工具链盲区               | 完成 | upstream-diff.mjs：parse_*_array_json_field 键提取、生成期/启动参数分流、progress 与 schema 换代语义检查；复跑输出与 §0 一致                   |
-| 对齐号 / README / CHANGELOG | 完成 | README `32d516c` + 家族清单 66 + 对齐段落重写；CHANGELOG [Unreleased]；本文                                                                    |
+| 项                          | 状态 | 落点                                                                                                                                                        |
+| --------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 元数据双 schema          | 完成 | `sdcppMetadataToGenParams` 按 schema 分流 + `generationV1ToGenParams`（字符串 seed、cache_dit 归一、草稿重建、LoRA path 匹配）；双 schema 夹具              |
+| P1 结构化进度               | 完成 | `JobProgress` 类型、`jobProgressSummary` / 阶段文案映射、JobQueue 阶段文案 + 段内进度条、GenerationUI 页头；旧内核回落日志解析                              |
+| P1 generation_info 实际种子 | 完成 | 三处宽松类型、ResultsGrid 种子回显、applyConfig 第三参、下载文件名优先实际种子                                                                              |
+| P1 control_type             | 完成 | GenParams + buildRequestBody（仅 img_gen 非空发送）、ImageInputsPanel 枚举选择器（capabilities 含键才显示）、新 schema 回填                                 |
+| P1 新家族 ×4                | 完成 | family.rs 识别/分类（text_connector→embeddings）+ 用例；families.data.ts 四条配置（数值 sigmas）、32 对齐、17k+5 帧网格、TAE 提示；README 66                |
+| P1 H3 hires 互斥            | 完成 | RequiredInput 增 hires 伪输入、exclusiveInputConflicts 接受 params、四个 H3 视频家族声明；FL2VA generationHint 补 Sol-H3-VAE/attn 预算                      |
+| P1 Ref2VA 参考媒体          | 完成 | refMedia.ts（24fps 抽帧/WAV 校验/配对校验）、RefMediaSection、store/快照/模式切换/应用配置全链路、filterFamilyInputs 裁剪、字节预算计入、「任一即可」必备组 |
+| P2 队列参数预检             | 完成 | cli.rs 三处登记 + 取值校验 + 新旧内核用例                                                                                                                   |
+| P2 裁定登记                 | 完成 | UPSTREAM-SYNC.md 裁定表（SeedVR2/RelayVSR、队列参数、attn 预算、recipe 演进）、README 已知限制                                                              |
+| P2 工具链盲区               | 完成 | upstream-diff.mjs：parse_*_array_json_field 键提取、生成期/启动参数分流、progress 与 schema 换代语义检查；复跑输出与 §0 一致                                |
+| 对齐号 / README / CHANGELOG | 完成 | README `32d516c` + 家族清单 66 + 对齐段落重写；CHANGELOG [Unreleased]；本文                                                                                 |
 
 验证：`npm run check:types`、`npm test`（550 passed）、`npm run lint`（0 errors）、
 `cargo test`（family 33 / cli 15 及其余用例）均通过；
