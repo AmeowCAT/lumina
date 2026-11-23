@@ -9,6 +9,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { AnimatePresence } from "motion/react";
+import { Play, RotateCw, Search, X } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import { useTheme } from "../../lib/theme";
@@ -162,7 +163,7 @@ function HistoryTile({
       )}
       {isVideo && (
         <span className="history-play" aria-hidden="true" title="点击回放">
-          ▶
+          <Play size={14} fill="currentColor" strokeWidth={1.8} />
         </span>
       )}
       {file.metadata && (
@@ -180,7 +181,6 @@ export const HistoryGallery = memo(function HistoryGallery({
 }: Props) {
   const settings = useStore((s) => s.settings);
   const toast = useStore((s) => s.toast);
-  // 空态文案随主题语境:暗房"历史图片" ↔ 太空"回传图像"(遥测档案)
   const vostok = useTheme() === "vostok";
   const [files, setFiles] = useState<OutputEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -687,34 +687,48 @@ export const HistoryGallery = memo(function HistoryGallery({
   return (
     <Panel title={vostok ? "回传档案" : "历史画廊"} badge={mediaFiles.length || null}>
       {!settings.outputDir ? (
-        <p className="text-muted text-xs py-1">请在控制台设置输出目录</p>
+        <p className="py-6 text-center text-[12px] text-muted">请在控制台设置输出目录</p>
       ) : loading ? (
-        <span className="spinner block mx-auto my-2" />
+        <div className="flex justify-center py-8">
+          <span className="spinner" />
+        </div>
       ) : mediaFiles.length === 0 ? (
-        <p className="text-muted text-xs py-1">{vostok ? "暂无回传记录" : "暂无历史记录"}</p>
+        <p className="py-6 text-center text-[12px] text-muted">
+          {vostok ? "暂无回传记录" : "暂无历史记录"}
+        </p>
       ) : (
         <>
-          <div className="flex items-end gap-2">
-            {/* 横向工具行里 form-row 的 margin-bottom 无意义(gap 管间距),且
-                :last-child 清零规则会让两侧 margin 不一致,items-end 按 margin
-                box 对齐后下拉反比输入框低 9px——统一清掉才能精确底对齐 */}
-            <div className="form-row flex-1 mb-0">
-              <label className="form-label" htmlFor="history-search">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="relative flex-1">
+              <label className="sr-only" htmlFor="history-search">
                 搜索历史
               </label>
+              <Search
+                size={13}
+                strokeWidth={1.8}
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
+              />
               <input
                 id="history-search"
-                className="input"
+                className="input pl-8 pr-7"
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="文件名、日期、模型或提示词"
+                placeholder="搜索文件名或提示词…"
               />
+              {query && (
+                <button
+                  type="button"
+                  aria-label="清空搜索"
+                  onClick={() => setQuery("")}
+                  className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 cursor-pointer place-items-center rounded text-muted transition-colors hover:bg-hover hover:text-fg"
+                >
+                  <X size={12} strokeWidth={2} aria-hidden="true" />
+                </button>
+              )}
             </div>
-            {/* 宽度由选中项文字撑开:根字体 13px 下 w-24 仅 78px,
-                "最新优先" 48px 会被截断成"最新...";
-                py 对齐 input 的 7px,与搜索框等高(默认 6px 会矮 2.75px) */}
-            <div className="form-row shrink-0">
+            <div className="shrink-0">
               <Select
                 id="history-sort"
                 className="py-[7px]"
@@ -728,6 +742,15 @@ export const HistoryGallery = memo(function HistoryGallery({
                 ]}
               />
             </div>
+            <button
+              type="button"
+              className="btn btn-sm shrink-0 py-[7px]"
+              onClick={load}
+              title="刷新历史画廊"
+            >
+              <RotateCw size={12} strokeWidth={1.8} aria-hidden="true" />
+              <span>刷新</span>
+            </button>
           </div>
           {sortedFiles.length === 0 ? (
             <div className="empty-state">
@@ -786,9 +809,6 @@ export const HistoryGallery = memo(function HistoryGallery({
               ))}
             </div>
           )}
-          <button className="btn btn-sm mt-2" onClick={load}>
-            刷新
-          </button>
         </>
       )}
 

@@ -1,10 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { Terminal } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import { logSeverity } from "../../lib/logFormat";
 import { DEFAULT_SD_PORT, formatError } from "../../lib/utils";
 import { IC } from "./Icons";
 import { TwoTapButton } from "./TwoTapButton";
+import { cn } from "./cn";
 
 /**
  * 底部可折叠的服务器日志面板。sd-server 的 stdout/stderr 由后端逐行捕获、
@@ -82,7 +84,7 @@ export function LogPanel() {
   };
 
   return (
-    <div className={`log-panel${open ? " open" : ""}`}>
+    <div className={cn("log-panel", open && "open")}>
       <div className="log-head">
         <button
           type="button"
@@ -91,15 +93,27 @@ export function LogPanel() {
           aria-controls={bodyId}
           onClick={() => setOpen((value) => !value)}
         >
+          <Terminal
+            size={11}
+            strokeWidth={1.8}
+            className="shrink-0 text-muted"
+            aria-hidden="true"
+          />
           <span className="log-title">服务器日志</span>
           {!open && <span className="log-last">{last}</span>}
         </button>
         {open && (
           <>
-            <button className="log-clear" aria-label="清空服务器日志" onClick={clearLogs}>
+            <button
+              type="button"
+              className="log-clear"
+              aria-label="清空服务器日志"
+              onClick={clearLogs}
+            >
               清空
             </button>
             <button
+              type="button"
               className="log-clear"
               aria-label="复制全部服务器日志到剪贴板"
               title="复制全部日志（报 issue 时贴这个，比截图有用）"
@@ -124,7 +138,7 @@ export function LogPanel() {
             )}
           </>
         )}
-        <span className="log-count" aria-label={`${logs.length} 条日志`}>
+        <span className="log-count font-variant-tnum" aria-label={`${logs.length} 条日志`}>
           {logs.length}
         </span>
         <span className="log-chevron" aria-hidden="true">
@@ -149,10 +163,11 @@ export function LogPanel() {
               return (
                 <div
                   key={l.id}
-                  className={
-                    "log-line" +
-                    (severity === "error" ? " log-err" : severity === "warn" ? " log-warn" : "")
-                  }
+                  className={cn(
+                    "log-line",
+                    severity === "error" && "log-err",
+                    severity === "warn" && "log-warn",
+                  )}
                 >
                   {l.text}
                 </div>

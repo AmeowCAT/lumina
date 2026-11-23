@@ -38,7 +38,9 @@ export const LoraPanel = memo(function LoraPanel({ loras, available, onUpdate }:
                 ]}
               />
               <button
+                type="button"
                 className="lora-remove"
+                aria-label={`移除第 ${i + 1} 个 LoRA`}
                 onClick={() =>
                   onUpdate(
                     "lora",
@@ -82,6 +84,7 @@ export const LoraPanel = memo(function LoraPanel({ loras, available, onUpdate }:
         );
       })}
       <button
+        type="button"
         className="add-lora"
         onClick={() => onUpdate("lora", [...loras, { path: "", multiplier: 1 }])}
       >

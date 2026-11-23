@@ -174,7 +174,7 @@ describe("PromptDock 提示词 token 计数", () => {
     renderDock({ prompt: "abcdefg" });
     const counter = screen.getByText("≈2 tokens");
     expect(counter).toBeInTheDocument();
-    expect(counter.getAttribute("title")).toContain("按字符数/3.5 粗估");
+    expect(counter.getAttribute("title")).toContain("按字符估算");
   });
 
   it("从家族配置读上限：超限用 warn 色并说明会被内核截断", () => {

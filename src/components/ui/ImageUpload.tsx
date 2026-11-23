@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useStore } from "../../store";
 import { IC } from "./Icons";
+import { cn } from "./cn";
 import { getImageSize, readFileAsDataUrl } from "../../lib/utils";
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -148,7 +149,7 @@ export function ImageUpload({
       ) : (
         <button
           type="button"
-          className={`upload-zone${dragOver ? " drag-over" : ""}`}
+          className={cn("upload-zone", dragOver && "drag-over")}
           aria-labelledby={labelId}
           aria-describedby={hintId}
           onClick={() => inputRef.current?.click()}
@@ -159,6 +160,12 @@ export function ImageUpload({
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
         >
+          <span
+            className="inline-flex items-center justify-center mb-1.5 text-muted"
+            aria-hidden="true"
+          >
+            {IC.upload}
+          </span>
           <p>{dragOver ? "松开以上传" : "点击或拖放图片"}</p>
           <p id={hintId} className="upload-hint">
             PNG / JPG / WEBP · 也支持 Ctrl+V

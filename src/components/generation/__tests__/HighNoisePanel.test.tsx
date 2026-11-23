@@ -132,7 +132,7 @@ describe("HighNoisePanel lms/extra args", () => {
       "-1",
     );
     expect(screen.getByRole("slider", { name: /^MoE Boundary/ })).toBeTruthy();
-    expect(screen.getByText(/当前内核（DGL 架构）的高噪段复用主采样器/)).toBeTruthy();
+    expect(screen.getByText(/高噪段复用主采样设置/)).toBeTruthy();
     expect(screen.queryByLabelText("采样器")).toBeNull();
     expect(screen.queryByLabelText("调度器")).toBeNull();
     expect(screen.queryByLabelText("额外采样参数 (高噪)")).toBeNull();

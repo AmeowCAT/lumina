@@ -25,7 +25,7 @@ import {
   validateScmMask,
   validateSlgWindow,
 } from "../../../lib/utils";
-import { Panel } from "../../ui/Panel";
+import { InfoTip, Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { Toggle } from "../../ui/Toggle";
 import { Select } from "../../ui/Select";
@@ -160,7 +160,6 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
         min={0}
         max={1}
         step={0.05}
-        hint="随机噪声强度，通常保持推荐值"
       />
       <Slider
         label="Flow Shift"
@@ -169,7 +168,6 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
         min={0}
         max={20}
         step={0.1}
-        hint="Flow 类模型的时间步偏移"
       />
       {/* 审查 50-ux F-18：`shifted_timestep` 一直会随请求体发送（utils.ts），
           但界面没有入口——Flow 类模型微调时间步的第二个旋钮。0 表示用内核默认。
@@ -182,7 +180,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           min={0}
           max={1000}
           step={10}
-          hint="时间步平移；0 = 用内核默认"
+          sublabel="0 = 自动"
         />
       )}
       {supportsSlg && (
@@ -194,55 +192,58 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
             min={0}
             max={10}
             step={0.1}
-            hint="跳层引导，0 表示关闭"
+            sublabel="0 = 关闭"
           />
           {/* 审查 F-18：SLG 的另外三个上游参数此前没有入口。
               layers 缺省 = 不下发（沿用内核 --skip-layers）；layer_start/end 是
               **总步数的分数**，按 int(start*N) < step < int(end*N) 生效
               （src/runtime/guidance.cpp:313-315），start>=end 时静默不生效。 */}
-          <div className="form-row">
-            <label className="form-label" htmlFor="slg-layer-start">
-              SLG 起始比例
-              <span className="form-sublabel">总步数分数，默认 0.01</span>
-            </label>
-            <NumberInput
-              id="slg-layer-start"
-              value={slg?.layer_start ?? 0.01}
-              onChange={(v) => writeSlg({ layer_start: v })}
-              min={0}
-              max={1}
-              step={0.01}
-            />
-          </div>
-          <div className="form-row">
-            <label className="form-label" htmlFor="slg-layer-end">
-              SLG 结束比例
-              <span className="form-sublabel">总步数分数，默认 0.2</span>
-            </label>
-            <NumberInput
-              id="slg-layer-end"
-              value={slg?.layer_end ?? 0.2}
-              onChange={(v) => writeSlg({ layer_end: v })}
-              min={0}
-              max={1}
-              step={0.01}
-            />
+          <div className="form-grid">
+            <div className="form-row">
+              <label className="form-label" htmlFor="slg-layer-start">
+                SLG 起始比例
+              </label>
+              <NumberInput
+                id="slg-layer-start"
+                value={slg?.layer_start ?? 0.01}
+                onChange={(v) => writeSlg({ layer_start: v })}
+                min={0}
+                max={1}
+                step={0.01}
+              />
+            </div>
+            <div className="form-row">
+              <label className="form-label" htmlFor="slg-layer-end">
+                SLG 结束比例
+              </label>
+              <NumberInput
+                id="slg-layer-end"
+                value={slg?.layer_end ?? 0.2}
+                onChange={(v) => writeSlg({ layer_end: v })}
+                min={0}
+                max={1}
+                step={0.01}
+              />
+            </div>
           </div>
           {slgWindowError && (
-            <div className="field-hint field-hint-flush" role="alert">
+            <div
+              className="mb-3.5 rounded-md border border-warn/30 bg-warn-dim px-2.5 py-2 text-[11px] leading-relaxed text-warn"
+              role="alert"
+            >
               {slgWindowError}
             </div>
           )}
           <div className="form-row">
-            <label className="form-label" htmlFor="slg-layers">
-              跳层索引
-              <span className="form-sublabel">
-                逗号分隔整数，默认 7,8,9；留空则沿用内核 --skip-layers
-              </span>
-            </label>
+            <div className="form-label-row">
+              <label className="form-label" htmlFor="slg-layers">
+                跳层索引
+              </label>
+              <span className="field-anchor">逗号分隔</span>
+            </div>
             <input
               id="slg-layers"
-              className={cn("input", layersError && "invalid")}
+              className={cn("input font-mono text-[11.5px]", layersError && "invalid")}
               type="text"
               inputMode="numeric"
               value={layersText}
@@ -261,88 +262,101 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
             />
           </div>
           {layersError && (
-            <div id="slg-layers-error" className="field-hint field-hint-flush" role="alert">
+            <div
+              id="slg-layers-error"
+              className="mb-3.5 rounded-md border border-danger/30 bg-danger-dim px-2.5 py-2 text-[11px] leading-relaxed text-danger"
+              role="alert"
+            >
               {layersError}
             </div>
           )}
         </>
       )}
       {(!supportsSlg || !supportsShiftedTimestep) && (
-        <div className="field-hint field-hint-flush">
-          当前内核（DGL 架构）已将 SLG、Shifted Timestep、图像预处理与参考图参数覆盖迁入 DGL
-          脚本，原生接口不再接受这些字段。
+        <div className="mb-3.5 rounded-md border border-line bg-well px-2.5 py-1.5 text-[11px] leading-relaxed text-muted">
+          当前版本内核需通过 DGL 脚本配置 SLG 与时间步偏移
         </div>
       )}
       {showVaeTiling && (
-        <>
+        <div className="form-section">
           <Toggle
             label="VAE 分块"
             checked={tilingEnabled}
             onChange={(v) => onUpdate("vae_tiling_params", { ...vaeTilingParams, enabled: v })}
+            hint="大图或显存不足时开启"
           />
           {tilingEnabled && isPixels && (
             <>
-              <div className="form-row mt-2">
-                <label className="form-label" htmlFor="vae-tile-w">
-                  分块宽
-                  <span className="form-sublabel">
-                    图像像素；0 用内核默认 256。编码与解码共用该尺寸
-                  </span>
-                </label>
-                <NumberInput
-                  id="vae-tile-w"
-                  value={vaeTilingParams?.tile_size_w ?? 0}
-                  onChange={(v) =>
-                    onUpdate("vae_tiling_params", {
-                      ...vaeTilingParams,
-                      tile_size_w: v,
-                      // 相对尺寸会覆盖绝对尺寸；改绝对值时一并清零，
-                      // 否则用户输入的数字根本不会生效。
-                      rel_size_w: 0,
-                    })
-                  }
-                  min={0}
-                  max={8192}
-                  step={32}
-                />
-              </div>
-              <div className="form-row">
-                <label className="form-label" htmlFor="vae-tile-h">
-                  分块高
-                </label>
-                <NumberInput
-                  id="vae-tile-h"
-                  value={vaeTilingParams?.tile_size_h ?? 0}
-                  onChange={(v) =>
-                    onUpdate("vae_tiling_params", {
-                      ...vaeTilingParams,
-                      tile_size_h: v,
-                      rel_size_h: 0,
-                    })
-                  }
-                  min={0}
-                  max={8192}
-                  step={32}
-                />
-              </div>
-              {relativeOverrides.length > 0 && (
-                <div className="field-hint field-hint-flush">
-                  相对尺寸正在覆盖分块{relativeOverrides.join(" / ")}
-                  （rel_size_w={vaeTilingParams?.rel_size_w ?? 0}、 rel_size_h=
-                  {vaeTilingParams?.rel_size_h ?? 0}）：上游优先用相对值， 绝对尺寸不会生效。
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() =>
+              <div className="form-grid">
+                <div className="form-row">
+                  <div className="form-label-row">
+                    <label className="form-label" htmlFor="vae-tile-w">
+                      分块宽
+                    </label>
+                    <span className="field-anchor">0 = 自动</span>
+                  </div>
+                  <NumberInput
+                    id="vae-tile-w"
+                    value={vaeTilingParams?.tile_size_w ?? 0}
+                    onChange={(v) =>
                       onUpdate("vae_tiling_params", {
                         ...vaeTilingParams,
+                        tile_size_w: v,
+                        // 相对尺寸会覆盖绝对尺寸；改绝对值时一并清零，
+                        // 否则用户输入的数字根本不会生效。
                         rel_size_w: 0,
+                      })
+                    }
+                    min={0}
+                    max={8192}
+                    step={32}
+                  />
+                </div>
+                <div className="form-row">
+                  <div className="form-label-row">
+                    <label className="form-label" htmlFor="vae-tile-h">
+                      分块高
+                    </label>
+                    <span className="field-anchor">0 = 自动</span>
+                  </div>
+                  <NumberInput
+                    id="vae-tile-h"
+                    value={vaeTilingParams?.tile_size_h ?? 0}
+                    onChange={(v) =>
+                      onUpdate("vae_tiling_params", {
+                        ...vaeTilingParams,
+                        tile_size_h: v,
                         rel_size_h: 0,
                       })
                     }
-                  >
-                    清除相对尺寸
-                  </button>
+                    min={0}
+                    max={8192}
+                    step={32}
+                  />
+                </div>
+              </div>
+              {relativeOverrides.length > 0 && (
+                <div className="mb-3.5 flex flex-col gap-2 rounded-md border border-warn/30 bg-warn-dim px-2.5 py-2 text-[11px] leading-relaxed text-warn">
+                  <span>
+                    相对尺寸正在覆盖分块{relativeOverrides.join(" / ")}（rel_size_w=
+                    {vaeTilingParams?.rel_size_w ?? 0}，rel_size_h=
+                    {vaeTilingParams?.rel_size_h ?? 0}），上方像素值暂不生效。
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() =>
+                        onUpdate("vae_tiling_params", {
+                          ...vaeTilingParams,
+                          rel_size_w: 0,
+                          rel_size_h: 0,
+                        })
+                      }
+                    >
+                      清除相对尺寸
+                    </button>
+                  </div>
                 </div>
               )}
               {mode === "vid_gen" && (
@@ -356,53 +370,46 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                         temporal_tiling: v,
                       })
                     }
+                    hint="长视频显存不足时开启"
                   />
-                  <div className="field-hint field-hint-flush">
-                    长视频解码显存不足时开启：按帧把时间轴切块，块间保留因果状态 （Wan /
-                    LTX）或用重叠混合（Hunyuan / TAE）。
-                  </div>
                   {temporalOn && (
                     <>
-                      <div className="form-row">
-                        <label className="form-label" htmlFor="vae-temporal-frames">
-                          时间分块帧数
-                          <span className="form-sublabel">
-                            temporal_tile_frames，内核默认 4；越小越省显存
-                          </span>
-                        </label>
-                        <NumberInput
-                          id="vae-temporal-frames"
-                          value={temporalFrames ?? 0}
-                          onChange={(v) => setTemporalArg("temporal_tile_frames", v > 0 ? v : null)}
-                          min={0}
-                          max={256}
-                          step={1}
-                        />
-                      </div>
-                      <div className="form-row">
-                        <label className="form-label" htmlFor="vae-temporal-overlap">
-                          时间分块重叠
-                          <span className="form-sublabel">temporal_tile_overlap，内核默认 1</span>
-                        </label>
-                        <NumberInput
-                          id="vae-temporal-overlap"
-                          value={temporalOverlap ?? 0}
-                          onChange={(v) =>
-                            setTemporalArg("temporal_tile_overlap", v > 0 ? v : null)
-                          }
-                          min={0}
-                          max={32}
-                          step={1}
-                        />
+                      <div className="form-grid">
+                        <div className="form-row">
+                          <label className="form-label" htmlFor="vae-temporal-frames">
+                            时间分块帧数
+                          </label>
+                          <NumberInput
+                            id="vae-temporal-frames"
+                            value={temporalFrames ?? 0}
+                            onChange={(v) =>
+                              setTemporalArg("temporal_tile_frames", v > 0 ? v : null)
+                            }
+                            min={0}
+                            max={256}
+                            step={1}
+                          />
+                        </div>
+                        <div className="form-row">
+                          <label className="form-label" htmlFor="vae-temporal-overlap">
+                            时间分块重叠
+                          </label>
+                          <NumberInput
+                            id="vae-temporal-overlap"
+                            value={temporalOverlap ?? 0}
+                            onChange={(v) =>
+                              setTemporalArg("temporal_tile_overlap", v > 0 ? v : null)
+                            }
+                            min={0}
+                            max={32}
+                            step={1}
+                          />
+                        </div>
                       </div>
                       {family === "wan-ti2v" && (
                         <div className="form-row">
                           <label className="form-label" htmlFor="vae-temporal-decode-frames">
                             组解码帧数
-                            <span className="form-sublabel">
-                              temporal_decode_frames，默认 1（逐帧解码）；Wan2.2 TI2V 5B
-                              专用，越大越吃显存
-                            </span>
                           </label>
                           <NumberInput
                             id="vae-temporal-decode-frames"
@@ -421,55 +428,57 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                 </>
               )}
               {droppedLegacyTiling && (
-                <div className="field-hint field-hint-flush" role="alert">
-                  旧内核的 latent 单位尺寸仍在设置里：
-                  {[
-                    legacyAxes.tileX != null
-                      ? `tile_size_x=${formatNumberForInput(legacyAxes.tileX)}`
-                      : null,
-                    legacyAxes.tileY != null
-                      ? `tile_size_y=${formatNumberForInput(legacyAxes.tileY)}`
-                      : null,
-                    legacyAxes.relX != null
-                      ? `rel_size_x=${formatNumberForInput(legacyAxes.relX)}`
-                      : null,
-                    legacyAxes.relY != null
-                      ? `rel_size_y=${formatNumberForInput(legacyAxes.relY)}`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join("、")}
-                  。新版内核按图像像素解释，这些值不会下发；请按上面的像素尺寸重新设置 （8× VAE 的旧
-                  32 大致对应 256 像素），确认后清除它们。
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() =>
-                      onUpdate("vae_tiling_params", clearLegacyLatentTiling(vaeTilingParams))
-                    }
-                  >
-                    清除旧值
-                  </button>
+                <div
+                  className="mb-3.5 last:mb-0 flex flex-col gap-2 rounded-md border border-warn/30 bg-warn-dim px-2.5 py-2 text-[11px] leading-relaxed text-warn"
+                  role="alert"
+                >
+                  <span>
+                    检测到旧版分块设置（
+                    {[
+                      legacyAxes.tileX != null
+                        ? `tile_size_x=${formatNumberForInput(legacyAxes.tileX)}`
+                        : null,
+                      legacyAxes.tileY != null
+                        ? `tile_size_y=${formatNumberForInput(legacyAxes.tileY)}`
+                        : null,
+                      legacyAxes.relX != null
+                        ? `rel_size_x=${formatNumberForInput(legacyAxes.relX)}`
+                        : null,
+                      legacyAxes.relY != null
+                        ? `rel_size_y=${formatNumberForInput(legacyAxes.relY)}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join("、")}
+                    ），新版已改用像素尺寸，请重新设置后清除旧值。
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() =>
+                        onUpdate("vae_tiling_params", clearLegacyLatentTiling(vaeTilingParams))
+                      }
+                    >
+                      清除旧值
+                    </button>
+                  </div>
                 </div>
               )}
             </>
           )}
           {tilingEnabled && !isPixels && (
-            <div className="field-hint field-hint-flush" role="alert">
-              所选 sd-server 使用旧版分块协议（tile_size_x/y，latent 单位）：界面只
-              读回旧值并原样下发，不会写入新版像素字段。
-              {droppedPixelTiling &&
-                "当前参数里只有新版像素尺寸，这组值不会下发到该内核；请按 latent 单位重新设置，或升级内核。"}
+            <div
+              className="rounded-md border border-warn/30 bg-warn-dim px-2.5 py-2 text-[11px] leading-relaxed text-warn"
+              role="alert"
+            >
+              当前内核使用旧版分块协议，仅沿用原有配置。
+              {droppedPixelTiling && "上方像素尺寸不会下发到该内核，建议升级内核。"}
             </div>
           )}
-          <div className="field-hint field-hint-flush">
-            设置空间分块（编码与解码共用，默认 256 图像像素）；时间分块独立开关， 不受 auto-fit
-            限制。新版内核只在主 VAE **解码分配失败**时自动缩小分块重试，
-            执行失败不重试，编码也没有自动重试。
-          </div>
-        </>
+        </div>
       )}
-      <div className="form-row mt-2">
+      <div className="form-row form-section">
         <label className="form-label" htmlFor="cache-mode">
           缓存
         </label>
@@ -485,12 +494,13 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           控件 + 固定键序拼串，不做自由文本框（examples/common/common.cpp:2434-2494）。 */}
       {cacheFields.length > 0 && (
         <>
-          <div className="field-hint field-hint-flush">
-            缓存微调（cache_option）：只发送改动过的键，未改动的沿用内核默认。
-            同名键在不同缓存模式下对应不同内核字段，切换模式会清掉不适用的项。
-            {dglBackend && cacheModeGroup(cacheMode) === "block"
-              ? "当前内核（DGL 架构）仅使用条件级缓存，Fn / Bn 块数参数已废弃并自动跳过。"
-              : ""}
+          <div className="mb-2.5 flex items-center justify-between gap-2 text-[11px] text-fg2">
+            <span className="font-medium">缓存微调</span>
+            {dglBackend && cacheModeGroup(cacheMode) === "block" && (
+              <InfoTip label="说明" tone="accent">
+                当前内核仅使用条件级缓存
+              </InfoTip>
+            )}
           </div>
           {cacheFields.map((spec) => {
             const raw = cacheDraft[spec.key];
@@ -514,19 +524,19 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
                 min={spec.min}
                 max={spec.max}
                 step={spec.step}
-                hint={`默认 ${spec.defaultValue}${spec.hint ? `；${spec.hint}` : ""}`}
+                sublabel={`默认 ${spec.defaultValue}`}
+                hint={spec.hint || undefined}
               />
             );
           })}
           {unknownCachePairs.length > 0 && (
-            <div className="field-hint field-hint-flush">
-              另有界面不认识的键会原样保留下发：
-              {unknownCachePairs.map((p) => `${p.key}=${p.value}`).join("、")}
+            <div className="field-hint field-hint-flush mb-3">
+              保留附加项：{unknownCachePairs.map((p) => `${p.key}=${p.value}`).join("、")}
             </div>
           )}
           <button
             type="button"
-            className="btn btn-sm"
+            className="btn btn-sm mb-3.5"
             onClick={() => onUpdate("cache_options", {})}
           >
             还原缓存默认
@@ -540,15 +550,15 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
       {scmVisible && (
         <>
           <div className="form-row">
-            <label className="form-label" htmlFor="scm-mask">
-              SCM 步掩码
-              <span className="form-sublabel">
-                逗号分隔的 0/1：1 = 该步计算，0 = 可缓存；留空则不发送
-              </span>
-            </label>
+            <div className="form-label-row">
+              <label className="form-label" htmlFor="scm-mask">
+                SCM 步掩码
+              </label>
+              <span className="field-anchor">0/1 序列</span>
+            </div>
             <input
               id="scm-mask"
-              className={cn("input", scmError && "invalid")}
+              className={cn("input font-mono text-[11.5px]", scmError && "invalid")}
               type="text"
               inputMode="numeric"
               value={scmMask ?? ""}
@@ -560,13 +570,17 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
             />
           </div>
           {scmError && (
-            <div id="scm-mask-error" className="field-hint field-hint-flush" role="alert">
+            <div
+              id="scm-mask-error"
+              className="mb-3.5 rounded-md border border-danger/30 bg-danger-dim px-2.5 py-2 text-[11px] leading-relaxed text-danger"
+              role="alert"
+            >
               {scmError}
             </div>
           )}
         </>
       )}
-      <div className="form-row">
+      <div className="form-row form-section">
         <label className="form-label" htmlFor="clip-skip">
           CLIP Skip
         </label>
@@ -582,26 +596,26 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           ]}
         />
       </div>
-      <div className="form-row mt-2">
-        <label className="form-label" htmlFor="extra-sample-args">
-          额外采样参数
-        </label>
+      <div className="form-row">
+        <div className="form-label-row">
+          <div className="flex items-center gap-1.5">
+            <label className="form-label" htmlFor="extra-sample-args">
+              额外采样参数
+            </label>
+            <span className="field-anchor">key=value</span>
+          </div>
+          <InfoTip label="格式" side="top">
+            以逗号分隔 key=value 键值对，同名键会覆盖上方设置。
+          </InfoTip>
+        </div>
         <input
           id="extra-sample-args"
-          className="input"
+          className="input font-mono text-[11.5px]"
           type="text"
           value={extraSampleArgs ?? ""}
           onChange={(e) => onUpdate("sample_params.extra_sample_args", e.target.value)}
           placeholder="例如 gamma=3,apg_eta=0.8,slg_uncond=true"
         />
-        <div className="field-hint field-hint-flush mt-0.5">
-          上游 extra_sample_args 的 key=value 列表（逗号分隔），兜底界面未暴露的 采样器 / 调度器 /
-          引导参数：flux 的 base_shift·max_shift、lcm 的 noise_clip_std、euler_ge 的 gamma、APG 的
-          apg_*、slg_uncond、 guidance_schedule（分段写法 1x5+6x15，段间用 + 而不是逗号）、
-          llada_image 的 uniform=1，以及注入噪声的采样器的
-          noise_sampler=iid|brownian_tree（brownian_tree 可再配
-          brownian_tree_rng=cpu|cuda|std_default|sampler_rng）等；同名键会覆盖 上面的滑杆值
-        </div>
       </div>
     </Panel>
   );

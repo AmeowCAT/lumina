@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Sparkles } from "lucide-react";
+import { Scaling } from "lucide-react";
 import type { ImageSaveState, ResultEntry } from "../../store";
 import type { JobConfig, JobResult } from "../../types";
 import { UNPLAYABLE_VIDEO_HINT, isUnplayableVideoMime, type LightboxItem } from "../ui/Lightbox";
@@ -33,34 +33,10 @@ function UnsupportedVideoTile({ mime }: { mime: string }) {
   return (
     <div
       role="note"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-        minWidth: 240,
-        maxWidth: 420,
-        padding: "22px 18px",
-        textAlign: "center",
-        lineHeight: 1.8,
-        fontSize: 11.5,
-        color: "var(--color-warn)",
-        border: "1px solid rgb(217 115 74 / 0.35)",
-        borderRadius: "var(--radius-sm)",
-        background: "var(--color-warn-dim)",
-      }}
+      className="flex min-w-[240px] max-w-[420px] flex-col items-center justify-center gap-1.5 rounded-md border border-warn/30 bg-warn-dim px-5 py-6 text-center text-[11.5px] leading-relaxed text-warn"
     >
       <span>{UNPLAYABLE_VIDEO_HINT}</span>
-      <span
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 10,
-          color: "var(--color-muted)",
-        }}
-      >
-        {mime}
-      </span>
+      <span className="font-mono text-[10px] text-muted">{mime}</span>
     </div>
   );
 }
@@ -239,22 +215,19 @@ function buildLightboxItems(
   return { items, indexOf };
 }
 
-// 显影(The Develop):小图放大成型——暗房里照片从一小张渐渐放大显影。
-// 只用 opacity + scale（都是合成属性）；**不用 filter**：`saturate()` 是
-// 非合成属性，动画期间每帧都要重新光栅化整张已解码的大图，批量 4–8 张时
-// 是明显的 CPU 尖峰，而且 `MotionConfig reducedMotion="user"` 只压制
-// transform/layout 类动画，filter 不受它影响（审查 20-frontend §2.15、
-// ux-a11y F-10）。`layout` 也从卡片上撤掉——真正需要位置过渡的只有聚焦区。
+// 仅用合成属性（opacity + transform）实现克制的入场过渡；
+// 不使用 filter 或卡片级 layout 动画，避免批量出图时重光栅化尖峰。
 const cardMotion = {
   initial: {
     opacity: 0,
-    scale: 0.86,
+    scale: 0.985,
+    y: 6,
   },
-  animate: { opacity: 1, scale: 1 },
+  animate: { opacity: 1, scale: 1, y: 0 },
   exit: {
     opacity: 0,
-    scale: 0.94,
-    transition: { duration: 0.16 },
+    scale: 0.98,
+    transition: { duration: 0.14 },
   },
 } as const;
 
@@ -275,7 +248,8 @@ function SaveToDirButton({
   const saving = state?.status === "saving";
   return (
     <button
-      className={cn("btn btn-sm", saved && "save-done")}
+      type="button"
+      className={cn("media-action-btn", saved && "save-done")}
       title={saveBtnTitle(state)}
       aria-label={ariaLabel}
       disabled={saving}
@@ -337,7 +311,7 @@ function FeaturedResult({
         key={`featured-${entry.jobId}`}
         className={cn("featured-result", images.length === 1 && "single")}
         {...cardMotion}
-        transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
       >
         <div className="featured-batch">
           {images.map((img, ii) => {
@@ -347,6 +321,7 @@ function FeaturedResult({
             const key = imageKey(img.index, ii);
             const lbIndex = indexOf.get(`${entry.jobId}:${img.index ?? ii}`) ?? 0;
             const saveState = entry.saves?.[key];
+            const savedInfo = partSaveLabel(saveState);
             return (
               <figure key={`${entry.jobId}-${img.index ?? ii}`} className="featured-item">
                 <button
@@ -357,75 +332,96 @@ function FeaturedResult({
                 >
                   <img src={src} alt="" />
                 </button>
-                <div className="featured-item-actions">
-                  <SaveToDirButton
-                    state={saveState}
-                    ariaLabel="保存到输出目录"
-                    onSave={() => onSaveImage(entry.jobId, key)}
-                  />
-                  {onUseAsInit && (
+                <div className="featured-item-footer">
+                  <div className="featured-item-caption">
+                    {seedInfo && <span className="featured-seed">{seedInfo}</span>}
+                    {savedInfo && savedInfo.className !== "failed" && (
+                      <span
+                        className={cn(
+                          "font-mono text-[10px] tracking-[0.04em]",
+                          savedInfo.className === "saved" ? "text-success" : "text-accent-hi",
+                        )}
+                        title={savedInfo.title}
+                        role="status"
+                      >
+                        {savedInfo.text}
+                      </span>
+                    )}
+                  </div>
+                  <div className="featured-item-actions">
+                    <SaveToDirButton
+                      state={saveState}
+                      ariaLabel="保存到输出目录"
+                      onSave={() => onSaveImage(entry.jobId, key)}
+                    />
+                    {onUseAsInit && (
+                      <button
+                        type="button"
+                        className="media-action-btn"
+                        title="用作初始图片"
+                        aria-label="用作初始图片"
+                        onClick={() => onUseAsInit(img.b64_json, fmt)}
+                      >
+                        {IC.image}
+                      </button>
+                    )}
+                    {onUpscale && (
+                      <button
+                        type="button"
+                        className="media-action-btn"
+                        title="放大图片"
+                        aria-label="放大此图片"
+                        onClick={() => onUpscale(img.b64_json, fmt)}
+                      >
+                        <Scaling size={13} strokeWidth={1.8} aria-hidden="true" />
+                      </button>
+                    )}
                     <button
-                      className="btn btn-sm"
-                      title="用作初始图片（发送到 img2img）"
-                      aria-label="用作初始图片"
-                      onClick={() => onUseAsInit(img.b64_json, fmt)}
+                      type="button"
+                      className="media-action-btn"
+                      title={
+                        actualSeed != null
+                          ? `应用此配置（种子 ${actualSeed}）`
+                          : entry.config && entry.config.params.seed >= 0
+                            ? `应用此配置（种子 ${entry.config.params.seed + (img.index ?? ii)}）`
+                            : "应用此配置"
+                      }
+                      aria-label="应用此图片的生成配置"
+                      onClick={() => onApplyConfig(entry.config, img.index ?? ii, actualSeed)}
                     >
-                      {IC.image}
+                      {IC.refresh}
                     </button>
-                  )}
-                  {onUpscale && (
                     <button
-                      className="btn btn-sm"
-                      title="用 ESRGAN 放大器独立放大（不重新采样）"
-                      aria-label="放大此图片"
-                      onClick={() => onUpscale(img.b64_json, fmt)}
+                      type="button"
+                      className="media-action-btn"
+                      aria-label="下载图片"
+                      title="下载图片"
+                      onClick={() =>
+                        onDownload(
+                          img.b64_json,
+                          fmt,
+                          undefined,
+                          actualSeed ??
+                            (entry.config?.params?.seed != null && entry.config.params.seed >= 0
+                              ? entry.config.params.seed + (img.index ?? ii)
+                              : undefined),
+                        )
+                      }
                     >
-                      <Sparkles size={13} strokeWidth={2} aria-hidden="true" />
+                      {IC.dl}
                     </button>
-                  )}
-                  <button
-                    className="btn btn-sm"
-                    title={
-                      actualSeed != null
-                        ? `应用此配置（种子 ${actualSeed}）`
-                        : entry.config && entry.config.params.seed >= 0
-                          ? `应用此配置（种子 ${entry.config.params.seed + (img.index ?? ii)}）`
-                          : "应用此配置"
-                    }
-                    aria-label="应用此图片的生成配置"
-                    onClick={() => onApplyConfig(entry.config, img.index ?? ii, actualSeed)}
-                  >
-                    {IC.refresh}
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    aria-label="下载图片"
-                    onClick={() =>
-                      onDownload(
-                        img.b64_json,
-                        fmt,
-                        undefined,
-                        actualSeed ??
-                          (entry.config?.params?.seed != null && entry.config.params.seed >= 0
-                            ? entry.config.params.seed + (img.index ?? ii)
-                            : undefined),
-                      )
-                    }
-                  >
-                    {IC.dl}
-                  </button>
-                  <TwoTapButton
-                    className="btn btn-sm btn-danger"
-                    label="删除此图片"
-                    armedLabel="确认删除（尚未保存）"
-                    armedTitle="尚未保存，再次点击确认删除"
-                    needsConfirm={saveState?.status !== "saved"}
-                    onConfirm={() => onRemove(entry.jobId, img.index ?? ii)}
-                    idle={IC.x}
-                    armed={"确认?"}
-                  />
+                    <TwoTapButton
+                      className="media-action-btn media-action-danger"
+                      label="删除此图片"
+                      armedLabel="确认删除（尚未保存）"
+                      armedTitle="尚未保存，再次点击确认删除"
+                      needsConfirm={saveState?.status !== "saved"}
+                      onConfirm={() => onRemove(entry.jobId, img.index ?? ii)}
+                      idle={IC.x}
+                      armed={"确认?"}
+                    />
+                  </div>
                 </div>
-                {seedInfo && <span className="featured-seed">{seedInfo}</span>}
                 {saveState?.status === "failed" && (
                   <div className="featured-save-failed">
                     <span role="alert">保存失败</span>
@@ -446,16 +442,16 @@ function FeaturedResult({
           <div className="featured-batch-actions">
             <button
               type="button"
-              className="btn btn-sm"
-              title="恢复该批次的生成配置（种子、提示词与图片输入）"
+              className="btn btn-sm btn-ghost"
+              title="应用整批配置"
               onClick={() => onApplyConfig(entry.config)}
             >
               {IC.refresh} 应用整批配置
             </button>
             <button
               type="button"
-              className="btn btn-sm"
-              title="把本批全部图片保存到输出目录"
+              className="btn btn-sm btn-ghost"
+              title="保存整批"
               onClick={() =>
                 images.forEach((img, ii) => onSaveImage(entry.jobId, imageKey(img.index, ii)))
               }
@@ -463,7 +459,7 @@ function FeaturedResult({
               {IC.save} 保存整批
             </button>
             <TwoTapButton
-              className="btn btn-sm btn-danger"
+              className="btn btn-sm btn-ghost media-action-danger"
               label="删除整批"
               armedLabel="确认删除整批（尚未保存）"
               armedTitle="尚未保存，再次点击确认删除"
@@ -495,7 +491,7 @@ function FeaturedResult({
         key={`featured-${entry.jobId}`}
         className="featured-result single"
         {...cardMotion}
-        transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
       >
         <figure className="featured-item">
           {animated ? (
@@ -505,45 +501,56 @@ function FeaturedResult({
           ) : (
             <VideoTile url={url} autoplay />
           )}
-          <div className="featured-item-actions">
-            <SaveToDirButton
-              state={saveState}
-              ariaLabel={animated ? "保存动图到输出目录" : "保存视频到输出目录"}
-              onSave={() => onSaveImage(entry.jobId, "v")}
-            />
-            <button
-              className="btn btn-sm"
-              title="全屏预览"
-              aria-label={animated ? "全屏预览动图" : "全屏预览视频"}
-              onClick={() => onLightbox(items, lbIndex)}
-            >
-              {IC.zoom}
-            </button>
-            <button
-              className="btn btn-sm"
-              title="应用此配置"
-              aria-label={animated ? "应用此动图的生成配置" : "应用此视频的生成配置"}
-              onClick={() => onApplyConfig(entry.config)}
-            >
-              {IC.refresh}
-            </button>
-            <button
-              className="btn btn-sm"
-              aria-label={animated ? "下载动图" : "下载视频"}
-              onClick={() => onDownload(b64, entry.result!.output_format, mime)}
-            >
-              {IC.dl} 下载
-            </button>
-            <TwoTapButton
-              className="btn btn-sm btn-danger"
-              label={animated ? "删除此动图" : "删除此视频"}
-              armedLabel="确认删除（尚未保存）"
-              armedTitle="尚未保存，再次点击确认删除"
-              needsConfirm={saveState?.status !== "saved"}
-              onConfirm={() => onRemove(entry.jobId)}
-              idle={IC.x}
-              armed={"确认?"}
-            />
+          <div className="featured-item-footer">
+            <div className="featured-item-caption">
+              <span className="featured-seed">
+                {entry.result.fps} FPS · {entry.result.frame_count} 帧
+              </span>
+            </div>
+            <div className="featured-item-actions">
+              <SaveToDirButton
+                state={saveState}
+                ariaLabel={animated ? "保存动图到输出目录" : "保存视频到输出目录"}
+                onSave={() => onSaveImage(entry.jobId, "v")}
+              />
+              <button
+                type="button"
+                className="media-action-btn"
+                title="全屏预览"
+                aria-label={animated ? "全屏预览动图" : "全屏预览视频"}
+                onClick={() => onLightbox(items, lbIndex)}
+              >
+                {IC.zoom}
+              </button>
+              <button
+                type="button"
+                className="media-action-btn"
+                title="应用此配置"
+                aria-label={animated ? "应用此动图的生成配置" : "应用此视频的生成配置"}
+                onClick={() => onApplyConfig(entry.config)}
+              >
+                {IC.refresh}
+              </button>
+              <button
+                type="button"
+                className="media-action-btn"
+                aria-label={animated ? "下载动图" : "下载视频"}
+                title={animated ? "下载动图" : "下载视频"}
+                onClick={() => onDownload(b64, entry.result!.output_format, mime)}
+              >
+                {IC.dl}
+              </button>
+              <TwoTapButton
+                className="media-action-btn media-action-danger"
+                label={animated ? "删除此动图" : "删除此视频"}
+                armedLabel="确认删除（尚未保存）"
+                armedTitle="尚未保存，再次点击确认删除"
+                needsConfirm={saveState?.status !== "saved"}
+                onConfirm={() => onRemove(entry.jobId)}
+                idle={IC.x}
+                armed={"确认?"}
+              />
+            </div>
           </div>
           {saveState?.status === "failed" && (
             <div className="featured-save-failed">
@@ -618,8 +625,6 @@ export const ResultsGrid = memo(function ResultsGrid({
   }, [results]);
 
   if (results.length === 0) {
-    // VOSTOK 空态:画布不是空白,钉着一张待替换的海报样张(原型素材回填);
-    // 推进中样张退饱和 + 对角跟踪扫描,太空任务控制屏的构成主义表达。
     if (theme === "vostok") {
       return (
         <div
@@ -640,15 +645,15 @@ export const ResultsGrid = memo(function ResultsGrid({
           </div>
           {generating ? (
             <>
-              <p className="text-[13px] text-fg2">推进中…</p>
-              <p>图像正在回传，完成后会自动出现在这里</p>
+              <p className="mb-1 text-[13.5px] font-medium tracking-[0.04em] text-fg">推进中…</p>
+              <p className="text-[12px] text-muted">完成后将回传至此</p>
             </>
           ) : (
             <>
-              <p className="mb-1 text-[13px] text-fg2">测控台就绪</p>
-              <p>
-                输入提示词后点击 生成，或按 <span className="kbd">Ctrl</span>+
-                <span className="kbd">Enter</span>
+              <p className="mb-1.5 text-[14px] font-medium tracking-[0.04em] text-fg">测控台就绪</p>
+              <p className="text-[12px] leading-relaxed text-muted">
+                输入提示词，或按 <span className="kbd">Ctrl</span>+
+                <span className="kbd">Enter</span> 开始生成
               </p>
             </>
           )}
@@ -661,15 +666,32 @@ export const ResultsGrid = memo(function ResultsGrid({
           <LivePreviewFrame src={livePreviewSrc} label={previewLabel} />
         ) : generating ? (
           <>
-            <p className="text-[13px] text-fg2">正在显影…</p>
-            <p>暗房里图像正在成形，完成后会自动出现在这里</p>
+            <div className="mx-auto mb-3.5 flex h-10 w-10 items-center justify-center rounded-md border border-line bg-surface">
+              <span className="spinner" aria-hidden="true" />
+            </div>
+            <p className="mb-1 text-[13.5px] font-medium tracking-[0.02em] text-fg">正在生成…</p>
+            <p className="text-[12px] text-muted">完成后将显示在这里</p>
           </>
         ) : (
           <>
-            <p className="mb-1 text-[13px] text-fg2">准备就绪</p>
-            <p>
-              输入提示词后点击 生成，或按 <span className="kbd">Ctrl</span>+
-              <span className="kbd">Enter</span>
+            <div
+              className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-md border border-line bg-surface text-muted"
+              aria-hidden="true"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M3 6.5V3.5C3 3.22 3.22 3 3.5 3H6.5M13.5 3H16.5C16.78 3 17 3.22 17 3.5V6.5M17 13.5V16.5C17 16.78 16.78 17 16.5 17H13.5M6.5 17H3.5C3.22 17 3 16.78 3 16.5V13.5"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                  strokeLinecap="square"
+                />
+                <circle cx="10" cy="10" r="1.5" fill="currentColor" opacity="0.55" />
+              </svg>
+            </div>
+            <p className="mb-1.5 text-[14px] font-medium tracking-[0.02em] text-fg">准备就绪</p>
+            <p className="text-[12px] leading-relaxed text-muted">
+              输入提示词，或按 <span className="kbd">Ctrl</span>+<span className="kbd">Enter</span>{" "}
+              开始生成
             </p>
           </>
         )}
@@ -721,9 +743,9 @@ export const ResultsGrid = memo(function ResultsGrid({
                         key={`${r.jobId}-${img.index ?? ii}`}
                         {...cardMotion}
                         transition={{
-                          duration: 1.05,
+                          duration: 0.24,
                           ease: [0.16, 1, 0.3, 1],
-                          delay: Math.min(ii * 0.08, 0.32),
+                          delay: Math.min(ii * 0.04, 0.16),
                         }}
                         className="result-card"
                       >
@@ -766,8 +788,9 @@ export const ResultsGrid = memo(function ResultsGrid({
                           />
                           {onUseAsInit && (
                             <button
-                              className="btn btn-sm"
-                              title="用作初始图片（发送到 img2img）"
+                              type="button"
+                              className="media-action-btn"
+                              title="用作初始图片"
                               aria-label="用作初始图片"
                               onClick={() => onUseAsInit(img.b64_json, fmt)}
                             >
@@ -776,16 +799,18 @@ export const ResultsGrid = memo(function ResultsGrid({
                           )}
                           {onUpscale && (
                             <button
-                              className="btn btn-sm"
-                              title="用 ESRGAN 放大器独立放大（不重新采样）"
+                              type="button"
+                              className="media-action-btn"
+                              title="放大图片"
                               aria-label="放大此图片"
                               onClick={() => onUpscale(img.b64_json, fmt)}
                             >
-                              <Sparkles size={13} strokeWidth={2} aria-hidden="true" />
+                              <Scaling size={13} strokeWidth={1.8} aria-hidden="true" />
                             </button>
                           )}
                           <button
-                            className="btn btn-sm"
+                            type="button"
+                            className="media-action-btn"
                             title={
                               actualSeed != null
                                 ? `应用此配置（种子 ${actualSeed}）`
@@ -799,8 +824,10 @@ export const ResultsGrid = memo(function ResultsGrid({
                             {IC.refresh}
                           </button>
                           <button
-                            className="btn btn-sm"
+                            type="button"
+                            className="media-action-btn"
                             aria-label="下载图片"
+                            title="下载图片"
                             onClick={() =>
                               onDownload(
                                 img.b64_json,
@@ -816,7 +843,7 @@ export const ResultsGrid = memo(function ResultsGrid({
                             {IC.dl}
                           </button>
                           <TwoTapButton
-                            className="btn btn-sm btn-danger"
+                            className="media-action-btn media-action-danger"
                             label="删除此图片"
                             armedLabel="确认删除（尚未保存）"
                             armedTitle="尚未保存，再次点击确认删除"
@@ -845,7 +872,7 @@ export const ResultsGrid = memo(function ResultsGrid({
                     <motion.div
                       key={r.jobId || ri}
                       {...cardMotion}
-                      transition={{ duration: 1.05, ease: [0.16, 1, 0.3, 1] }}
+                      transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
                       className="result-card"
                     >
                       {animated ? (
@@ -885,7 +912,8 @@ export const ResultsGrid = memo(function ResultsGrid({
                           onSave={() => onSaveImage(r.jobId, "v")}
                         />
                         <button
-                          className="btn btn-sm"
+                          type="button"
+                          className="media-action-btn"
                           title="全屏预览"
                           aria-label={animated ? "全屏预览动图" : "全屏预览视频"}
                           onClick={() => onLightbox(items, lbIndex)}
@@ -893,7 +921,8 @@ export const ResultsGrid = memo(function ResultsGrid({
                           {IC.zoom}
                         </button>
                         <button
-                          className="btn btn-sm"
+                          type="button"
+                          className="media-action-btn"
                           title="应用此配置"
                           aria-label={animated ? "应用此动图的生成配置" : "应用此视频的生成配置"}
                           onClick={() => onApplyConfig(r.config)}
@@ -901,14 +930,16 @@ export const ResultsGrid = memo(function ResultsGrid({
                           {IC.refresh}
                         </button>
                         <button
-                          className="btn btn-sm"
+                          type="button"
+                          className="media-action-btn"
                           aria-label={animated ? "下载动图" : "下载视频"}
+                          title={animated ? "下载动图" : "下载视频"}
                           onClick={() => onDownload(b64, r.result!.output_format, mime)}
                         >
-                          {IC.dl} 下载
+                          {IC.dl}
                         </button>
                         <TwoTapButton
-                          className="btn btn-sm btn-danger"
+                          className="media-action-btn media-action-danger"
                           label={animated ? "删除此动图" : "删除此视频"}
                           armedLabel="确认删除（尚未保存）"
                           armedTitle="尚未保存，再次点击确认删除"

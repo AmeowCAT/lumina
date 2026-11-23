@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "motion/react";
+import { ChevronLeft, ChevronRight, Minus, Plus, X } from "lucide-react";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
+import { cn } from "./cn";
 
 export interface LightboxItem {
   type: "image" | "video";
@@ -265,7 +267,7 @@ export function Lightbox({
         trapRef.current = node;
         stageRef.current = node;
       }}
-      className={renderFooter ? "lightbox has-footer" : "lightbox"}
+      className={cn("lightbox", renderFooter && "has-footer")}
       role="dialog"
       aria-modal="true"
       aria-label={item.title || (item.type === "image" ? "图片预览" : "视频预览")}
@@ -273,7 +275,7 @@ export function Lightbox({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -309,7 +311,7 @@ export function Lightbox({
             lineHeight: 1.8,
             fontSize: 12.5,
             color: "var(--color-warn)",
-            border: "1px solid rgb(217 115 74 / 0.35)",
+            border: "1px solid color-mix(in srgb, var(--color-warn) 40%, transparent)",
             borderRadius: "var(--radius-md)",
             background: "var(--color-warn-dim)",
             cursor: "default",
@@ -336,21 +338,21 @@ export function Lightbox({
       {canNav && (
         <button
           type="button"
-          className="lightbox-nav lightbox-nav-prev"
+          className="lightbox-nav lightbox-nav-prev inline-flex items-center justify-center"
           aria-label="上一张"
           onClick={() => go(-1)}
         >
-          ‹
+          <ChevronLeft size={20} strokeWidth={1.6} aria-hidden="true" />
         </button>
       )}
       {canNav && (
         <button
           type="button"
-          className="lightbox-nav lightbox-nav-next"
+          className="lightbox-nav lightbox-nav-next inline-flex items-center justify-center"
           aria-label="下一张"
           onClick={() => go(1)}
         >
-          ›
+          <ChevronRight size={20} strokeWidth={1.6} aria-hidden="true" />
         </button>
       )}
 
@@ -359,22 +361,22 @@ export function Lightbox({
           <>
             <button
               type="button"
-              className="lightbox-tool"
+              className="lightbox-tool inline-flex items-center justify-center"
               aria-label="上一张"
               onClick={() => go(-1)}
             >
-              ‹
+              <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
-            <span className="lightbox-counter">
+            <span className="lightbox-counter font-variant-tnum">
               {index + 1} / {items.length}
             </span>
             <button
               type="button"
-              className="lightbox-tool"
+              className="lightbox-tool inline-flex items-center justify-center"
               aria-label="下一张"
               onClick={() => go(1)}
             >
-              ›
+              <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
             <span className="lightbox-sep" aria-hidden="true" />
           </>
@@ -383,15 +385,15 @@ export function Lightbox({
           <>
             <button
               type="button"
-              className="lightbox-tool"
+              className="lightbox-tool inline-flex items-center justify-center"
               aria-label="缩小图片"
               onClick={() => zoomBy(-0.25)}
             >
-              −
+              <Minus size={13} strokeWidth={1.85} aria-hidden="true" />
             </button>
             <button
               type="button"
-              className="lightbox-tool lightbox-zoom"
+              className="lightbox-tool lightbox-zoom font-variant-tnum"
               aria-label="重置图片缩放"
               onClick={resetView}
             >
@@ -399,11 +401,11 @@ export function Lightbox({
             </button>
             <button
               type="button"
-              className="lightbox-tool"
+              className="lightbox-tool inline-flex items-center justify-center"
               aria-label="放大图片"
               onClick={() => zoomBy(0.25)}
             >
-              +
+              <Plus size={13} strokeWidth={1.85} aria-hidden="true" />
             </button>
           </>
         )}
@@ -420,7 +422,7 @@ export function Lightbox({
         title="关闭 (Esc)"
         aria-label="关闭预览"
       >
-        ✕
+        <X size={16} strokeWidth={1.75} aria-hidden="true" />
       </button>
     </motion.div>,
     document.body,

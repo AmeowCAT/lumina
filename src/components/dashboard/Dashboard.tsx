@@ -24,6 +24,7 @@ import {
   persistFamilyDefaults,
   validateMaxVramSpec,
 } from "../../lib/launchConfig";
+import { InfoTip } from "../ui/InfoTip";
 import { Panel } from "../ui/Panel";
 import { IC } from "../ui/Icons";
 import { Logo } from "../ui/Logo";
@@ -38,6 +39,20 @@ import { cn } from "../ui/cn";
 import { CliCompatibility } from "./CliCompatibility";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { diagnosticsFor } from "../../lib/diagnostics";
+
+const REF_IMAGE_PRESET_LABELS: Record<string, string> = {
+  flux_kontext: "Flux Kontext",
+  longcat: "LongCat Edit",
+  qwen: "Qwen Image Edit",
+  qwen_layered: "Qwen Image Layered",
+  mage_flow: "Mage-Flow Edit",
+  flux2: "Flux 2",
+  z_image_omni: "Boogu / Z-Image Omni",
+  krea2_ostris_edit: "Krea2 Ostris Edit",
+  krea2_edit: "Krea2 Edit 768",
+  cosmos_reference: "Anima / Cosmos Reference",
+  llada_image: "LLaDA-Image",
+};
 
 export function Dashboard() {
   const settings = useStore((s) => s.settings);
@@ -55,12 +70,14 @@ export function Dashboard() {
   const toast = useStore((s) => s.toast);
   const setDashboardOpen = useStore((s) => s.setDashboardOpen);
   const theme = useTheme();
+  const vostok = theme === "vostok";
   const [starting, setStarting] = useState(false);
   // 切换模型将影响任务/结果时的待确认影响清单;非空即显示确认条
   const [pendingSwitch, setPendingSwitch] = useState<string[] | null>(null);
   const { switchModel, switching: switchingModel, phase: switchPhase } = useModelSwitch();
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState("");
+  const [specGuideOpen, setSpecGuideOpen] = useState(false);
   // 内核 `--help` 里出现的选项名（审查 40-cli §2.5）：附加启动参数输入框用
   // datalist 提示，避免用户把 `--threads` 拼成 `-thread` 之后才发现启动失败。
   const [cliOptions, setCliOptions] = useState<string[]>([]);
@@ -252,7 +269,7 @@ export function Dashboard() {
         })
       : null;
   const missingRequirements = launchPreview?.missing || [];
-  // GO/NO-GO 检查单:能否发射只取决于这三件事实
+  // 启动检查单：能否启动取决于目录、主模型和必需组件三项状态
   const pathsReady = settings.modelDir.trim().length > 0;
   const modelReady = mainModel.length > 0;
   const familyUnsupported = Boolean(familyConfig?.unsupported);
@@ -281,7 +298,9 @@ export function Dashboard() {
     // 该区域第一个控件上，检查单的"最后一厘米"才算走完。
     el.querySelector<HTMLElement>(".panel.collapsed .panel-head")?.click();
     requestAnimationFrame(() => {
-      el.querySelector<HTMLElement>("select, input, textarea, button.input")?.focus();
+      el.querySelector<HTMLElement>(
+        "select, input, textarea, button.input, button.select-trigger",
+      )?.focus();
     });
   };
 
@@ -344,7 +363,7 @@ export function Dashboard() {
       ...diagnosticsFor(snapshot),
       maxQueueSize: snapshot.maxQueueSize,
     }));
-    toast("已恢复该模型上次启动配置");
+    toast("已恢复上次配置");
   };
 
   const saveModelSnapshot = () => {
@@ -418,6 +437,7 @@ export function Dashboard() {
   // "不限"导致输入框消失。快照恢复/换模型时重置回推导（见 selectMainModel）。
   const [maxVramModePick, setMaxVramModePick] = useState<string | null>(null);
   const maxVramMode = maxVramModePick ?? maxVramDerived;
+  const maxVramLiveError = maxVramRaw ? validateMaxVramSpec(maxVramRaw) : null;
   // 切换模式时尽量保留同模式下的已有数值，避免来回切换丢掉输入。
   const setMaxVramMode = (mode: string) => {
     setMaxVramModePick(mode === "unset" ? null : mode);
@@ -523,7 +543,7 @@ export function Dashboard() {
       await api.startServer(exePath, familyConfig.name, launch.mode, launch.args, sdPort);
       saveModelSnapshot();
       persistFamilyDefaults(familyConfig);
-      toast("服务器启动中...");
+      toast("正在启动服务器…");
     } catch (e) {
       toast("启动失败: " + formatError(e), true);
     } finally {
@@ -554,7 +574,7 @@ export function Dashboard() {
         (job) => job.status === "queued" || job.status === "generating" || job.status === "unknown",
       ).length,
   );
-  // 安全灯 orb 的四种活法:灭(未运行)/闪烁(启动中)/长明(就绪)/警示(失败)
+  // 服务器状态指示灯：offline / starting / ready / failed
   const orbState = running
     ? serverStatus?.phase === "failed"
       ? "failed"
@@ -564,83 +584,190 @@ export function Dashboard() {
     : external
       ? "ready"
       : "offline";
-  // 文案随主题语境:暗房"启动" ↔ 太空"发射/在轨"(任务控制语言)
-  const vostok = theme === "vostok";
+
+  const extraComponentFields = familyConfig
+    ? familyConfig.fields.filter((field) => field.key !== modelField?.key)
+    : [];
+  const requiredFields = extraComponentFields.filter(
+    (field) => field.required && detectedFamily !== "custom",
+  );
+  const optionalFields = extraComponentFields.filter(
+    (field) => !(field.required && detectedFamily !== "custom"),
+  );
+  const needsPidVaeFormat = detectedFamily === "pid";
+  const needsExternalTokenizer = familyNeedsExternalTokenizer(detectedFamily);
+  const hasRequiredSection =
+    requiredFields.length > 0 || needsPidVaeFormat || needsExternalTokenizer;
+  const showComponentsPanel =
+    Boolean(mainModel && familyConfig) && (hasRequiredSection || optionalFields.length > 0);
+  const configuredOptionalCount = optionalFields.filter((f) => Boolean(components[f.key])).length;
+  const componentBadge =
+    missingRequirements.length > 0
+      ? `缺 ${missingRequirements.length} 项`
+      : hasRequiredSection
+        ? "必需齐备"
+        : configuredOptionalCount > 0
+          ? `已选 ${configuredOptionalCount} 项`
+          : "均为可选";
+
+  // 折叠面板摘要徽标：无需展开即可一眼看到已启用的非默认配置
+  const runtimeBadge =
+    [
+      settings.backend || "",
+      settings.sageAttn ? "SageAttn" : "",
+      settings.threads ? `${settings.threads}T` : "",
+      settings.paramsBackend ? "Params" : "",
+      settings.rpcServers ? "RPC" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ") || undefined;
+  const refImageBadge = settings.refImagePreset
+    ? REF_IMAGE_PRESET_LABELS[settings.refImagePreset] || settings.refImagePreset
+    : undefined;
+  const perfBadge =
+    [
+      settings.offloadCpu ? "CPU 卸载" : "",
+      maxVramRaw ? `VRAM ${maxVramRaw}` : "",
+      settings.quantType ? settings.quantType.toUpperCase() : "",
+      settings.extraArgs.trim() ? "自定义参数" : "",
+      sdPort !== DEFAULT_SD_PORT ? `:${sdPort}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ") || undefined;
+
+  const activeServerName = running
+    ? serverStatus?.model || "sd-server"
+    : serverStatus?.external
+      ? "外部 sd-server"
+      : "未运行";
+  const activeServerStatus = running
+    ? serverStatus?.phase === "failed"
+      ? `启动失败：${serverStatus.lastError || "请查看日志"}`
+      : serverStatus?.reachable
+        ? `${vostok ? "在轨运行" : "就绪"} · :${serverStatus.sdPort ?? sdPort}`
+        : serverStatus?.phase === "starting"
+          ? vostok
+            ? "载荷加载中…"
+            : "正在加载模型…"
+          : vostok
+            ? "点火中…"
+            : "正在启动…"
+    : serverStatus?.external
+      ? `${vostok ? "在轨运行（外部进程）" : "就绪（外部进程）"} · :${serverStatus.sdPort ?? sdPort}`
+      : vostok
+        ? "待命"
+        : "等待启动";
+
+  const renderComponentSelect = (
+    field: (typeof extraComponentFields)[number],
+    isRequired: boolean,
+  ) => {
+    const opts = getOptions(field.cat);
+    const val = components[field.key] || "";
+    return (
+      <div key={field.key} className="form-row">
+        <div className="form-label-row">
+          <span className="inline-flex items-center gap-1.5 min-w-0 flex-wrap">
+            <label className="form-label" htmlFor={`component-${field.key}`}>
+              {field.label}
+            </label>
+            {field.description && (
+              <InfoTip tone={isRequired && !val ? "warn" : "default"}>{field.description}</InfoTip>
+            )}
+          </span>
+          <span
+            className={cn(
+              "font-mono text-[10px] tracking-wide shrink-0",
+              val ? "text-success" : isRequired ? "text-warn" : "text-muted",
+            )}
+          >
+            {val ? (isRequired ? "已配置" : "已启用") : isRequired ? "必需" : "可选"}
+          </span>
+        </div>
+        <Select
+          id={`component-${field.key}`}
+          value={val}
+          onChange={(v) =>
+            setComponents((c) => ({
+              ...c,
+              [field.key]: v,
+            }))
+          }
+          options={[
+            {
+              value: "",
+              label: isRequired ? "请选择（必需）" : "未设置（可选）",
+            },
+            ...opts.map((f) => ({
+              value: f.path,
+              label:
+                modelFileOptionLabel(f) +
+                (f.dir !== mainModelDir ? " — " + f.dir.split("/").pop() : ""),
+            })),
+          ]}
+        />
+      </div>
+    );
+  };
 
   return (
     <div className="dashboard">
-      {/* VOSTOK 胶片边注:GO/NO-GO 遥测印字(检查单确实每 3s 轮询,见 App.tsx) */}
-      {theme === "vostok" && (
+      {vostok && (
         <span className="r-vertical r-dash-vertical" aria-hidden="true">
-          GO / NO-GO · 检查单 POLLING 3S
+          GO / NO-GO · 测控检查单 · POLLING 3S
         </span>
       )}
-      <motion.div
+      <motion.aside
         className="dash-rail"
-        initial={{ opacity: 0, y: 16 }}
+        aria-label="启动总览与控制"
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
       >
         <div className="logo-row">
-          <Logo size={30} />
+          <Logo size={28} />
           <div>
             <div className="wordmark">流光</div>
-            <div className="hero-en">LUMINA STUDIO</div>
+            <div className="hero-en">{vostok ? "LUMINA STUDIO · ВОСТОК-1" : "LUMINA STUDIO"}</div>
           </div>
         </div>
+
         <div className="orb-wrap">
           <span className={cn("orb", orbState)} aria-hidden="true" />
           <div className="orb-info">
-            <div className="model-name">
-              {running
-                ? serverStatus?.model || "sd-server"
-                : serverStatus?.external
-                  ? "外部 sd-server"
-                  : "未运行"}
+            <div className="model-name" title={activeServerName}>
+              {activeServerName}
             </div>
-            <div className="status-text">
-              {running
-                ? serverStatus?.phase === "failed"
-                  ? `启动失败：${serverStatus.lastError || "请查看日志"}`
-                  : serverStatus?.reachable
-                    ? vostok
-                      ? "在轨运行"
-                      : "就绪"
-                    : serverStatus?.phase === "starting"
-                      ? vostok
-                        ? "载荷加载中…"
-                        : "正在加载模型…"
-                      : vostok
-                        ? "点火中…"
-                        : "正在启动…"
-                : serverStatus?.external
-                  ? vostok
-                    ? "在轨运行（外部进程）"
-                    : "就绪（外部进程）"
-                  : vostok
-                    ? "待命"
-                    : "等待启动"}
+            <div
+              className={cn(
+                "status-text",
+                running && serverStatus?.phase === "failed" && "text-danger",
+              )}
+              title={activeServerStatus}
+            >
+              {activeServerStatus}
             </div>
           </div>
           <div className="orb-actions">
-            {external && <span className="tag text-[11px] opacity-70">外部进程</span>}
+            {external && <span className="tag text-[10px]">外部</span>}
             {serverStatus?.reachable && (
-              <button className="btn btn-sm" onClick={() => setDashboardOpen(false)}>
+              <button type="button" className="btn btn-sm" onClick={() => setDashboardOpen(false)}>
                 {vostok ? "进入测控台" : "进入生成界面"}
               </button>
             )}
           </div>
         </div>
+
         <div className="check-list">
           <div className="check-head">
-            {vostok ? "发射检查单" : "启动检查"}
+            <span>{vostok ? "发射检查单" : "启动检查"}</span>
             <span className={cn("check-summary", allReady && "ready")}>
               {allReady
                 ? vostok
-                  ? "全部就绪 ALL GO"
-                  : "READY · 可以启动"
+                  ? "ALL GO"
+                  : "全部就绪 · 3/3"
                 : vostok
-                  ? `NO-GO · 待完成 ${3 - readyCount} 项`
+                  ? `NO-GO · 缺 ${3 - readyCount} 项`
                   : `待完成 ${3 - readyCount} 项`}
             </span>
           </div>
@@ -653,22 +780,26 @@ export function Dashboard() {
             <span className="check-label">路径</span>
             <span className="check-detail">
               {!pathsReady
-                ? "未设置模型目录"
+                ? "未设置"
                 : scanning
                   ? "扫描中…"
                   : files.length
-                    ? `${files.length} 个模型文件`
-                    : "目录已设置"}
+                    ? `${files.length} 个文件`
+                    : "已设置"}
             </span>
           </button>
           <button
             type="button"
             className={cn("check-item", modelReady && "done")}
-            onClick={() => revealSection(modelReady ? modelSection : pathsSection)}
+            onClick={() =>
+              revealSection(modelReady || files.length > 0 ? modelSection : pathsSection)
+            }
           >
             <span className="check-dot" aria-hidden="true" />
             <span className="check-label">主模型</span>
-            <span className="check-detail">{modelReady ? mainModelName : "等待选择"}</span>
+            <span className="check-detail" title={modelReady ? mainModelName : undefined}>
+              {modelReady ? mainModelName : "未选择"}
+            </span>
           </button>
           <button
             type="button"
@@ -684,12 +815,12 @@ export function Dashboard() {
               )}
             >
               {!modelReady
-                ? "随主模型检测"
+                ? "待检测"
                 : familyUnsupported
                   ? "暂不支持"
                   : missingRequirements.length > 0
                     ? `缺 ${missingRequirements.length} 项`
-                    : "齐备"}
+                    : "已齐备"}
             </span>
           </button>
         </div>
@@ -701,10 +832,11 @@ export function Dashboard() {
                 切换模型将停止当前服务：{pendingSwitch.join("、")}
               </span>
               <span className="confirm-strip-actions">
-                <button className="btn btn-sm" onClick={() => setPendingSwitch(null)}>
+                <button type="button" className="btn btn-sm" onClick={() => setPendingSwitch(null)}>
                   取消
                 </button>
                 <button
+                  type="button"
                   className="btn btn-sm btn-danger"
                   onClick={() => startServer(true)}
                   disabled={starting || switchingModel}
@@ -715,14 +847,18 @@ export function Dashboard() {
             </div>
           )}
           {mainModel && familyConfig && missingRequirements.length > 0 && !familyUnsupported && (
-            <div className="validation-summary" role="alert">
-              还缺 {missingRequirements.length} 个必需配置：
-              {missingRequirements.join("、")}
+            <div
+              className="validation-summary flex items-center justify-between gap-2.5"
+              role="alert"
+            >
+              <span className="min-w-0 leading-relaxed">
+                还缺 {missingRequirements.length} 个必需配置：{missingRequirements.join("、")}
+              </span>
               {/* 审查 50-ux F-14：给"缺 X 项"一个直达入口，点开就是
-								    组件面板展开 + 光标落在第一个可填控件上。 */}
+                  组件面板展开 + 光标落在第一个可填控件上。 */}
               <button
                 type="button"
-                className="btn btn-sm ml-2"
+                className="btn btn-sm shrink-0"
                 onClick={() => revealSection(componentsSection, true)}
               >
                 去填写
@@ -735,12 +871,29 @@ export function Dashboard() {
             </div>
           )}
           {mainModel && familyConfig && (
-            <div className="launch-meta">
-              {familyConfig.name} · {launchPreview?.mode === "vid_gen" ? "视频生成" : "图像生成"}
+            <div className="launch-meta flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+              <span className="text-fg2 font-medium">{familyConfig.name}</span>
+              <span className="text-muted" aria-hidden="true">
+                ·
+              </span>
+              <span>{launchPreview?.mode === "vid_gen" ? "视频生成" : "图像生成"}</span>
+              <span className="text-muted" aria-hidden="true">
+                ·
+              </span>
+              <span>:{sdPort}</span>
+              {settings.quantType && (
+                <>
+                  <span className="text-muted" aria-hidden="true">
+                    ·
+                  </span>
+                  <span>{settings.quantType.toUpperCase()}</span>
+                </>
+              )}
             </div>
           )}
           <div className="launch-row">
             <button
+              type="button"
               className="btn btn-primary btn-launch"
               onClick={() => startServer()}
               disabled={
@@ -754,7 +907,7 @@ export function Dashboard() {
             >
               {starting || switchingModel ? (
                 <>
-                  <span className="spinner" />
+                  <span className="spinner" aria-hidden="true" />
                   {switchPhase === "preflight"
                     ? "正在检查模型…"
                     : switchPhase === "stopping"
@@ -764,7 +917,7 @@ export function Dashboard() {
                         : serverStatus?.reachable
                           ? "正在切换模型…"
                           : vostok
-                            ? "点火中…"
+                            ? "点火启动中…"
                             : "启动中…"}
                 </>
               ) : (
@@ -777,7 +930,7 @@ export function Dashboard() {
                         : "返回生成界面"
                       : "切换到此模型"
                     : vostok
-                      ? "发射 · 进入测控台"
+                      ? "发射 · 启动服务器"
                       : "启动服务器"}
                 </>
               )}
@@ -787,7 +940,7 @@ export function Dashboard() {
                 className="btn btn-danger"
                 label="停止服务器"
                 armedLabel={`确认停止（${activeJobsCount} 个任务将丢失）`}
-                armedTitle="停止服务器会卸载模型并丢失进行中的任务，再次点击确认"
+                armedTitle="停止服务会中止进行中的任务，再次点击确认"
                 needsConfirm={activeJobsCount > 0}
                 onConfirm={() => void stopServer()}
                 idle={<>{IC.power} 停止</>}
@@ -797,7 +950,7 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="rail-keys" aria-hidden="true">
+        <div className="rail-keys pt-3 border-t border-line" aria-hidden="true">
           <span>
             <span className="kbd">Ctrl + Enter</span> 提交生成
           </span>
@@ -808,30 +961,57 @@ export function Dashboard() {
             <span className="kbd">Esc</span> 关闭浮层
           </span>
         </div>
-      </motion.div>
+      </motion.aside>
 
-      <motion.div
+      <motion.main
         className="dashboard-card"
-        initial={{ opacity: 0, y: 16 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1], delay: 0.08 }}
+        transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1], delay: 0.04 }}
       >
-        <div className={cn("settings-state", settingsState)} role="status">
-          {settingsState === "loading"
-            ? "正在读取设置…"
-            : settingsState === "saving"
-              ? "正在保存设置…"
-              : settingsState === "error"
-                ? "设置未保存，请检查配置目录权限"
-                : "设置已保存"}
+        <div className="flex items-baseline justify-between gap-3 pb-3.5 mb-4 border-b border-line">
+          <div className="flex items-baseline gap-2.5 min-w-0">
+            <h1 className="text-[14px] font-semibold tracking-tight text-fg">
+              {vostok ? "测控与载荷" : "启动配置"}
+            </h1>
+            {vostok && (
+              <span className="font-mono text-[10px] tracking-[0.14em] uppercase text-muted hidden sm:inline">
+                VOSTOK-1
+              </span>
+            )}
+          </div>
+          <div
+            className={cn(
+              "settings-state m-0 inline-flex items-center gap-1.5 shrink-0",
+              settingsState,
+            )}
+            role="status"
+          >
+            <span
+              className={cn(
+                "inline-block h-1.5 w-1.5 rounded-full shrink-0",
+                settingsState === "error"
+                  ? "bg-danger"
+                  : settingsState === "saving"
+                    ? "bg-accent"
+                    : settingsState === "saved"
+                      ? "bg-success"
+                      : "bg-muted",
+              )}
+              aria-hidden="true"
+            />
+            {settingsState === "loading"
+              ? "读取中…"
+              : settingsState === "saving"
+                ? "保存中…"
+                : settingsState === "error"
+                  ? "保存失败"
+                  : "已保存"}
+          </div>
         </div>
 
-        <Panel title="界面主题">
-          <ThemePicker />
-        </Panel>
-
         <div ref={pathsSection}>
-          <Panel title="程序与路径">
+          <Panel title="程序与路径" badge={files.length > 0 ? `${files.length} 个文件` : undefined}>
             <div className="field-row">
               <label className="form-label" htmlFor="dashboard-server-exe">
                 {IC.box} sd-server
@@ -842,13 +1022,19 @@ export function Dashboard() {
                 type="text"
                 value={settings.exeDir}
                 onChange={(e) => setSettings((s) => ({ ...s, exeDir: e.target.value }))}
-                placeholder="可留空从 PATH 查找，或选择 sd-server 可执行文件"
+                placeholder="留空则从 PATH 自动查找"
               />
-              <button className="icon-btn" title="浏览..." onClick={() => browse("exeDir")}>
+              <button
+                type="button"
+                className="icon-btn"
+                title="浏览..."
+                aria-label="浏览 sd-server 可执行文件"
+                onClick={() => browse("exeDir")}
+              >
                 {IC.folder}
               </button>
             </div>
-            <div className="field-hint">sd-server 可执行文件；留空时从 PATH 查找</div>
+
             <div className="field-row">
               <label className="form-label" htmlFor="dashboard-model-dir">
                 {IC.folder} 模型目录
@@ -861,21 +1047,22 @@ export function Dashboard() {
                 onChange={(e) => setSettings((s) => ({ ...s, modelDir: e.target.value }))}
                 placeholder="例如 D:\models"
               />
-              <button className="icon-btn" title="浏览..." onClick={() => browse("modelDir")}>
+              <button
+                type="button"
+                className="icon-btn"
+                title="浏览..."
+                aria-label="浏览模型目录"
+                onClick={() => browse("modelDir")}
+              >
                 {IC.folder}
               </button>
             </div>
-            <div className="field-hint">
-              {scanning
-                ? `正在扫描：${settings.modelDir}`
-                : scanError
-                  ? `扫描失败：${scanError}`
-                  : files.length
-                    ? `已发现 ${files.length} 个文件${scanResult?.truncated ? "（结果已截断）" : ""}`
-                    : settings.modelDir
-                      ? "扫描完成，未发现支持的模型文件"
-                      : "扫描模型文件的根目录"}
-            </div>
+            {(scanning || scanError) && (
+              <div className={cn("field-hint", scanError && "text-danger")}>
+                {scanning ? `正在扫描…` : `扫描失败：${scanError}`}
+              </div>
+            )}
+
             {!!scanResult?.warnings?.length && (
               <div className="scan-warning" role="alert">
                 扫描部分完成：
@@ -888,6 +1075,7 @@ export function Dashboard() {
                   : ""}
               </div>
             )}
+
             <div className="field-row">
               <label className="form-label" htmlFor="dashboard-output-dir">
                 {IC.folder} 输出目录
@@ -898,39 +1086,93 @@ export function Dashboard() {
                 type="text"
                 value={settings.outputDir}
                 onChange={(e) => setSettings((s) => ({ ...s, outputDir: e.target.value }))}
-                placeholder="例如 D:\output（留空则无法一键保存）"
+                placeholder="例如 D:\output"
               />
-              <button className="icon-btn" title="浏览..." onClick={() => browse("outputDir")}>
+              <button
+                type="button"
+                className="icon-btn"
+                title="浏览..."
+                aria-label="浏览输出目录"
+                onClick={() => browse("outputDir")}
+              >
                 {IC.folder}
               </button>
             </div>
-            <div className="field-hint">
-              「保存到输出目录」按钮的目标路径；开启下方开关后，生成完成也会自动写入这里
-            </div>
-            <div style={{ marginTop: 10 }}>
+
+            <div className="form-section">
               <Toggle
                 label="生成完成后自动保存到输出目录"
                 checked={settings.autoSaveResults === true}
                 onChange={(v) => setSettings((s) => ({ ...s, autoSaveResults: v }))}
+                sublabel={!settings.outputDir.trim() ? "需先设输出目录" : undefined}
               />
-              <div className="field-hint">
-                {settings.outputDir.trim()
-                  ? "默认关闭：关闭时结果只存在内存里，关闭窗口、刷新或内存淘汰都会丢失未保存的结果"
-                  : "未配置输出目录时该开关不生效"}
-              </div>
             </div>
           </Panel>
         </div>
 
         <div ref={modelSection}>
-          {(files.length > 0 || scanning) && (
-            <Panel title="模型检测">
+          {!settings.modelDir.trim() ? (
+            <Panel title="模型选择">
+              <div className="rounded-md border border-dashed border-line2 bg-well px-5 py-6 text-center">
+                <div className="text-[13px] font-medium text-fg">尚未选择模型目录</div>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-muted max-w-md mx-auto">
+                  自动扫描 GGUF 与 Safetensors 模型并匹配组件
+                </p>
+                <div className="mt-3.5 flex items-center justify-center gap-2">
+                  <button type="button" className="btn btn-sm" onClick={() => browse("modelDir")}>
+                    {IC.folder} 选择模型目录
+                  </button>
+                </div>
+              </div>
+            </Panel>
+          ) : (
+            <Panel
+              title="模型选择"
+              badge={
+                scanning
+                  ? "扫描中"
+                  : modelCandidates.length > 0
+                    ? `${modelCandidates.length} 个可用`
+                    : undefined
+              }
+            >
               {scanning ? (
-                <div className="empty-state">
-                  <span className="spinner" /> 正在扫描模型…
+                <div className="py-6 flex items-center justify-center gap-2.5 text-[12px] text-muted">
+                  <span className="spinner" aria-hidden="true" /> 正在扫描模型目录…
+                </div>
+              ) : scanError ? (
+                <div className="rounded-md border border-danger/35 bg-danger-dim px-3.5 py-3 flex items-center justify-between gap-3">
+                  <span className="text-[11.5px] text-danger leading-relaxed">
+                    扫描目录失败：{scanError}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-sm shrink-0"
+                    onClick={() => browse("modelDir")}
+                  >
+                    更换目录
+                  </button>
+                </div>
+              ) : files.length === 0 ? (
+                <div className="rounded-md border border-line bg-well px-4 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <div className="text-[12.5px] font-medium text-fg">未找到模型文件</div>
+                    <div className="text-[11px] text-muted mt-0.5">
+                      支持 .safetensors / .gguf / .ckpt
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm shrink-0"
+                    onClick={() => browse("modelDir")}
+                  >
+                    {IC.folder} 更换目录
+                  </button>
                 </div>
               ) : modelCandidates.length === 0 ? (
-                <div className="empty-state">发现了文件，但没有可作为主模型的候选项</div>
+                <div className="rounded-md border border-line bg-well px-4 py-4 text-[12px] text-muted">
+                  目录中未找到可用的主模型文件
+                </div>
               ) : (
                 <>
                   <div className="form-row">
@@ -942,7 +1184,7 @@ export function Dashboard() {
                       value={mainModel}
                       onChange={selectMainModel}
                       options={[
-                        { value: "", label: "-- 选择模型 --" },
+                        { value: "", label: "请选择模型" },
                         ...modelCandidates.map((f) => ({
                           value: f.path,
                           label: modelFileOptionLabel(f),
@@ -951,29 +1193,93 @@ export function Dashboard() {
                     />
                   </div>
                   {mainModel && detectedFamily && (
-                    <div className="form-row mt-2">
-                      <label className="form-label" htmlFor="dashboard-family">
-                        识别类型
-                      </label>
-                      <Select
-                        id="dashboard-family"
-                        value={familyOverride || detectedFamily}
-                        onChange={(next) => {
-                          setFamilyOverride(next);
-                          if (next === "pid" && !settings.vaeFormat) {
-                            setSettings((current) => ({
-                              ...current,
-                              vaeFormat: inferPidVaeFormat(mainModel),
-                            }));
-                          }
-                        }}
-                        options={Object.entries(FAMILY_CONFIG).map(([k, v]) => ({
-                          value: k,
-                          label: v.unsupported ? `${v.name}（暂不支持）` : v.name,
-                        }))}
-                      />
-                      {familyConfig && <span className="tag ml-1">{familyConfig.hint}</span>}
-                    </div>
+                    <>
+                      <div className="form-row">
+                        <label className="form-label" htmlFor="dashboard-family">
+                          识别类型
+                        </label>
+                        <Select
+                          id="dashboard-family"
+                          value={familyOverride || detectedFamily}
+                          onChange={(next) => {
+                            setFamilyOverride(next);
+                            if (next === "pid" && !settings.vaeFormat) {
+                              setSettings((current) => ({
+                                ...current,
+                                vaeFormat: inferPidVaeFormat(mainModel),
+                              }));
+                            }
+                          }}
+                          options={Object.entries(FAMILY_CONFIG).map(([k, v]) => ({
+                            value: k,
+                            label: v.unsupported ? `${v.name}（暂不支持）` : v.name,
+                          }))}
+                        />
+                      </div>
+                      {familyConfig && (
+                        <div>
+                          <div className="spec-bar">
+                            <span className="spec-chip spec-chip-accent">{familyConfig.name}</span>
+                            <span className="spec-chip">
+                              {launchPreview?.mode === "vid_gen" ? "视频生成" : "图像生成"}
+                            </span>
+                            <span
+                              className={cn(
+                                "spec-chip",
+                                missingRequirements.length > 0 && "spec-chip-warn",
+                              )}
+                            >
+                              {hasRequiredSection
+                                ? missingRequirements.length > 0
+                                  ? `缺 ${missingRequirements.length} 项`
+                                  : "组件齐备"
+                                : "单文件"}
+                            </span>
+                            {familyOverride && <span className="spec-chip">手动指定</span>}
+                            {familyUnsupported && (
+                              <span className="spec-chip spec-chip-warn">暂不支持</span>
+                            )}
+                            {(familyConfig.hint || familyConfig.generationHint) && (
+                              <button
+                                type="button"
+                                className="spec-drawer-toggle"
+                                aria-expanded={specGuideOpen}
+                                onClick={() => setSpecGuideOpen((v) => !v)}
+                              >
+                                {missingRequirements.length > 0 && (
+                                  <span className="info-trigger-dot text-warn" aria-hidden="true" />
+                                )}
+                                <span>使用说明</span>
+                                <span
+                                  className={cn(
+                                    "inline-flex transition-transform",
+                                    specGuideOpen && "rotate-180",
+                                  )}
+                                  aria-hidden="true"
+                                >
+                                  {IC.chev}
+                                </span>
+                              </button>
+                            )}
+                          </div>
+                          {(familyConfig.hint || familyConfig.generationHint) && (
+                            <div className={cn("spec-drawer-body", !specGuideOpen && "collapsed")}>
+                              {familyConfig.hint && <div>{familyConfig.hint}</div>}
+                              {familyConfig.generationHint && (
+                                <div
+                                  className={cn(
+                                    familyConfig.hint &&
+                                      "mt-1.5 pt-1.5 border-t border-line text-muted",
+                                  )}
+                                >
+                                  {familyConfig.generationHint}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -982,58 +1288,46 @@ export function Dashboard() {
         </div>
 
         <div ref={componentsSection}>
-          {mainModel && familyConfig && (
-            <>
-              {familyConfig.fields.filter((f) => f.key !== modelField?.key).length > 0 && (
-                <Panel title={`组件配置 — ${familyConfig.name}`}>
-                  {familyConfig.fields
-                    .filter((field) => field.key !== modelField?.key)
-                    .map((field) => {
-                      const opts = getOptions(field.cat);
-                      const val = components[field.key] || "";
-                      return (
-                        <div key={field.key} className="form-row">
-                          <label className="form-label" htmlFor={`component-${field.key}`}>
-                            {field.label}
-                          </label>
-                          <Select
-                            id={`component-${field.key}`}
-                            value={val}
-                            onChange={(v) =>
-                              setComponents((c) => ({
-                                ...c,
-                                [field.key]: v,
-                              }))
-                            }
-                            options={[
-                              {
-                                value: "",
-                                label:
-                                  field.required && detectedFamily !== "custom"
-                                    ? "-- 必需，尚未设置 --"
-                                    : "-- 未设置（可选） --",
-                              },
-                              ...opts.map((f) => ({
-                                value: f.path,
-                                label:
-                                  modelFileOptionLabel(f) +
-                                  (f.dir !== mainModelDir ? " — " + f.dir.split("/").pop() : ""),
-                              })),
-                            ]}
-                          />
-                          {field.description && (
-                            <div className="field-hint field-hint-flush mt-0.5">
-                              {field.description}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  {detectedFamily === "pid" && (
+          {showComponentsPanel && familyConfig && (
+            <Panel title={`组件配置 — ${familyConfig.name}`} badge={componentBadge}>
+              {hasRequiredSection && (
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                      必需组件
+                    </span>
+                    <span
+                      className={cn(
+                        "font-mono text-[10px]",
+                        missingRequirements.length > 0 ? "text-warn" : "text-success",
+                      )}
+                    >
+                      {missingRequirements.length > 0
+                        ? `待填写 ${missingRequirements.length} 项`
+                        : "已齐备"}
+                    </span>
+                  </div>
+                  {requiredFields.map((field) => renderComponentSelect(field, true))}
+                  {needsPidVaeFormat && (
                     <div className="form-row">
-                      <label className="form-label" htmlFor="component-pid-vae-format">
-                        VAE 格式
-                      </label>
+                      <div className="form-label-row">
+                        <span className="inline-flex items-center gap-1.5 flex-wrap">
+                          <label className="form-label" htmlFor="component-pid-vae-format">
+                            VAE 格式
+                          </label>
+                          <InfoTip tone={settings.vaeFormat ? "default" : "warn"}>
+                            需与当前 PiD 模型对应的 VAE 格式一致
+                          </InfoTip>
+                        </span>
+                        <span
+                          className={cn(
+                            "font-mono text-[10px] tracking-wide shrink-0",
+                            settings.vaeFormat ? "text-success" : "text-warn",
+                          )}
+                        >
+                          {settings.vaeFormat ? "已配置" : "必需"}
+                        </span>
+                      </div>
                       <Select
                         id="component-pid-vae-format"
                         value={settings.vaeFormat || ""}
@@ -1051,60 +1345,91 @@ export function Dashboard() {
                           })),
                         ]}
                       />
-                      <div className="field-hint field-hint-flush mt-0.5">
-                        {settings.vaeFormat
-                          ? "必须与 PiD checkpoint 使用的 VAE latent 布局一致"
-                          : "无法从文件名可靠确定，请按模型卡选择对应格式"}
+                    </div>
+                  )}
+                  {needsExternalTokenizer && (
+                    <div className="form-row">
+                      <div className="form-label-row">
+                        <span className="inline-flex items-center gap-1.5 flex-wrap">
+                          <label
+                            className="form-label inline-flex items-center gap-1.5"
+                            htmlFor="component-external-tokenizer"
+                          >
+                            {IC.box} Tokenizer
+                          </label>
+                          <InfoTip
+                            label="格式"
+                            tone={settings.tokenizer?.trim() ? "default" : "warn"}
+                          >
+                            {settings.tokenizer
+                              ? "支持单文件路径，或多槽位格式 main=路径,clip-l=路径"
+                              : EXTERNAL_TOKENIZER_HINT[detectedFamily] ||
+                                "需提供对应的 tokenizer.json 文件"}
+                          </InfoTip>
+                        </span>
+                        <span
+                          className={cn(
+                            "font-mono text-[10px] tracking-wide shrink-0",
+                            settings.tokenizer?.trim() ? "text-success" : "text-warn",
+                          )}
+                        >
+                          {settings.tokenizer?.trim() ? "已配置" : "必需"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="component-external-tokenizer"
+                          className="input font-mono text-[11.5px] flex-1"
+                          type="text"
+                          value={settings.tokenizer || ""}
+                          onChange={(e) =>
+                            setSettings((s) => ({
+                              ...s,
+                              tokenizer: e.target.value,
+                            }))
+                          }
+                          placeholder="选择 tokenizer.json"
+                        />
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="浏览..."
+                          aria-label="浏览 Tokenizer 文件"
+                          onClick={async () => {
+                            const p = await api.pickFile();
+                            if (p) setSettings((s) => ({ ...s, tokenizer: p }));
+                          }}
+                        >
+                          {IC.folder}
+                        </button>
                       </div>
                     </div>
                   )}
-                  {familyNeedsExternalTokenizer(detectedFamily) && (
-                    <div className="field-row">
-                      <label className="form-label" htmlFor="component-external-tokenizer">
-                        {IC.box} Tokenizer
-                      </label>
-                      <input
-                        id="component-external-tokenizer"
-                        className="input"
-                        type="text"
-                        value={settings.tokenizer || ""}
-                        onChange={(e) =>
-                          setSettings((s) => ({
-                            ...s,
-                            tokenizer: e.target.value,
-                          }))
-                        }
-                        placeholder="必需：与文本编码器匹配的 tokenizer.json"
-                      />
-                      <button
-                        className="icon-btn"
-                        title="浏览..."
-                        onClick={async () => {
-                          const p = await api.pickFile();
-                          if (p) setSettings((s) => ({ ...s, tokenizer: p }));
-                        }}
-                      >
-                        {IC.folder}
-                      </button>
-                    </div>
-                  )}
-                  {familyNeedsExternalTokenizer(detectedFamily) && (
-                    <div className="field-hint">
-                      {settings.tokenizer
-                        ? "已设置；也可用 main=…,clip-l=…,clip-g=… 形式一次配置多个槽位"
-                        : EXTERNAL_TOKENIZER_HINT[detectedFamily] ||
-                          "该家族不再内嵌词表，缺少外部 tokenizer 会在初始化文本编码器时失败"}
-                    </div>
-                  )}
-                </Panel>
+                </div>
               )}
-            </>
+
+              {optionalFields.length > 0 && (
+                <div className={cn(hasRequiredSection && "form-section")}>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                      可选组件
+                    </span>
+                    <span className="font-mono text-[10px] text-muted">
+                      {configuredOptionalCount > 0
+                        ? `已选 ${configuredOptionalCount}/${optionalFields.length}`
+                        : `${optionalFields.length} 项`}
+                    </span>
+                  </div>
+                  {optionalFields.map((field) => renderComponentSelect(field, false))}
+                </div>
+              )}
+            </Panel>
           )}
         </div>
 
         <div className="config-group-label">高级配置</div>
 
-        <Panel title="运行后端" collapsed>
+        <Panel title="运行后端" collapsed badge={runtimeBadge}>
           <div className="form-row">
             <label className="form-label" htmlFor="dashboard-backend-preset">
               后端预设
@@ -1138,191 +1463,204 @@ export function Dashboard() {
               ]}
             />
           </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-backend-custom">
-              自定义 --backend
-            </label>
+          <div className="form-row">
+            <div className="form-label-row">
+              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                <label className="form-label" htmlFor="dashboard-backend-custom">
+                  自定义 --backend
+                </label>
+                <InfoTip>可按组件指定设备，如 clip=cpu,diffusion=cuda0</InfoTip>
+              </span>
+            </div>
             <input
               id="dashboard-backend-custom"
-              className="input"
+              className="input font-mono text-[12px]"
               type="text"
               value={settings.backend}
               onChange={(e) => setSettings((s) => ({ ...s, backend: e.target.value }))}
-              placeholder="例如 cuda0 或 clip=cpu,vae=cuda0,diffusion=vulkan0"
+              placeholder="例如 cuda0 或 clip=cpu,vae=cuda0"
             />
-            <div className="field-hint field-hint-flush mt-0.5">
-              支持组件级分配，如 clip=cpu,diffusion=cuda0。只有 params-backend 或 CPU 卸载会关闭
-              auto-fit；显式 --backend 会被 auto-fit
-              保留并作为计算设备分配。“自动”且无手动放置时默认启用单 GPU 自动放置。
-            </div>
           </div>
-          <div className="form-row mt-2">
-            <Toggle
-              label="原生 SageAttention（--sage-attn）"
-              checked={!!settings.sageAttn}
-              onChange={(v) => setSettings((s) => ({ ...s, sageAttn: v }))}
-            />
-            <div className="field-hint field-hint-flush mt-0.5">
-              仅在 CUDA 构建且 GPU 计算能力 ≥ 8.0 时可用；不可用时内核会拒绝建立上下文。与
-              --flash-attn 同时存在时，Sage 在 diffusion 内优先；把 diffusion 的注意力显式设为 off
-              会同时关掉 Sage 的 Flash Attention 回退。会改变数值结果，建议固定种子对比。
+          <div className="form-row">
+            <div className="form-label-row">
+              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                <label className="form-label" htmlFor="dashboard-threads">
+                  计算线程数（--threads）
+                </label>
+                <span className="field-anchor">0 = 自动</span>
+              </span>
             </div>
-          </div>
-          <div className="form-row mt-2">
-            <Toggle
-              label="TAE 仅用于预览（--taesd-preview-only）"
-              checked={!!settings.taesdPreviewOnly}
-              onChange={(v) => setSettings((s) => ({ ...s, taesdPreviewOnly: v }))}
-              disabled={!components.taesd}
-            />
-            <div className="field-hint field-hint-flush mt-0.5">
-              {components.taesd
-                ? "勾选后只有采样过程的预览用 TAE 解码，最终图仍由完整 VAE 输出（上游 #2184）；旧内核不支持该参数，启动前预检会提示。"
-                : "先在组件里选好 TAE 才能启用：勾选后最终图仍由完整 VAE 解码，只有预览用 TAE。"}
-            </div>
-          </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-conditioning-cache-size">
-              条件缓存上限（--conditioning-cache-size）
-            </label>
-            <input
-              id="dashboard-conditioning-cache-size"
-              className="input"
-              type="text"
-              inputMode="numeric"
-              value={settings.conditioningCacheSize || ""}
-              onChange={(e) =>
-                setSettings((s) => ({
-                  ...s,
-                  conditioningCacheSize: e.target.value,
-                }))
-              }
-              placeholder="留空 = 内核默认（服务器 4）"
-            />
-            <div className="field-hint field-hint-flush mt-0.5">
-              按模型上下文缓存条件结果，与 --cache-mode 的步间缓存无关；0 表示关闭。
-            </div>
-          </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-threads">
-              计算线程数（--threads）
-            </label>
             <NumberInput
               id="dashboard-threads"
-              className="w-20"
+              className="w-24"
               value={settings.threads ?? 0}
               min={0}
               max={256}
               onChange={(value) => setSettings((s) => ({ ...s, threads: value }))}
               ariaLabel="计算线程数"
             />
-            <div className="field-hint field-hint-flush mt-0.5">
-              0 = 不传该参数，由内核按 CPU 物理核数决定（弱核 CPU 上这是性能调优第一步）；留 0
-              或正整数，不要填逻辑核数。
+          </div>
+
+          <div className="form-section form-stack">
+            <div className="form-row">
+              <Toggle
+                label="原生 SageAttention（--sage-attn）"
+                checked={!!settings.sageAttn}
+                onChange={(v) => setSettings((s) => ({ ...s, sageAttn: v }))}
+                sublabel="CUDA 8.0+"
+                hint="仅支持 Ampere 及以上 NVIDIA 显卡，启用后可能轻微改变出图细节"
+              />
+            </div>
+            <div className="form-row">
+              <Toggle
+                label="TAE 仅用于预览（--taesd-preview-only）"
+                checked={!!settings.taesdPreviewOnly}
+                onChange={(v) => setSettings((s) => ({ ...s, taesdPreviewOnly: v }))}
+                disabled={!components.taesd}
+                sublabel={!components.taesd ? "需先选 TAE" : undefined}
+                hint="仅采样预览用 TAE，最终成图仍由完整 VAE 解码"
+              />
             </div>
           </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-params-backend">
-              参数驻留后端（--params-backend）
-            </label>
-            <input
-              id="dashboard-params-backend"
-              className="input"
-              type="text"
-              value={settings.paramsBackend || ""}
-              onChange={(e) =>
-                setSettings((s) => ({
-                  ...s,
-                  paramsBackend: e.target.value,
-                }))
-              }
-              placeholder="例如 cpu / disk / te=cpu,vae=cpu"
-            />
-            <div className="field-hint field-hint-flush mt-0.5">
-              决定权重放在哪里（与上面 --backend 决定"在哪算"是两套分配）。显式填写会关闭新版
-              auto-fit；只接受单个后端，不能写 &amp; 设备列表；disk
-              表示直接从磁盘读，仅此参数支持。小显存卡把文本编码器放到 cpu 是常见做法。
+
+          <div className="form-section form-stack">
+            <div className="form-row">
+              <div className="form-label-row">
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  <label className="form-label" htmlFor="dashboard-conditioning-cache-size">
+                    条件缓存上限（--conditioning-cache-size）
+                  </label>
+                  <span className="field-anchor">0 = 关闭</span>
+                </span>
+              </div>
+              <input
+                id="dashboard-conditioning-cache-size"
+                className="input font-mono text-[12px]"
+                type="text"
+                inputMode="numeric"
+                value={settings.conditioningCacheSize || ""}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    conditioningCacheSize: e.target.value,
+                  }))
+                }
+                placeholder="默认（4）"
+              />
+            </div>
+            <div className="form-row">
+              <div className="form-label-row">
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  <label className="form-label" htmlFor="dashboard-params-backend">
+                    参数驻留后端（--params-backend）
+                  </label>
+                  <InfoTip>
+                    指定权重存放位置（如 cpu / disk），显存紧张时可将文本编码器放 CPU
+                  </InfoTip>
+                </span>
+              </div>
+              <input
+                id="dashboard-params-backend"
+                className="input font-mono text-[12px]"
+                type="text"
+                value={settings.paramsBackend || ""}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    paramsBackend: e.target.value,
+                  }))
+                }
+                placeholder="例如 cpu / disk / te=cpu,vae=cpu"
+              />
+            </div>
+            <div className="form-row">
+              <div className="form-label-row">
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  <label className="form-label" htmlFor="dashboard-rpc-servers">
+                    RPC 服务器（--rpc-servers）
+                  </label>
+                  <InfoTip>
+                    多机推理地址，逗号分隔；连接后需在 --backend 中指定对应设备（如 RPC0）
+                  </InfoTip>
+                </span>
+              </div>
+              <input
+                id="dashboard-rpc-servers"
+                className="input font-mono text-[12px]"
+                type="text"
+                value={settings.rpcServers || ""}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    rpcServers: e.target.value,
+                  }))
+                }
+                placeholder="例如 127.0.0.1:50052,192.168.1.10:50052"
+              />
             </div>
           </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-rpc-servers">
-              RPC 服务器（--rpc-servers）
-            </label>
-            <input
-              id="dashboard-rpc-servers"
-              className="input"
-              type="text"
-              value={settings.rpcServers || ""}
-              onChange={(e) =>
-                setSettings((s) => ({
-                  ...s,
-                  rpcServers: e.target.value,
-                }))
-              }
-              placeholder="例如 127.0.0.1:50052,192.168.1.10:50052"
-            />
-            <div className="field-hint field-hint-flush mt-0.5">
-              多机拆卡的 RPC 端点，host:port 逗号分隔。连上后仍需在 --backend 里用 RPC 设备名（如
-              RPC0）指定计算设备，否则显存不会参与计算。
-            </div>
+
+          <div className="form-section">
+            <CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
           </div>
-          <CliCompatibility exePath={settings.exeDir} args={launchPreview?.args} port={sdPort} />
         </Panel>
 
-        <Panel title="参考图处理" collapsed>
+        <Panel title="参考图处理" collapsed badge={refImageBadge}>
           <div className="form-row">
-            <label className="form-label" htmlFor="dashboard-ref-image-preset">
-              处理预设
-            </label>
+            <div className="form-label-row">
+              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                <label className="form-label" htmlFor="dashboard-ref-image-preset">
+                  处理预设
+                </label>
+                <InfoTip>新版 DGL 内核会自动处理参考图，通常保持默认即可</InfoTip>
+                {(detectedFamily === "krea2" || detectedFamily === "krea2-turbo") && (
+                  <InfoTip tone="accent" label="Krea2">
+                    默认适配 Ostris Edit；使用 krea2edit 权重时再切为 768
+                  </InfoTip>
+                )}
+              </span>
+            </div>
             <Select
               id="dashboard-ref-image-preset"
               value={settings.refImagePreset}
               onChange={(v) => setSettings((s) => ({ ...s, refImagePreset: v }))}
               options={[
                 { value: "", label: "自动检测（推荐）" },
-                { value: "flux_kontext", label: "Flux Kontext" },
-                { value: "longcat", label: "LongCat Edit" },
-                { value: "qwen", label: "Qwen Image Edit" },
-                { value: "qwen_layered", label: "Qwen Image Layered" },
-                { value: "mage_flow", label: "Mage-Flow Edit" },
-                { value: "flux2", label: "Flux 2" },
-                { value: "z_image_omni", label: "Boogu / Z-Image Omni" },
-                { value: "krea2_ostris_edit", label: "Krea2 Ostris Edit" },
-                { value: "krea2_edit", label: "Krea2 Edit 768" },
-                { value: "cosmos_reference", label: "Anima / Cosmos Reference" },
-                { value: "llada_image", label: "LLaDA-Image" },
+                ...Object.entries(REF_IMAGE_PRESET_LABELS).map(([value, label]) => ({
+                  value,
+                  label,
+                })),
               ]}
             />
-            <div className="field-hint field-hint-flush mt-0.5">
-              作为 --ref-image-args preset=… 传给前 DGL 内核（&lt;= 32d516c）；DGL
-              架构内核（#2396+） 已移除该启动参数，请保持“自动检测（推荐）”。
-            </div>
-            {(detectedFamily === "krea2" || detectedFamily === "krea2-turbo") && (
-              <div className="field-hint field-hint-flush mt-1">
-                Krea2 自动模式使用 Ostris Edit；仅 lbouaraba/krea2edit 一类模型选择 “Krea2 Edit 768”
-              </div>
-            )}
           </div>
         </Panel>
 
-        <Panel title="性能与显存" collapsed>
+        <Panel title="性能与显存" collapsed badge={perfBadge}>
           <div className="form-row">
             <Toggle
               label="CPU 卸载（--offload-to-cpu）"
               checked={settings.offloadCpu}
               onChange={(v) => setSettings((s) => ({ ...s, offloadCpu: v }))}
+              hint="将权重暂存到内存按需加载，适合显存不足时使用"
             />
-            <div className="field-hint field-hint-flush mt-0.5">
-              强制将权重放在 CPU 内存、按需搬到计算设备；新版会因此关闭 auto-fit。不勾选也不禁止
-              auto-fit 自动使用 RAM 或磁盘。
-            </div>
           </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-max-vram-mode">
-              显存预算（--max-vram）
-            </label>
+
+          <div className="form-row">
+            <div className="form-label-row">
+              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                <label className="form-label" htmlFor="dashboard-max-vram-mode">
+                  显存预算（--max-vram）
+                </label>
+                <InfoTip>
+                  {maxVramMode === "unset" && "默认由引擎按可用显存自动分配"}
+                  {maxVramMode === "fixed" && "限制权重与显存缓冲上限（GiB），0 表示自动"}
+                  {maxVramMode === "auto" && "自动探测空闲显存并额外预留指定余量（GiB）"}
+                  {maxVramMode === "custom" && "按设备分别指定显存上限，如 cuda0=6,vulkan0=4"}
+                </InfoTip>
+              </span>
+            </div>
             {/* form-row 是块级布局，Select 触发器 width:100%——联动输入框必须与
-						    Select 包进同一个 flex 容器，否则会换行并带着 margin 错位。 */}
+                Select 包进同一个 flex 容器，否则会换行并带着 margin 错位。 */}
             <div className="flex items-center gap-2">
               <Select
                 id="dashboard-max-vram-mode"
@@ -1363,9 +1701,11 @@ export function Dashboard() {
               {maxVramMode === "custom" && (
                 <input
                   id="dashboard-max-vram-custom"
-                  className="input flex-1 min-w-0"
+                  className={cn(
+                    "input font-mono text-[12px] flex-1 min-w-0",
+                    maxVramLiveError && "invalid",
+                  )}
                   type="text"
-
                   value={settings.maxVram || ""}
                   onChange={(e) => setSettings((s) => ({ ...s, maxVram: e.target.value }))}
                   placeholder="例如 cuda0=6,vulkan0=4"
@@ -1373,19 +1713,22 @@ export function Dashboard() {
                 />
               )}
             </div>
-            <div className="field-hint field-hint-flush mt-0.5">
-              {maxVramMode === "unset" &&
-                "不传显式预算：新版内核仍会按可用显存自动分段，auto-fit 会预留安全余量"}
-              {maxVramMode === "fixed" &&
-                "受管理权重与计算缓冲的预算（非物理显存硬上限）；新版 0 = 按实时空闲显存自动分段，旧版 0 才禁用图切分"}
-              {maxVramMode === "auto" && "自动探测空闲显存并保留指定余量（以负值传给 --max-vram）"}
-              {maxVramMode === "custom" && "按后端/设备分别指定预算（GiB），逗号分隔"}
-            </div>
+            {maxVramLiveError && (
+              <div className="mt-1 text-[11px] text-danger">{maxVramLiveError}</div>
+            )}
           </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-quant-type">
-              加载时量化（--type）
-            </label>
+
+          <div className="form-row">
+            <div className="form-label-row">
+              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                <label className="form-label" htmlFor="dashboard-quant-type">
+                  加载时量化（--type）
+                </label>
+                <InfoTip>
+                  加载时动态量化权重以节省显存；精细分层规则可用 --tensor-type-rules
+                </InfoTip>
+              </span>
+            </div>
             <Select
               id="dashboard-quant-type"
               value={settings.quantType}
@@ -1427,76 +1770,82 @@ export function Dashboard() {
                 { value: "f32", label: "F32" },
               ]}
             />
-            <div className="field-hint field-hint-flush mt-0.5">
-              Q4_K 等 K 量化不区分 _S/_M 配方；混合精度（如视觉塔保 F16）需在附加启动参数写
-              --tensor-type-rules
-            </div>
           </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-extra-args">
-              附加启动参数
-            </label>
-            <input
-              id="dashboard-extra-args"
-              className="input"
-              type="text"
-              list="dashboard-extra-arg-options"
-              value={settings.extraArgs}
-              onChange={(e) => setSettings((s) => ({ ...s, extraArgs: e.target.value }))}
-              placeholder="例如 --threads 8 --mmap"
-            />
-            <datalist id="dashboard-extra-arg-options">
-              {cliOptions.map((opt) => (
-                <option key={opt} value={opt} />
-              ))}
-            </datalist>
-            <div className="field-hint field-hint-flush mt-0.5">
-              {cliOptions.length > 0
-                ? `最后追加到 sd-server 命令行，同名值优先于控件；输入时按 ↓ 可从当前内核的 ${cliOptions.length} 个选项里补全`
-                : "最后追加到 sd-server 命令行，同名值优先于控件；启动前按实际内核预检，不会改写保存值"}
+
+          <div className="form-section">
+            <div className="form-row">
+              <div className="form-label-row">
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  <label className="form-label" htmlFor="dashboard-extra-args">
+                    附加启动参数
+                  </label>
+                  <InfoTip>追加到启动命令末尾，同名参数会覆盖上方选项</InfoTip>
+                </span>
+              </div>
+              <input
+                id="dashboard-extra-args"
+                className="input font-mono text-[12px]"
+                type="text"
+                list="dashboard-extra-arg-options"
+                value={settings.extraArgs}
+                onChange={(e) => setSettings((s) => ({ ...s, extraArgs: e.target.value }))}
+                placeholder="例如 --threads 8 --mmap"
+              />
+              <datalist id="dashboard-extra-arg-options">
+                {cliOptions.map((opt) => (
+                  <option key={opt} value={opt} />
+                ))}
+              </datalist>
             </div>
-          </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-max-queue">
-              最大队列
-            </label>
-            <NumberInput
-              id="dashboard-max-queue"
-              className="w-20"
-              value={settings.maxQueueSize ?? 4}
-              min={1}
-              max={32}
-              onChange={(value) => setSettings((s) => ({ ...s, maxQueueSize: value }))}
-              ariaLabel="最大队列数量"
-            />
-            <div className="field-hint field-hint-flush mt-0.5">
-              生成队列上限（服务器未提供时生效）
-            </div>
-          </div>
-          <div className="form-row mt-2">
-            <label className="form-label" htmlFor="dashboard-sd-port">
-              启动端口
-            </label>
-            <NumberInput
-              id="dashboard-sd-port"
-              className="w-24"
-              value={sdPort}
-              min={MIN_SD_PORT}
-              max={MAX_SD_PORT}
-              onChange={(value) => setSettings((s) => ({ ...s, sdPort: value }))}
-              ariaLabel="sd-server 启动端口"
-            />
-            <div className="field-hint field-hint-flush mt-0.5">
-              sd-server 监听 127.0.0.1 的端口，默认 {DEFAULT_SD_PORT}；范围 {MIN_SD_PORT}–
-              {MAX_SD_PORT}
-              {running && sdPort !== serverStatus?.sdPort
-                ? `。当前服务器运行在 ${serverStatus?.sdPort}，重启后改用新端口`
-                : ""}
+
+            <div className="form-grid-sm">
+              <div className="form-row">
+                <label className="form-label" htmlFor="dashboard-max-queue">
+                  最大队列
+                </label>
+                <NumberInput
+                  id="dashboard-max-queue"
+                  className="w-24"
+                  value={settings.maxQueueSize ?? 4}
+                  min={1}
+                  max={32}
+                  onChange={(value) => setSettings((s) => ({ ...s, maxQueueSize: value }))}
+                  ariaLabel="最大队列数量"
+                />
+              </div>
+              <div className="form-row">
+                <div className="form-label-row">
+                  <span className="inline-flex items-center gap-1.5 flex-wrap">
+                    <label className="form-label" htmlFor="dashboard-sd-port">
+                      启动端口
+                    </label>
+                    {running && sdPort !== serverStatus?.sdPort && (
+                      <span className="field-anchor">运行中 :{serverStatus?.sdPort}，重启生效</span>
+                    )}
+                  </span>
+                </div>
+                <NumberInput
+                  id="dashboard-sd-port"
+                  className="w-28"
+                  value={sdPort}
+                  min={MIN_SD_PORT}
+                  max={MAX_SD_PORT}
+                  onChange={(value) => setSettings((s) => ({ ...s, sdPort: value }))}
+                  ariaLabel="sd-server 启动端口"
+                />
+              </div>
             </div>
           </div>
         </Panel>
+
         <DiagnosticsPanel />
-      </motion.div>
+
+        <div className="config-group-label">界面外观</div>
+
+        <Panel title="界面主题">
+          <ThemePicker />
+        </Panel>
+      </motion.main>
     </div>
   );
 }

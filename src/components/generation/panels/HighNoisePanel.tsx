@@ -49,7 +49,7 @@ export const HighNoisePanel = memo(function HighNoisePanel({
           min={-1}
           max={100}
           step={1}
-          hint="-1 = 按 MoE Boundary 自动分配步数；≥0 = 显式指定高噪段步数"
+          sublabel="-1 = 自动"
         />
         <Slider
           label="MoE Boundary"
@@ -58,11 +58,9 @@ export const HighNoisePanel = memo(function HighNoisePanel({
           min={0}
           max={1}
           step={0.05}
-          hint="低噪段/高噪段分界比例"
         />
-        <div className="field-hint field-hint-flush">
-          当前内核（DGL 架构）的高噪段复用主采样器、调度器与 CFG；需要完全独立的高噪段采样配置请改用
-          DGL 脚本。
+        <div className="rounded-md border border-line bg-well px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+          当前版本内核高噪段复用主采样设置，独立配置需使用 DGL 脚本
         </div>
       </Panel>
     );
@@ -129,7 +127,6 @@ export const HighNoisePanel = memo(function HighNoisePanel({
             min={1}
             max={12}
             step={1}
-            hint="线性多步的历史点数，上游默认 4"
           />
           <Slider
             label="LMS 历史偏移 (高噪)"
@@ -138,7 +135,6 @@ export const HighNoisePanel = memo(function HighNoisePanel({
             min={0}
             max={4}
             step={1}
-            hint="上游默认 1；0 为原始 k-diffusion 历史顺序"
           />
           <div className="form-row">
             <label className="form-label" htmlFor="high-noise-lms-divisions">
@@ -164,7 +160,6 @@ export const HighNoisePanel = memo(function HighNoisePanel({
             min={0.05}
             max={2}
             step={0.05}
-            hint="调度器曲线形状参数（>0），上游默认 0.6"
           />
           <Slider
             label="Beta β (高噪)"
@@ -173,7 +168,6 @@ export const HighNoisePanel = memo(function HighNoisePanel({
             min={0.05}
             max={2}
             step={0.05}
-            hint="调度器曲线形状参数（>0），上游默认 0.6"
           />
         </>
       )}
@@ -225,23 +219,22 @@ export const HighNoisePanel = memo(function HighNoisePanel({
         min={0}
         max={1}
         step={0.05}
-        hint="低噪段/高噪段分界比例"
       />
-      <div className="form-row mt-2">
-        <label className="form-label" htmlFor="high-noise-extra-sample-args">
-          额外采样参数 (高噪)
-        </label>
+      <div className="form-row form-section">
+        <div className="form-label-row">
+          <label className="form-label" htmlFor="high-noise-extra-sample-args">
+            额外采样参数 (高噪)
+          </label>
+          <span className="field-anchor">key=value</span>
+        </div>
         <input
           id="high-noise-extra-sample-args"
-          className="input"
+          className="input font-mono text-[11.5px]"
           type="text"
           value={hsp?.extra_sample_args ?? ""}
           onChange={(e) => onUpdate("high_noise_sample_params.extra_sample_args", e.target.value)}
           placeholder="例如 gamma=3,apg_eta=0.8"
         />
-        <div className="field-hint field-hint-flush mt-0.5">
-          仅作用于高噪段（上游 high_noise_sample_params.extra_sample_args）
-        </div>
       </div>
     </Panel>
   );

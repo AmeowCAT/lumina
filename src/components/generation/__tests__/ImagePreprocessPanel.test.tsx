@@ -19,7 +19,7 @@ describe("ImagePreprocessPanel", () => {
   it("preserves Enter and whitespace while typing multiple rules", async () => {
     const user = userEvent.setup();
     render(<Editor />);
-    await user.click(screen.getByRole("button", { name: "图像输入几何（image_preprocess）" }));
+    await user.click(screen.getByRole("button", { name: "图像预处理" }));
     const input = screen.getByLabelText("预处理规则");
     await user.type(input, "target=init,mode=none{Enter}");
     expect(input).toHaveValue("target=init,mode=none\n");

@@ -27,7 +27,7 @@ describe("CLI compatibility inspection", () => {
     expect(mocks.inspectServer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "检测内核兼容性" }));
     expect(await screen.findByRole("status")).toHaveTextContent("7f410a3");
-    expect(screen.getByRole("status")).toHaveTextContent("0 不禁用分段");
+    expect(screen.getByRole("status")).toHaveTextContent("自动分段与显存管理");
     expect(mocks.inspectServer).toHaveBeenCalledWith("sd-server");
   });
 
@@ -45,8 +45,8 @@ describe("CLI compatibility inspection", () => {
     mocks.inspectServer.mockResolvedValue({ ...modern, autoFit: "flag", memoryMode: "legacy" });
     render(<CliCompatibility exePath="/old/sd-server" port={1234} />);
     fireEvent.click(screen.getByRole("button", { name: "检测内核兼容性" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("旧版裸开关");
-    expect(screen.getByRole("status")).not.toHaveTextContent("0 不禁用分段");
+    expect(await screen.findByRole("status")).toHaveTextContent("旧版内核，仅支持基础自动适配");
+    expect(screen.getByRole("status")).not.toHaveTextContent("自动分段与显存管理");
   });
 
   it("ignores a stale result after the executable changes", async () => {

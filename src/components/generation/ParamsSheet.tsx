@@ -49,12 +49,12 @@ export function ParamsSheet({
           // 离散属性:开→立即可见;关→滑出动画结束后隐藏
           visibility: open ? "visible" : "hidden",
         }}
-        transition={{ type: "spring", stiffness: 300, damping: 32 }}
+        transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
         style={{ pointerEvents: open ? "auto" : "none" }}
       >
         <div className="params-sheet-head">
           <h3>生成参数</h3>
-          <span className="kbd">⌘,</span>
+          <span className="kbd">Ctrl+,</span>
           <div className="header-spacer" />
           <button type="button" className="icon-btn" aria-label="关闭参数面板" onClick={onClose}>
             <X size={13} aria-hidden="true" />

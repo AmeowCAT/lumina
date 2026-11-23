@@ -193,10 +193,10 @@ export const PromptDock = memo(function PromptDock({
   // 说明里点出"含模板后缀"：Iris-3B 的 300 token 上限包含内核套用的模板，
   // 所以 prompt 本体实际可用的额度比 300 略少，计数只是保守提示。
   const tokenTitle = overLimit
-    ? `估算 ≈${tokenCount} tokens，已超出${familyName}的 ${tokenLimit} token 上限（含模板后缀）；超出部分会被内核截断（不报错）。按字符数/3.5 粗估。`
+    ? `已超出${familyName}上限（${tokenLimit} tokens），多余内容将被截断`
     : tokenLimit != null
-      ? `估算 ≈${tokenCount} / ${tokenLimit} tokens（${familyName}上限，含模板后缀）；按字符数/3.5 粗估，超出部分会被内核截断。`
-      : `按字符数/3.5 粗估；${familyName}没有已知的提示词上限。`;
+      ? `约 ${tokenCount} / ${tokenLimit} tokens（超出部分将被截断）`
+      : `约 ${tokenCount} tokens（按字符估算）`;
   const tokenText =
     tokenLimit != null ? `≈${tokenCount} / ${tokenLimit} tokens` : `≈${tokenCount} tokens`;
   const showTokenCount = tokenLimit != null || tokenCount > 0;
@@ -208,44 +208,21 @@ export const PromptDock = memo(function PromptDock({
           className="dock-negative"
           value={negative}
           onChange={(e) => onUpdate("negative_prompt", e.target.value)}
-          placeholder="反向提示词：描述你想排除的内容…"
+          placeholder="排除不需要的元素…"
           rows={2}
           aria-label="反向提示词"
         />
       )}
-      <div style={{ position: "relative" }}>
-        <textarea
-          id="positive-prompt"
-          className="dock-prompt"
-          value={prompt}
-          onChange={(e) => onUpdate("prompt", e.target.value)}
-          placeholder="描述你想生成的画面…（Ctrl + Enter 生成）"
-          rows={3}
-          aria-label="正向提示词"
-          aria-describedby={showTokenCount ? "prompt-token-count" : undefined}
-          /* 给右下角的计数留一行，避免长提示词的最后一行被压在计数下面 */
-          style={{ paddingBottom: 16 }}
-        />
-        {showTokenCount && (
-          <span
-            id="prompt-token-count"
-            className={overLimit ? "text-warn" : "text-muted"}
-            title={tokenTitle}
-            style={{
-              position: "absolute",
-              right: 8,
-              bottom: 2,
-              fontSize: 10,
-              fontFamily: "var(--font-mono)",
-              fontVariantNumeric: "tabular-nums",
-              letterSpacing: "0.03em",
-              lineHeight: 1.2,
-            }}
-          >
-            {tokenText}
-          </span>
-        )}
-      </div>
+      <textarea
+        id="positive-prompt"
+        className="dock-prompt"
+        value={prompt}
+        onChange={(e) => onUpdate("prompt", e.target.value)}
+        placeholder="输入提示词…（Ctrl + Enter 生成）"
+        rows={3}
+        aria-label="正向提示词"
+        aria-describedby={showTokenCount ? "prompt-token-count" : undefined}
+      />
       <div className="param-chips">
         <button
           type="button"
@@ -258,6 +235,7 @@ export const PromptDock = memo(function PromptDock({
           反
         </button>
         <button
+          type="button"
           className={cn("param-chip", seedRandom && "active")}
           onClick={onRandomSeed}
           aria-label="切换每次生成使用随机种子"
@@ -266,6 +244,7 @@ export const PromptDock = memo(function PromptDock({
         >
           {IC.dice}
         </button>
+        <span className="mx-0.5 h-3.5 w-px bg-line" aria-hidden="true" />
         <ChipEditor
           chipText={`${width}×${height}`}
           title="快速调整尺寸"
@@ -318,16 +297,30 @@ export const PromptDock = memo(function PromptDock({
             step={0.5}
           />
         </ChipEditor>
-        <button className="btn btn-primary generate-btn" onClick={onGenerate} disabled={disabled}>
+        {showTokenCount && (
+          <span
+            id="prompt-token-count"
+            className={cn(
+              "ml-auto mr-1 select-none font-mono text-[10px] leading-none tracking-[0.02em] tabular-nums",
+              overLimit ? "text-warn" : "text-muted",
+            )}
+            title={tokenTitle}
+          >
+            {tokenText}
+          </span>
+        )}
+        <button
+          type="button"
+          className={cn("btn btn-primary generate-btn", showTokenCount && "!ml-0")}
+          onClick={onGenerate}
+          disabled={disabled}
+        >
           {submitting ? (
             <>
               <span className="spinner" /> 提交中
             </>
           ) : generating ? (
             <>
-              {/* 进行态随主题语境:暗房"生成中" ↔ 太空"推进中"(与页头
-                  dreamText、任务队列状态链一致);空闲态"生成"不动——
-                  空态提示"点击 生成"引用它。 */}
               <span className="spinner" /> {vostok ? "推进中" : "生成中"}
             </>
           ) : (
@@ -336,7 +329,7 @@ export const PromptDock = memo(function PromptDock({
         </button>
       </div>
       {showLingbotTools && (
-        <div className="prompt-tools">
+        <div className="prompt-tools border-t border-line pt-2">
           <TwoTapButton
             className="size-preset"
             label="插入 LingBot JSON 模板"
@@ -347,7 +340,6 @@ export const PromptDock = memo(function PromptDock({
             idle={"插入 LingBot JSON 模板"}
             armed={"确认替换?"}
           />
-          <span className="field-hint">也可继续使用普通文本；以 JSON 开头时会在提交前校验格式</span>
         </div>
       )}
     </div>

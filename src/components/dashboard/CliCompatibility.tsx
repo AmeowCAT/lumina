@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import type { CliCapabilities, ServerArgs } from "../../types";
 import { formatError } from "../../lib/utils";
+import { cn } from "../ui/cn";
 
 /** Explicit, model-safe inspection. No automatic execution while typing a path. */
 export function CliCompatibility({
@@ -47,41 +48,106 @@ export function CliCompatibility({
   };
 
   return (
-    <div className="form-row mt-2">
-      <button type="button" className="btn btn-sm" onClick={() => void inspect()} disabled={busy}>
-        {busy ? "检测中…" : "检测内核兼容性"}
-      </button>
-      <div className="field-hint field-hint-flush mt-1">
-        只读取 --help / --version，不加载或停止模型。启动时还会自动校验；不会改写已保存参数。
+    <div className="form-row">
+      <div className="flex items-center justify-between gap-3">
+        <span className="form-label mb-0">内核兼容性</span>
+        <button
+          type="button"
+          className="btn btn-sm shrink-0"
+          onClick={() => void inspect()}
+          disabled={busy}
+        >
+          {busy ? (
+            <>
+              <span className="spinner" aria-hidden="true" />
+              检测中…
+            </>
+          ) : (
+            "检测内核兼容性"
+          )}
+        </button>
       </div>
       {error && (
-        <div role="alert" className="field-hint field-hint-flush mt-1">
+        <div
+          role="alert"
+          className="mt-3 rounded-md border border-danger/35 bg-danger-dim px-3 py-2 text-[11.5px] leading-relaxed text-danger"
+        >
           {error}
         </div>
       )}
       {result && (
-        <div role="status" className="field-hint field-hint-flush mt-1">
-          <div>
-            {result.verified ? "已确认 CLI 能力" : "CLI 能力未确认"} ·{" "}
-            {result.version || "内核未报告版本"}
+        <div
+          role="status"
+          className="mt-3 rounded-md border border-line bg-well px-3 py-2.5 text-[11.5px] leading-relaxed text-fg2"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-line">
+            <span className="inline-flex items-center gap-2 font-medium text-fg">
+              <span
+                className={cn(
+                  "inline-block h-1.5 w-1.5 rounded-full shrink-0",
+                  result.verified ? "bg-success" : "bg-warn",
+                )}
+                aria-hidden="true"
+              />
+              {result.verified ? "内核兼容" : "版本未识别"}
+            </span>
+            <span className="font-mono text-[10.5px] text-muted">
+              {result.version || "未知版本"}
+            </span>
           </div>
-          {result.memoryMode === "automatic" && <div>自动分段内核：max-vram 0 不禁用分段。</div>}
-          {result.memoryMode === "legacy" && (
-            <div>旧版内核：保留 stream-layers 与旧版显存预算语义。</div>
-          )}
-          {result.autoFit === "on-off" && (
-            <div>auto-fit 使用 on/off；无手动设备/权重放置时默认开启。</div>
-          )}
-          {result.autoFit === "flag" && <div>auto-fit 是旧版裸开关，不能附加 on/off。</div>}
-          {result.options.includes("--dgl-dir") && (
-            <div>
-              DGL 架构内核（#2396+）：AnimateDiff / IP-Adapter / ADetailer / SLG /
-              图像预处理与参考图参数覆盖已迁至 DGL 脚本，「参考图处理」请保持自动检测。
-            </div>
-          )}
-          {result.warnings.map((warning) => (
-            <div key={warning}>{warning}</div>
-          ))}
+          <div className="mt-2 space-y-1.5 text-[11px] text-fg2">
+            {result.memoryMode === "automatic" && (
+              <div className="flex items-start gap-2">
+                <span className="text-muted select-none" aria-hidden="true">
+                  ·
+                </span>
+                <span>支持自动分段与显存管理</span>
+              </div>
+            )}
+            {result.memoryMode === "legacy" && (
+              <div className="flex items-start gap-2">
+                <span className="text-muted select-none" aria-hidden="true">
+                  ·
+                </span>
+                <span>旧版内核，采用传统显存管理</span>
+              </div>
+            )}
+            {result.autoFit === "on-off" && (
+              <div className="flex items-start gap-2">
+                <span className="text-muted select-none" aria-hidden="true">
+                  ·
+                </span>
+                <span>支持自动设备分配</span>
+              </div>
+            )}
+            {result.autoFit === "flag" && (
+              <div className="flex items-start gap-2">
+                <span className="text-muted select-none" aria-hidden="true">
+                  ·
+                </span>
+                <span>旧版内核，仅支持基础自动适配</span>
+              </div>
+            )}
+            {result.options.includes("--dgl-dir") && (
+              <div className="flex items-start gap-2 text-fg">
+                <span className="text-accent-hi select-none" aria-hidden="true">
+                  ·
+                </span>
+                <span>DGL 架构内核，部分高级效果需通过 DGL 脚本配置，参考图预设建议保持自动</span>
+              </div>
+            )}
+            {result.warnings.map((warning) => (
+              <div
+                key={warning}
+                className="flex items-start gap-2 rounded-sm bg-warn-dim px-2 py-1 text-warn"
+              >
+                <span className="select-none font-mono" aria-hidden="true">
+                  !
+                </span>
+                <span>{warning}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

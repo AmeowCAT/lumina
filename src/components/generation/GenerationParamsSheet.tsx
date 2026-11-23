@@ -322,7 +322,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           常显会挤占 Sheet 顶部、把输入面板推下去（观感很差）。 */}
       {FAMILY_CONFIG[family]?.generationHint && (
         <Panel title="模型使用提示" collapsed>
-          <p className="field-hint field-hint-flush" role="note">
+          <p className="field-hint field-hint-flush !m-0" role="note">
             {FAMILY_CONFIG[family].generationHint}
           </p>
         </Panel>

@@ -2,7 +2,7 @@ import { memo, useRef, useState } from "react";
 import type { Features, GenMode } from "../../../types";
 import { FAMILY_CONFIG, isH3VideoFamily } from "../../../config/families";
 import { useStore } from "../../../store";
-import { Panel } from "../../ui/Panel";
+import { InfoTip, Panel } from "../../ui/Panel";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
 import { ImageUpload } from "../../ui/ImageUpload";
@@ -46,6 +46,7 @@ function MultiImageRow({
           >
             <img src={img} alt="" className="h-full w-full object-cover" />
             <button
+              type="button"
               className="upload-remove upload-remove-sm"
               aria-label={`移除第 ${i + 1} 张`}
               onClick={() => onChange((r) => r.filter((_, j) => j !== i))}
@@ -156,7 +157,7 @@ function PromptImageRow({
       </div>
       <input
         type="text"
-        className="input flex-1"
+        className="input flex-1 font-mono text-[11.5px]"
         aria-label={`内联图片 ${id} 的 ID`}
         value={draft}
         spellCheck={false}
@@ -231,14 +232,19 @@ function PromptImagesSection({
   };
 
   return (
-    <div className="form-row mt-2">
-      <div className="form-label">
-        提示内联图片（&lt;image:ID&gt;）
-        <span className="form-sublabel">
-          prompt_images；供 Qwen2.5-VL / Qwen3-VL / Qwen3.5 在提示词中按位置插入视觉信息
-        </span>
+    <div className="form-row form-section">
+      <div className="form-label-row">
+        <div className="form-label">
+          <span>提示内联图片</span>
+          <span className="field-anchor">
+            &lt;image:ID&gt; · {entries.length}/{MAX_PROMPT_IMAGES}
+          </span>
+        </div>
+        <InfoTip label="用法" tone="accent">
+          在提示词中用 &lt;image:ID&gt; 引用对应图片（最多 32 张），需模型支持视觉输入。
+        </InfoTip>
       </div>
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2">
         {entries.map(([id, src]) => (
           <PromptImageRow
             key={id}
@@ -313,10 +319,6 @@ function PromptImagesSection({
           >
             {IC.plus} 添加内联图片
           </button>
-        </div>
-        <div className="field-hint field-hint-flush">
-          需搭配视觉编码器（--llm_vision 或内置视觉塔）。在提示词中写 &lt;image:ID&gt;
-          引用（可重复，最多 32 个唯一 ID）；输出字面文本请写 \&lt;image:ID&gt;。
         </div>
       </div>
     </div>
@@ -471,12 +473,12 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
                 ControlNet 忽略。仅新内核（默认值含 control_type 键）显示。 */}
             {controlTypeSupported && (
               <div className="form-row">
-                <label className="form-label" htmlFor="control-type">
-                  控制类型
-                  <span className="form-sublabel">
-                    control_type；SDXL ControlNet Union 模型必需，其它 ControlNet 忽略
-                  </span>
-                </label>
+                <div className="form-label-row">
+                  <label className="form-label" htmlFor="control-type">
+                    控制类型
+                  </label>
+                  <span className="field-anchor">Union</span>
+                </div>
                 <Select
                   id="control-type"
                   value={controlType ?? ""}
@@ -492,10 +494,8 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
               min={0}
               max={30}
               step={0.5}
-              hint={
-                imgCfg != null
-                  ? undefined
-                  : `未设置，跟随文本 CFG (${formatNumberForInput(txtCfg ?? 0)})`
+              sublabel={
+                imgCfg != null ? undefined : `跟随文本 (${formatNumberForInput(txtCfg ?? 0)})`
               }
             />
           </>
@@ -518,7 +518,6 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           min={0}
           max={1}
           step={0.05}
-          hint="数值越高，偏离初始图的幅度越大；越低则越稳定"
         />
       )}
       {refImagesSupported && (
@@ -543,9 +542,6 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           <div className="form-row">
             <label className="form-label" htmlFor="ref-image-size">
               参考图尺寸
-              <span className="form-sublabel">
-                ref_image_size；max 保留更多身份细节，但每步都更慢
-              </span>
             </label>
             <Select
               id="ref-image-size"

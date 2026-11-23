@@ -4,6 +4,8 @@ import { Lightbox } from "../Lightbox";
 import { Slider } from "../Slider";
 import { Toggle } from "../Toggle";
 import { NumberInput } from "../NumberInput";
+import { TwoTapButton } from "../TwoTapButton";
+import { InfoTip } from "../InfoTip";
 
 describe("accessible UI controls", () => {
   it("associates slider and toggle labels with their inputs", () => {
@@ -117,5 +119,95 @@ describe("accessible UI controls", () => {
       "aria-valuetext",
       "0.20",
     );
+  });
+
+  it("restores normalized numeric value on Escape without float noise", () => {
+    const onChange = vi.fn();
+    render(
+      <NumberInput value={0.20000000298023224} step={0.01} onChange={onChange} ariaLabel="阈值" />,
+    );
+    const input = screen.getByRole("spinbutton", { name: "阈值" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "0.9" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).toHaveValue(0.2);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("disarms TwoTapButton when Escape is pressed", () => {
+    const onConfirm = vi.fn();
+    render(
+      <TwoTapButton
+        label="删除"
+        armedLabel="确认删除"
+        needsConfirm
+        onConfirm={onConfirm}
+        idle="删除"
+        armed="确认?"
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "删除" });
+    fireEvent.click(btn);
+    expect(btn).toHaveAttribute("aria-label", "确认删除");
+    fireEvent.keyDown(btn, { key: "Escape" });
+    expect(btn).toHaveAttribute("aria-label", "删除");
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("tucks Slider and Toggle hints into InfoTip while keeping text mounted and aria-describedby intact", () => {
+    const onToggle = vi.fn();
+    render(
+      <>
+        <Slider
+          label="LMS 阶数"
+          sublabel="默认 4"
+          hint="线性多步的历史点数，越高越锐利"
+          value={4}
+          min={1}
+          max={12}
+          onChange={vi.fn()}
+        />
+        <Toggle
+          label="自动保存结果"
+          hint="关闭时结果仅保存在内存中"
+          hintTone="warn"
+          checked={false}
+          onChange={onToggle}
+        />
+      </>,
+    );
+
+    const slider = screen.getByRole("slider", { name: "LMS 阶数" });
+    const sw = screen.getByRole("switch", { name: "自动保存结果" });
+    expect(screen.getByText("默认 4")).toBeTruthy();
+    expect(screen.getByText("线性多步的历史点数，越高越锐利")).toBeTruthy();
+    expect(screen.getByText("关闭时结果仅保存在内存中")).toBeTruthy();
+    expect(slider.getAttribute("aria-describedby")).toBeTruthy();
+    expect(sw.getAttribute("aria-describedby")).toBeTruthy();
+
+    // Clicking the InfoTip trigger inside Toggle pins open the popover without toggling the switch.
+    const triggers = screen.getAllByRole("button", { name: "查看说明" });
+    expect(triggers).toHaveLength(2);
+    fireEvent.click(triggers[1]);
+    expect(triggers[1]).toHaveAttribute("aria-expanded", "true");
+    expect(onToggle).not.toHaveBeenCalled();
+
+    // Pressing Escape unpins the InfoTip popover.
+    fireEvent.keyDown(triggers[1], { key: "Escape" });
+    expect(triggers[1]).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("supports labeled InfoTip badges and outside-click dismissal", () => {
+    render(
+      <InfoTip label="DGL" tone="accent">
+        上游 #2396+ 统一在 DGL 内部调度
+      </InfoTip>,
+    );
+    const trigger = screen.getByRole("button", { name: "查看DGL说明" });
+    expect(screen.getByText("上游 #2396+ 统一在 DGL 内部调度")).toBeTruthy();
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    fireEvent.pointerDown(document.body);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 });

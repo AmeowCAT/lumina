@@ -1,6 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { SlidersHorizontal } from "lucide-react";
 import { api } from "../../api";
 import { useStore } from "../../store";
 import {
@@ -50,7 +49,6 @@ import { validateRefMedia } from "../../lib/refMedia";
 import type { GenImages, GenMode, GenParams, Job, JobConfig, UpscaleResponse } from "../../types";
 import { Lightbox, type LightboxItem } from "../ui/Lightbox";
 import { ProgressBar } from "../ui/ProgressBar";
-import { cn } from "../ui/cn";
 import { ResultsGrid } from "./ResultsGrid";
 import { UpscaleDialog, type UpscaleOptions } from "./UpscaleDialog";
 import { JobQueue } from "./JobQueue";
@@ -1204,8 +1202,8 @@ export function GenerationUI() {
       : 1;
   const negativeVisible =
     showNegative || !!(params.negative_prompt && params.negative_prompt.trim());
-  // 进行中文案随主题语境:暗房"显影" ↔ 太空"推进"(发动机工作段)
-  const developing = theme === "vostok" ? "推进中" : "显影中";
+  const familyLabel = family !== "custom" ? FAMILY_CONFIG[family]?.name : undefined;
+  const developing = theme === "vostok" ? "推进中" : "生成中";
   // 新内核（#2303）优先用结构化进度（阶段 + 段内计数），旧内核回落日志解析。
   const dreamText = currentGen
     ? currentGen.progress
@@ -1220,16 +1218,23 @@ export function GenerationUI() {
       <HeaderBar
         modelLabel={caps.model?.name || caps.model?.path?.split(/[\\/]/).pop() || "当前模型"}
         modelTitle={caps.model?.path || caps.model?.name || "当前模型"}
+        familyLabel={familyLabel}
         mode={mode}
         supportedModes={caps.supported_modes || []}
+        workspaceTab={workspaceTab}
         dreamText={dreamText}
+        queueOpen={queueOpen}
+        activeJobs={activeJobs}
+        sheetOpen={sheetOpen}
         onSwitchMode={switchMode}
+        onSwitchWorkspaceTab={setWorkspaceTab}
+        onToggleQueue={toggleQueue}
+        onToggleSheet={toggleSheet}
         onOpenDashboard={openDashboard}
       />
       <div className="main">
         <div className="output-area">
           <ProgressBar />
-          {/* VOSTOK 胶片边注:画布右缘竖排遥测,生成时实时帧号 */}
           {theme === "vostok" && (
             <span className="r-vertical r-canvas-vertical" aria-hidden="true">
               {currentGen && progressTotal > 0
@@ -1237,61 +1242,6 @@ export function GenerationUI() {
                 : "STANDBY · ORBIT-1 · LUMINA STUDIO"}
             </span>
           )}
-          <div className="canvas-float left">
-            <div
-              className="mode-tabs"
-              role="tablist"
-              aria-label="工作区视图"
-              onKeyDown={(e) => {
-                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                e.preventDefault();
-                setWorkspaceTab((t) => (t === "results" ? "history" : "results"));
-              }}
-            >
-              <button
-                id="workspace-tab-results"
-                role="tab"
-                aria-selected={workspaceTab === "results"}
-                aria-controls="workspace-panel-results"
-                tabIndex={workspaceTab === "results" ? 0 : -1}
-                className={cn("mode-tab", workspaceTab === "results" && "active")}
-                onClick={() => setWorkspaceTab("results")}
-              >
-                当前结果
-              </button>
-              <button
-                id="workspace-tab-history"
-                role="tab"
-                aria-selected={workspaceTab === "history"}
-                aria-controls="workspace-panel-history"
-                tabIndex={workspaceTab === "history" ? 0 : -1}
-                className={cn("mode-tab", workspaceTab === "history" && "active")}
-                onClick={() => setWorkspaceTab("history")}
-              >
-                {theme === "vostok" ? "回传档案" : "历史画廊"}
-              </button>
-            </div>
-          </div>
-          <div className="canvas-float right">
-            <button
-              className={cn("btn btn-sm queue-toggle", queueOpen && "active")}
-              onClick={toggleQueue}
-              aria-expanded={queueOpen}
-              aria-label="切换任务队列面板"
-            >
-              任务队列
-              {activeJobs > 0 && <span className="queue-badge">{activeJobs}</span>}
-            </button>
-            <button
-              className={cn("btn btn-sm", sheetOpen && "queue-toggle active")}
-              onClick={toggleSheet}
-              aria-expanded={sheetOpen}
-              aria-label="打开参数面板"
-              title="生成参数（⌘,）"
-            >
-              <SlidersHorizontal size={13} aria-hidden="true" /> 参数
-            </button>
-          </div>
           <div className="output-main">
             <AnimatePresence mode="wait" initial={false}>
               {workspaceTab === "results" ? (
@@ -1381,6 +1331,7 @@ export function GenerationUI() {
               onRemove={removeJob}
               onClear={clearJobs}
               onDownload={download}
+              onClose={closeQueue}
             />
           </QueueDrawer>
           <Suspense fallback={null}>

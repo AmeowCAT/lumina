@@ -1,8 +1,15 @@
 import type { RuntimeDiagnostics } from "../../types";
 import { useStore } from "../../store";
-import { buildDiagnosticArgs, diagnosticsFor, LOG_LEVELS } from "../../lib/diagnostics";
+import {
+  buildDiagnosticArgs,
+  diagnosticsFor,
+  LOG_LEVELS,
+  scaleValidationError,
+} from "../../lib/diagnostics";
+import { InfoTip } from "../ui/InfoTip";
 import { Panel } from "../ui/Panel";
 import { Select } from "../ui/Select";
+import { cn } from "../ui/cn";
 
 export function DiagnosticsPanel() {
   const settings = useStore((s) => s.settings);
@@ -12,12 +19,12 @@ export function DiagnosticsPanel() {
   const setValue = (key: keyof RuntimeDiagnostics, value: string) =>
     setSettings((current) => ({ ...current, [key]: value }));
 
+  const hasCustom = Boolean(values.logLevel || values.linearScale || values.attnScale);
+  const badge = errors.length > 0 ? "参数有误" : hasCustom ? "已自定义" : undefined;
+
   return (
-    <Panel title="诊断与数值稳定性" collapsed>
-      <p className="field-hint mb-3">
-        以下是 sd-server 启动配置，修改后需重启服务器，不会立即影响当前任务；
-        留空沿用内核默认。启动预检会拦截旧内核不支持的选项。
-      </p>
+    <Panel title="诊断与数值稳定性" collapsed badge={badge}>
+      <p className="text-[11px] text-muted mb-3">修改后需重启服务器生效</p>
       <div className="form-row">
         <label className="form-label" htmlFor="dashboard-log-level">
           日志等级（--log-level）
@@ -37,36 +44,48 @@ export function DiagnosticsPanel() {
               : []),
           ]}
         />
-        <div className="field-hint field-hint-flush">
-          新版 -v / --verbose 等价于 verbose，不包含完整 debug 日志。
+      </div>
+
+      <div className="form-section">
+        <div className="form-grid-sm">
+          {(
+            [
+              ["linearScale", "Linear 输入缩放（--linear-scale）"],
+              ["attnScale", "Attention K/V 缩放（--attn-scale）"],
+            ] as const
+          ).map(([key, label]) => (
+            <div className="form-row" key={key}>
+              <div className="form-label-row">
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  <label className="form-label" htmlFor={`dashboard-${key}`}>
+                    {label}
+                  </label>
+                  {key === "linearScale" && (
+                    <InfoTip>
+                      留空或填 0 使用模型默认，填 1 关闭缩放；Attention 缩放仅在启用 Flash Attention
+                      时生效
+                    </InfoTip>
+                  )}
+                </span>
+              </div>
+              <input
+                id={`dashboard-${key}`}
+                className={cn(
+                  "input font-mono text-[12px]",
+                  scaleValidationError(values[key]) && "invalid",
+                )}
+                type="text"
+                inputMode="decimal"
+                value={values[key]}
+                onChange={(event) => setValue(key, event.target.value)}
+                placeholder="默认（如 0.0078125）"
+              />
+            </div>
+          ))}
         </div>
       </div>
-      {(
-        [
-          ["linearScale", "Linear 输入缩放（--linear-scale）"],
-          ["attnScale", "Attention K/V 缩放（--attn-scale）"],
-        ] as const
-      ).map(([key, label]) => (
-        <div className="form-row mt-2" key={key}>
-          <label className="form-label" htmlFor={`dashboard-${key}`}>
-            {label}
-          </label>
-          <input
-            id={`dashboard-${key}`}
-            className="input"
-            type="text"
-            inputMode="decimal"
-            value={values[key]}
-            onChange={(event) => setValue(key, event.target.value)}
-            placeholder="留空 / 0：模型默认；例如 0.0078125"
-          />
-        </div>
-      ))}
-      <div className="field-hint field-hint-flush mt-1">
-        0 保留模型内置缩放，1 关闭相应缩放；override 须为有限正数。 attn-scale 仅在 Flash Attention
-        被选中（--flash-attn）且后端支持时生效。 这些值不是 CFG，也不能填写到“额外采样参数”。
-      </div>
-      <div className="flex flex-wrap gap-2 mt-3">
+
+      <div className="form-section flex flex-wrap items-center gap-2">
         <button
           type="button"
           className="btn btn-sm"
@@ -82,7 +101,7 @@ export function DiagnosticsPanel() {
         </button>
         <button
           type="button"
-          className="btn btn-sm"
+          className="btn btn-sm btn-ghost"
           onClick={() =>
             setSettings((current) => ({
               ...current,
@@ -93,12 +112,12 @@ export function DiagnosticsPanel() {
           恢复诊断默认
         </button>
       </div>
-      <div className="field-hint field-hint-flush mt-2">
-        仅在出现数值异常时尝试排查值，不保证修复所有黑图。禁用预取或分段可在附加启动参数中填写
-        --disable-prefetch / --disable-segmented-compute；禁用分段可能更容易显存不足。
-      </div>
+
       {errors.length > 0 && (
-        <div role="alert" className="field-hint field-hint-flush mt-2">
+        <div
+          role="alert"
+          className="mt-3 rounded-md border border-danger/35 bg-danger-dim px-3 py-2 text-[11.5px] leading-relaxed text-danger"
+        >
           {errors.join("；")}
         </div>
       )}

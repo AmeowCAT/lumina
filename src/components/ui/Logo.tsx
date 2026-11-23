@@ -1,18 +1,16 @@
-import { useId } from "react";
+import { useTheme } from "../../lib/theme";
+import { cn } from "./cn";
 
 /**
- * 流光 Lumina 品牌图标（内联 SVG)。三道淡金→金→赭的流光弧 + 发光节点,
- * 深色圆角底,呼应"暗房金光"主题的安全灯琥珀色。
- *
- * 用 `useId` 给渐变分配唯一 id,避免同页多实例时 `url(#...)` 撞车。
- * 徽章底色/圆角读 CSS 变量(--color-logo-bg-*, --logo-rx),主题可覆写;
- * 流光弧读 --color-flow-start/--color-accent/--color-flow-end,随主题换色。
+ * 流光 Lumina 品牌徽章（内联 SVG，随双主题切换几何母题）：
+ * - 墨曜 · 暗室（lumina）：精密光学镜头筒（右上 54° 校准缺口）+ 中心光圈环 + 光学钴蓝对齐点。
+ * - 东方号 VOSTOK（vostok）：苏联构成主义「红楔击穿白环」× 东方一号轨道遥测几何徽章。
+ * 零渐变、零辉光，全部读取主题 CSS 变量。
  */
-export function Logo({ size = 28 }: { size?: number }) {
-  const uid = useId().replace(/:/g, "");
-  const bg = `${uid}-bg`;
-  const flow = `${uid}-flow`;
-  const spark = `${uid}-spark`;
+export function Logo({ size = 28, className }: { size?: number; className?: string }) {
+  const theme = useTheme();
+  const isVostok = theme === "vostok";
+
   return (
     <svg
       width={size}
@@ -20,60 +18,67 @@ export function Logo({ size = 28 }: { size?: number }) {
       viewBox="0 0 64 64"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
+      className={cn("shrink-0", className)}
       aria-label="流光 Lumina"
       role="img"
     >
-      <defs>
-        <linearGradient id={bg} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop style={{ stopColor: "var(--color-logo-bg-hi, #221c12)" }} />
-          <stop offset="1" style={{ stopColor: "var(--color-logo-bg-lo, #100d09)" }} />
-        </linearGradient>
-        <linearGradient id={flow} x1="12" y1="54" x2="52" y2="12" gradientUnits="userSpaceOnUse">
-          <stop stopColor="var(--color-flow-start)" />
-          <stop offset="0.5" stopColor="var(--color-accent)" />
-          <stop offset="1" stopColor="var(--color-flow-end)" />
-        </linearGradient>
-        <radialGradient id={spark} cx="0.5" cy="0.5" r="0.5">
-          <stop stopColor="#fff8e6" />
-          <stop offset="0.45" stopColor="var(--color-flow-start)" />
-          <stop offset="1" stopColor="var(--color-accent)" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-      <rect className="logo-rect-bg" width="64" height="64" rx="15" fill={`url(#${bg})`} />
+      <rect
+        className="logo-rect-bg"
+        width="64"
+        height="64"
+        rx={isVostok ? "4" : "14"}
+        fill="var(--color-logo-bg, #1c1e22)"
+      />
       <rect
         className="logo-rect-frame"
-        x="0.5"
-        y="0.5"
-        width="63"
-        height="63"
-        rx="14.5"
-        fill="none"
-        stroke="#ffffff"
-        strokeOpacity="0.08"
+        x="1"
+        y="1"
+        width="62"
+        height="62"
+        rx={isVostok ? "3" : "13"}
+        stroke="var(--color-logo-border, rgb(255 255 255 / 0.14))"
+        strokeWidth="1.5"
       />
-      <g fill="none" strokeLinecap="round">
-        <path
-          d="M15 47 C 22 33, 31 27, 49 17"
-          stroke="var(--color-accent)"
-          strokeOpacity="0.22"
-          strokeWidth="11"
-        />
-        <path d="M15 47 C 22 33, 31 27, 49 17" stroke={`url(#${flow})`} strokeWidth="6" />
-        <path
-          d="M17 53 C 27 43, 37 36, 51 29"
-          stroke={`url(#${flow})`}
-          strokeWidth="3.5"
-          strokeOpacity="0.85"
-        />
-        <path
-          d="M22 55 C 32 50, 41 45, 53 39"
-          stroke={`url(#${flow})`}
-          strokeWidth="2"
-          strokeOpacity="0.5"
-        />
-      </g>
-      <circle cx="49" cy="17" r="7" fill={`url(#${spark})`} />
-      <circle cx="49" cy="17" r="2.6" fill="#fff8e6" />
+      {isVostok ? (
+        <>
+          {/* 构成主义十字基准刻度线 */}
+          <path
+            d="M35 9V14M35 52V57M12 33H17M53 33H58"
+            stroke="var(--color-logo-fg, #efeadd)"
+            strokeOpacity="0.35"
+            strokeWidth="1.5"
+          />
+          {/* 东方一号轨道环 */}
+          <circle
+            cx="35"
+            cy="33"
+            r="16.5"
+            stroke="var(--color-logo-fg, #efeadd)"
+            strokeWidth="3.2"
+          />
+          {/* 李西茨基红楔（Red Wedge in Orbit）刺入轨道中心 */}
+          <polygon points="10,12 39,26 23,41" fill="var(--color-logo-accent, #cf3616)" />
+          {/* 远地点轨道遥测星点 */}
+          <circle cx="49.5" cy="16.5" r="3" fill="var(--color-go, #30c8cf)" />
+        </>
+      ) : (
+        <>
+          <path
+            d="M49.59 26.28A18.5 18.5 0 1 1 37.72 14.41"
+            stroke="var(--color-logo-fg, #f2f3f5)"
+            strokeWidth="3.8"
+            strokeLinecap="round"
+          />
+          <circle
+            cx="32"
+            cy="32"
+            r="7.5"
+            stroke="var(--color-logo-fg, #f2f3f5)"
+            strokeWidth="3.4"
+          />
+          <circle cx="45.08" cy="18.92" r="3.6" fill="var(--color-logo-accent, #5b8def)" />
+        </>
+      )}
     </svg>
   );
 }

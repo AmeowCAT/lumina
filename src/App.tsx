@@ -211,8 +211,6 @@ export default function App() {
   }, [serverStatus, phase]);
 
   if (phase === "checking") {
-    // VOSTOK 主题的 Splash 是 R 版全海报场(brand-spec 附录 A 回填):
-    // 红楔/旭日光束/任务补丁直接落在印刷场上,没有卡片。
     if (theme === "vostok") {
       return (
         <div className="app">
@@ -233,7 +231,7 @@ export default function App() {
               <div className="r-splash-en">LUMINA STUDIO</div>
             </div>
             <div className="r-splash-colophon" role="status">
-              <span className="spinner" />
+              <span className="spinner" aria-hidden="true" />
               <span>正在检查启动器和服务器状态 — CHECKING LAUNCHER / SERVER</span>
             </div>
             <svg
@@ -248,13 +246,13 @@ export default function App() {
                 <path id="vostok-patch-top" d="M 14,62 A 46,46 0 0 1 106,62" fill="none" />
                 <path id="vostok-patch-bot" d="M 102,74 A 44,44 0 0 1 18,74" fill="none" />
               </defs>
-              <circle cx="60" cy="60" r="58" fill="#110e0b" stroke="#eeead8" strokeWidth="1.6" />
+              <circle cx="60" cy="60" r="58" fill="#110e0b" stroke="#efeadd" strokeWidth="1.5" />
               <circle
                 cx="60"
                 cy="60"
                 r="50"
                 fill="none"
-                stroke="#eeead8"
+                stroke="#efeadd"
                 strokeOpacity="0.35"
                 strokeWidth="0.8"
               />
@@ -262,7 +260,7 @@ export default function App() {
                 fontFamily="JetBrains Mono, monospace"
                 fontSize="8.4"
                 letterSpacing="2.6"
-                fill="#eeead8"
+                fill="#efeadd"
               >
                 <textPath href="#vostok-patch-top" startOffset="6%">
                   LUMINA STUDIO
@@ -272,14 +270,14 @@ export default function App() {
                 fontFamily="JetBrains Mono, monospace"
                 fontSize="8.4"
                 letterSpacing="2.2"
-                fill="#eeead8"
+                fill="#efeadd"
               >
                 <textPath href="#vostok-patch-bot" startOffset="4%">
                   ВОСТОК · 东方号
                 </textPath>
               </text>
               <polygon points="60,26 74,86 46,86" fill="#cf3616" />
-              <circle cx="60" cy="26" r="6.5" fill="#eeead8" />
+              <circle cx="60" cy="26" r="6.5" fill="#efeadd" />
               <ellipse
                 cx="60"
                 cy="60"
@@ -290,7 +288,7 @@ export default function App() {
                 strokeWidth="1.4"
                 transform="rotate(-18 60 60)"
               />
-              <circle cx="88" cy="44" r="2.2" fill="#eeead8" />
+              <circle cx="88" cy="44" r="2.2" fill="#efeadd" />
             </svg>
           </div>
           <ToastContainer />
@@ -303,16 +301,16 @@ export default function App() {
         <div className="splash">
           <motion.div
             className="splash-card"
-            initial={{ opacity: 0, y: 12, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
           >
-            <Logo size={44} />
+            <Logo size={42} />
             <h1 className="wordmark">流光</h1>
             <div className="hero-en">LUMINA STUDIO</div>
-            <span className="orb ready splash-orb" aria-hidden="true" />
+            <div className="splash-divider" aria-hidden="true" />
             <div className="splash-status" role="status">
-              <span className="spinner" />
+              <span className="spinner" aria-hidden="true" />
               <span>正在检查启动器和服务器状态</span>
             </div>
           </motion.div>

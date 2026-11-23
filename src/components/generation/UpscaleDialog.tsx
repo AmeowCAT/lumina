@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import type { UpscalerInfo } from "../../types";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
+import { InfoTip } from "../ui/InfoTip";
 import { Select } from "../ui/Select";
 import { NumberInput } from "../ui/NumberInput";
 
@@ -106,14 +107,12 @@ export function UpscaleDialog({
   // 上游 #2396（routes_sdcpp.cpp:527）：tile_size 在 1–31 之间改为直接返回 HTTP 400
   // （"tile_size must be at least 32"），不再静默抬到 32；0 表示省略键、用内核默认。
   const tileSizeError =
-    tileSize > 0 && tileSize < 32
-      ? "分块尺寸为 0 表示沿用内核默认，手动指定时必须 ≥ 32（新版内核会拒绝 1–31）"
-      : undefined;
+    tileSize > 0 && tileSize < 32 ? "手动指定分块尺寸须 ≥ 32，填 0 使用默认" : undefined;
 
   return createPortal(
     <div className="fixed inset-0 z-[520] flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-black/55"
+        className="absolute inset-0 bg-[var(--color-scrim)]"
         onClick={() => !busy && onClose()}
         aria-hidden="true"
       />
@@ -125,10 +124,14 @@ export function UpscaleDialog({
         aria-modal="true"
         aria-label="图像放大"
         tabIndex={-1}
-        className="panel relative w-full max-w-md outline-none"
+        className="panel relative mb-0 w-full max-w-md shadow-[var(--shadow-overlay)] outline-none"
       >
-        <div className="flex items-center gap-2 px-3 pb-2 pt-3">
-          <h3 className="text-[12px] font-semibold text-fg">图像放大</h3>
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+          <h3 className="text-[13px] font-semibold tracking-[0.01em] text-fg">图像放大</h3>
+          {source?.fmt && <span className="field-anchor">{source.fmt.toUpperCase()}</span>}
+          <InfoTip>
+            直接放大图像，不保留透明通道；单边上限 {maxWidth || 8192}×{maxHeight || 8192}
+          </InfoTip>
           <div className="header-spacer flex-1" />
           <button
             type="button"
@@ -140,95 +143,105 @@ export function UpscaleDialog({
             <X size={13} aria-hidden="true" />
           </button>
         </div>
-        <div className="px-3 pb-3">
-          <div className="field-hint field-hint-flush mb-2">
-            直接调用内核的独立放大接口（RGB ESRGAN），不进入扩散采样，因此不会生成任务；
-            运行期间与生成互斥，结果不保留 alpha。
-            {source?.fmt ? `源图格式：${source.fmt.toUpperCase()}。` : ""}
-          </div>
-          <div className="form-row">
-            <label className="form-label" htmlFor="upscale-model">
-              放大器
-            </label>
-            <Select
-              id="upscale-model"
-              value={upscaler}
-              onChange={setUpscaler}
-              disabled={busy}
-              contentClassName="select-content-elevated"
-              options={[
-                { value: "", label: "自动（第一个兼容模型）" },
-                ...upscalers.map((u) => ({ value: u.name, label: u.name })),
-              ]}
-            />
-          </div>
-          <div className="form-row">
-            <label className="form-label" htmlFor="upscale-repeats">
-              重复次数
-            </label>
-            <Select
-              id="upscale-repeats"
-              value={String(repeats)}
-              onChange={(v) => setRepeats(Number(v))}
-              disabled={busy}
-              contentClassName="select-content-elevated"
-              options={REPEAT_OPTIONS}
-            />
-          </div>
-          <div className="form-row">
-            <label className="form-label" htmlFor="upscale-format">
-              输出格式
-            </label>
-            <Select
-              id="upscale-format"
-              value={resolvedFormat}
-              onChange={setFormat}
-              disabled={busy}
-              contentClassName="select-content-elevated"
-              options={formatOptions}
-            />
-          </div>
-          <div className="form-row">
-            <label className="form-label" htmlFor="upscale-tile">
-              分块尺寸
-              <span className="form-sublabel">0 = 用内核 --upscale-tile-size；手动指定须 ≥ 32</span>
-            </label>
-            <NumberInput
-              id="upscale-tile"
-              value={tileSize}
-              onChange={setTileSize}
-              min={0}
-              max={2048}
-              step={32}
-            />
-          </div>
-          {tileSizeError && (
-            <div className="field-hint field-hint-flush mt-1" role="alert">
-              {tileSizeError}
+        <div className="px-4 py-4">
+          <div className="form-stack">
+            <div className="form-row">
+              <label className="form-label" htmlFor="upscale-model">
+                放大器
+              </label>
+              <Select
+                id="upscale-model"
+                value={upscaler}
+                onChange={setUpscaler}
+                disabled={busy}
+                contentClassName="select-content-elevated"
+                options={[
+                  { value: "", label: "自动" },
+                  ...upscalers.map((u) => ({ value: u.name, label: u.name })),
+                ]}
+              />
             </div>
-          )}
-          <div className="field-hint field-hint-flush mt-1">
-            结果每轴不超过 {maxWidth || 8192}×{maxHeight || 8192} 像素（含重复次数），
-            超出会被内核在放大前拒绝。
+            <div className="form-grid">
+              <div className="form-row">
+                <label className="form-label" htmlFor="upscale-repeats">
+                  重复次数
+                </label>
+                <Select
+                  id="upscale-repeats"
+                  value={String(repeats)}
+                  onChange={(v) => setRepeats(Number(v))}
+                  disabled={busy}
+                  contentClassName="select-content-elevated"
+                  options={REPEAT_OPTIONS}
+                />
+              </div>
+              <div className="form-row">
+                <label className="form-label" htmlFor="upscale-format">
+                  输出格式
+                </label>
+                <Select
+                  id="upscale-format"
+                  value={resolvedFormat}
+                  onChange={setFormat}
+                  disabled={busy}
+                  contentClassName="select-content-elevated"
+                  options={formatOptions}
+                />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-label-row">
+                <label className="form-label" htmlFor="upscale-tile">
+                  分块尺寸
+                </label>
+                <span className="field-anchor">0 = 自动</span>
+              </div>
+              <NumberInput
+                id="upscale-tile"
+                value={tileSize}
+                onChange={setTileSize}
+                min={0}
+                max={2048}
+                step={32}
+              />
+            </div>
+            {tileSizeError && (
+              <div
+                className="rounded-md border border-warn/30 bg-warn-dim px-2.5 py-2 text-[11px] leading-relaxed text-warn"
+                role="alert"
+              >
+                {tileSizeError}
+              </div>
+            )}
+            {busy && (
+              <div
+                className="flex items-center gap-2 rounded-md border border-accent-border bg-accent-dim px-2.5 py-2 text-[11px] leading-relaxed text-fg"
+                role="status"
+              >
+                <span
+                  className="spinner shrink-0"
+                  style={{ width: 12, height: 12, borderWidth: 1.5 }}
+                  aria-hidden="true"
+                />
+                <span>正在放大，过程不可取消，请稍候</span>
+              </div>
+            )}
+            {error && (
+              <div
+                className="rounded-md border border-danger/30 bg-danger-dim px-2.5 py-2 text-[11px] leading-relaxed text-danger"
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
           </div>
-          {busy && (
-            <div className="field-hint field-hint-flush mt-1" role="status">
-              放大进行中：该接口同步执行且不可取消，请等待内核返回后再关闭窗口。
-            </div>
-          )}
-          {error && (
-            <div className="field-hint field-hint-flush mt-2" role="alert">
-              {error}
-            </div>
-          )}
-          <div className="mt-3 flex items-center gap-2">
+          <div className="form-section flex items-center justify-end gap-2">
             <button type="button" className="btn btn-sm" onClick={onClose} disabled={busy}>
               取消
             </button>
-            <div className="header-spacer flex-1" />
             <button
               type="button"
-              className="btn btn-sm"
+              className="btn btn-sm btn-primary"
               disabled={busy || !source || !!tileSizeError}
               onClick={() =>
                 onSubmit({

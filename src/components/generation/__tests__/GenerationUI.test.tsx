@@ -92,7 +92,7 @@ const CONTROL_FRAME_VIDEO_CAPS = {
   },
 };
 
-describe("GenerationUI 结构（暗房重构版）", () => {
+describe("GenerationUI 结构", () => {
   beforeEach(() => {
     localStorage.clear();
     apiMocks.detectFamily.mockReset().mockResolvedValue("custom");

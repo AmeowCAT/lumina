@@ -12,7 +12,7 @@ function etaStr(step: number, total: number, startedAt: number): string {
   return `${m} 分 ${s} 秒`;
 }
 
-/** 画布顶部的发丝光束:生成进度以一道琥珀金光带扫过画布上缘。 */
+/** 画布顶部的精密发丝进度条：以克制的纯色进度带指示生成步数。 */
 export function ProgressBar() {
   const step = useStore((s) => s.progressStep);
   const total = useStore((s) => s.progressTotal);

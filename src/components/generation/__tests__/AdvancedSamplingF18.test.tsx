@@ -47,7 +47,7 @@ describe("F-18 缓存微调控件", () => {
 
   it("缓存关闭时不渲染微调控件（也不发 cache_option）", () => {
     renderPanel({ cacheMode: "disabled" });
-    expect(screen.queryByText(/缓存微调（cache_option）/)).toBeNull();
+    expect(screen.queryByText(/缓存微调/)).toBeNull();
     expect(screen.queryByLabelText(/SCM 步掩码/)).toBeNull();
   });
 
@@ -244,6 +244,6 @@ describe("DGL 内核能力裁剪（#2396）", () => {
     // 仍有效的块级缓存参数保留。
     expect(screen.getByRole("slider", { name: /残差阈值（threshold）/ })).toBeTruthy();
     expect(screen.getByRole("slider", { name: /预热步数（warmup）/ })).toBeTruthy();
-    expect(screen.getByText(/当前内核（DGL 架构）已将 SLG/)).toBeTruthy();
+    expect(screen.getByText(/DGL 脚本配置 SLG/)).toBeTruthy();
   });
 });

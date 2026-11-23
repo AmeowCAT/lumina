@@ -116,9 +116,12 @@ describe("App 阶段机", () => {
     // 状态查询悬挂不返回：阶段停在 checking。
     mocks.serverStatus.mockReturnValue(new Promise(() => {}));
 
-    render(<App />);
+    const { container } = render(<App />);
 
     expect(screen.getByText(/正在检查启动器和服务器状态/)).toBeInTheDocument();
+    expect(container.querySelector(".splash-card")).toBeInTheDocument();
+    expect(container.querySelector(".r-splash")).not.toBeInTheDocument();
+    expect(container.querySelector(".splash-orb")).not.toBeInTheDocument();
     expect(screen.queryByTestId("generation-ui")).not.toBeInTheDocument();
     expect(screen.queryByTestId("dashboard")).not.toBeInTheDocument();
   });

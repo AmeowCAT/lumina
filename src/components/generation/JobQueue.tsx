@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { X } from "lucide-react";
 import type { Capabilities, GenMode, Job, JobConfig } from "../../types";
 import { useStore } from "../../store";
 import { useTheme } from "../../lib/theme";
@@ -23,11 +24,10 @@ interface Props {
     seed?: number,
     suffix?: string,
   ) => Promise<void>;
+  /** 抽屉场景传入，用于在头部提供关闭按钮。 */
+  onClose?: () => void;
 }
 
-// 状态文案随主题语境:暗房用直白流程词;太空(vostok)走任务链语言
-// 待发 → 推进中 → 已回传(与页头 dreamText、画布空态"测控台/回传"一致)。
-// 失败/取消两态两主题保持同词——告警与终态不含糊。
 function statusLabel(status: Job["status"], vostok: boolean): string {
   switch (status) {
     case "queued":
@@ -74,6 +74,7 @@ export const JobQueue = memo(function JobQueue({
   onRemove,
   onClear,
   onDownload,
+  onClose,
 }: Props) {
   const progressStep = useStore((s) => s.progressStep);
   const progressTotal = useStore((s) => s.progressTotal);
@@ -89,17 +90,24 @@ export const JobQueue = memo(function JobQueue({
         <span className="jq-count">
           {activeJobs} / {maxQueue}
         </span>
-        {jobs.length > 0 && (
-          <button
-            type="button"
-            className="btn btn-sm jq-clear"
-            onClick={onClear}
-            aria-label="清理任务记录"
-            title="清理任务列表，不删除生成结果"
-          >
-            清理任务记录
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {jobs.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm jq-clear !ml-0"
+              onClick={onClear}
+              aria-label="清理任务记录"
+              title="清空记录（保留已生成图片）"
+            >
+              清理任务记录
+            </button>
+          )}
+          {onClose && (
+            <button type="button" className="icon-btn" aria-label="关闭任务队列" onClick={onClose}>
+              <X size={13} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
       {jobs.length === 0 ? (
         <div className="empty-state">暂无任务</div>
@@ -131,7 +139,7 @@ export const JobQueue = memo(function JobQueue({
                 {/* 上游 #2303 的结构化进度：阶段/细节/段内计数，独立于预览；
                     旧内核无 progress 键时不渲染，进度条回落日志解析。 */}
                 {generating && j.progress && (
-                  <span className="job-stage" title="内核执行阶段（当前采样段，非整项完成度）">
+                  <span className="job-stage" title="当前阶段进度">
                     {jobProgressSummary(j.progress)}
                   </span>
                 )}
@@ -139,17 +147,18 @@ export const JobQueue = memo(function JobQueue({
                   <span
                     className="job-pos"
                     aria-label={`排队第 ${j.queue_position} 位`}
-                    title="内核队列中的排队位次（1 = 下一个执行）"
+                    title="排队位置"
                   >
                     #{j.queue_position}
                   </span>
                 )}
                 <span className="job-prompt">{j.config?.params?.prompt || ""}</span>
-                <span className="job-elapsed" title="真实生成耗时">
+                <span className="job-elapsed" title="生成耗时">
                   {elapsed}
                 </span>
                 <div className="job-actions">
                   <button
+                    type="button"
                     className="btn btn-sm"
                     title="应用此配置"
                     aria-label={`应用任务 ${j.id} 的配置`}
@@ -161,9 +170,10 @@ export const JobQueue = memo(function JobQueue({
                     (generating &&
                       caps?.features_by_mode?.[j.kind || mode]?.cancel_generating)) && (
                     <button
+                      type="button"
                       className="btn btn-sm btn-danger"
                       aria-label={`取消任务 ${j.id}`}
-                      title={cancelling ? "已请求中断，等待当前采样步结束" : "取消任务"}
+                      title={cancelling ? "等待当前步结束" : "取消任务"}
                       disabled={cancelling}
                       onClick={() => onCancel(j.id)}
                     >
@@ -173,6 +183,7 @@ export const JobQueue = memo(function JobQueue({
                   {j.status === "completed" &&
                     (jobResult ? (
                       <button
+                        type="button"
                         className="btn btn-sm"
                         aria-label={`下载任务 ${j.id} 的结果`}
                         title={
@@ -217,15 +228,17 @@ export const JobQueue = memo(function JobQueue({
                       // 结果画廊有保留上限，被淘汰后 base64 已不在内存：给出
                       // 可见的禁用态而不是让下载按钮无声消失（对抗性审查 M1）。
                       <button
+                        type="button"
                         className="btn btn-sm"
                         disabled
                         aria-label={`任务 ${j.id} 的结果已不可下载`}
-                        title="结果已超出内存保留上限，无法下载（已保存到磁盘的不受影响）"
+                        title="内存缓存已释放，无法下载"
                       >
                         {IC.dl}
                       </button>
                     ))}
                   <button
+                    type="button"
                     className="btn btn-sm jq-remove"
                     title="移除任务记录"
                     aria-label={`移除任务 ${j.id} 的记录`}

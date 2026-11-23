@@ -291,13 +291,13 @@ export const EXTERNAL_TOKENIZER_FAMILIES = [
 
 /** 家族专属的 --tokenizer 说明（没有条目时用通用文案）。 */
 export const EXTERNAL_TOKENIZER_HINT: Record<string, string> = {
-  pid: "必须用与 Gemma 2 文本编码器 checkpoint 配套的 tokenizer.json。",
-  lens: "必须用与 GPT-OSS 文本编码器 checkpoint 配套的 tokenizer.json。",
-  "lens-turbo": "必须用与 GPT-OSS 文本编码器 checkpoint 配套的 tokenizer.json。",
-  "llada-image": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
-  "llada-image-turbo": "必须用 LLaDA2 的 tokenizer.json，两个 LLaDA-Image checkpoint 共用同一份。",
-  "ming-image": "必须用 Ming-Image 0.1 Design 仓库 mllm/ 下的 Ling tokenizer.json。",
-  "moss-image": "必须用 MOSS-Image 官方 tokenizer.json（Qwen3.5 词表，与 Qwen3 不通用）。",
+  pid: "需配合 Gemma 2 配套的 tokenizer.json",
+  lens: "需配合 GPT-OSS 配套的 tokenizer.json",
+  "lens-turbo": "需配合 GPT-OSS 配套的 tokenizer.json",
+  "llada-image": "需配合 LLaDA2 的 tokenizer.json（基础版与 Turbo 共用）",
+  "llada-image-turbo": "需配合 LLaDA2 的 tokenizer.json（基础版与 Turbo 共用）",
+  "ming-image": "需配合 Ming-Image 仓库 mllm/ 目录下的 tokenizer.json",
+  "moss-image": "需配合 MOSS-Image 官方 tokenizer.json（与 Qwen3 不通用）",
 };
 
 /** Frame shortcuts for models whose native temporal context is known. */
@@ -402,12 +402,12 @@ const F = (
 export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   "sensenova-u1": {
     name: "SenseNova U1.5",
-    hint: "完整 MoT 模型目录 / 分片索引，无需独立文本编码器或 VAE（上游 #1935）",
+    hint: "一体化模型，无需单独配置文本编码器或 VAE",
     mode: "img",
     fields: [F("model", "完整模型 / 分片索引", "model", "model")],
     fixedArgs: { "flash-attn": "on", rng: "cuda" },
     generationHint:
-      "SenseNova U1.5 当前仅支持 non-thinking 文生图，不支持参考图编辑、视觉理解或思考模式。推荐 2048×2048 / Euler 50 步 / CFG 4 / Flow Shift 3 / 空负向提示词；宽高按 32 对齐，低分辨率仅用于非训练尺寸冒烟测试。",
+      "仅支持 non-thinking 文生图，不支持参考图编辑；建议留空负向提示词，2048×2048 为训练分辨率，低分辨率仅适合快速试跑。",
     disabledFeatures: [
       "init_image",
       "mask_image",
@@ -424,7 +424,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       img_gen: [
         { label: "训练尺寸", sizes: [["2048", 2048, 2048]] },
         {
-          label: "冒烟测试（非训练尺寸）",
+          label: "快速测试",
           sizes: [
             ["512", 512, 512],
             ["1024", 1024, 1024],
@@ -535,7 +535,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "flux2-klein-base": {
     name: "Flux.2-klein Base",
-    hint: "Diffusion + VAE + LLM (4B/9B) — 基础模型（cfg 4 / 20 步）",
+    hint: "Diffusion + VAE + Qwen3（基础版）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -560,7 +560,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // 组件但权重不可混用，所以拆成两族；参考图编辑走 Flux.2 的同一路径。
   "flux3-klein": {
     name: "Flux.3 Image Klein",
-    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（蒸馏版：16 步 / CFG 1.0）",
+    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（蒸馏版）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -570,7 +570,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     generationHint:
-      "蒸馏版用 16 步 / CFG 1.0，调高 CFG 会明显劣化。参考图编辑要另配视觉塔，最多 10 张参考图；宽高不强制对齐，但用 16 的倍数更稳。默认离散调度器的时间偏移可用 --flow-shift 覆盖。",
+      "蒸馏版请保持 CFG 1.0，调高会劣化画质；参考图编辑需配置视觉编码器，最多 10 张。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -584,7 +584,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "flux3-klein-base": {
     name: "Flux.3 Image Klein Base",
-    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B — 基础模型（CFG 3.5 / 20 步）",
+    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（基础版）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -593,8 +593,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("llm_vision", "LLM Vision (编辑用，可选)", "llm_vision", "llm_vision"),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
-    generationHint:
-      "基础模型用 20 步 / CFG 3.5；与蒸馏版的权重不能混用。参考图编辑要另配视觉塔，最多 10 张参考图。默认离散调度器的时间偏移可用 --flow-shift 覆盖。",
+    generationHint: "与蒸馏版权重不通用；参考图编辑需配置视觉编码器，最多 10 张。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -612,7 +611,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // 文生图与参考图编辑，Edit Turbo 只做参考图编辑（4 步 / CFG 1）。
   fibo2: {
     name: "Fibo 2.0 Dev",
-    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（Dev：CFG 5 / 20 步，可文生图与参考图编辑）",
+    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B，支持文生图与参考图编辑",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -621,8 +620,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("llm_vision", "LLM Vision (mmproj，GGUF 编码器必需)", "llm_vision", "llm_vision"),
     ],
     fixedArgs: {},
-    generationHint:
-      "参考图编辑：单独 GGUF 文本编码器必须另配 --llm_vision 投影，BF16 权重自带投影时可留空。参考图自动按 fibo2 preset 缩放/中心裁剪，可用 --ref-image-args 覆盖（如 vae_center_crop=false）。宽高用 16 的倍数；原生 Fibo 遮罩预处理未接到 --mask。",
+    generationHint: "使用独立 GGUF 文本编码器时需另配视觉投影（mmproj），BF16 完整权重可留空。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -636,7 +634,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "fibo2-edit": {
     name: "Fibo 2.0 Edit Turbo",
-    hint: "Diffusion + FLUX.2 VAE + Qwen3-VL-4B（Edit Turbo：4 步 / CFG 1，必须给参考图）",
+    hint: "专用于参考图编辑（需提供参考图）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -647,7 +645,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     fixedArgs: {},
     requiredInputsByMode: { img_gen: ["ref_images"] },
     generationHint:
-      "只用于参考图编辑：4 步 / CFG 1，调高步数或 CFG 不会更好。参考图数量不限，指令里用 <image_1> / <image_2> 指代；单独 GGUF 文本编码器要另配视觉投影。",
+      "仅用于参考图编辑，建议保持 4 步与 CFG 1；提示词可用 <image_1>、<image_2> 指代对应参考图。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -663,7 +661,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // Qwen3-VL-4B 文本编码器，不需要 VAE；宽高按 16 对齐。
   iris: {
     name: "Iris-3B",
-    hint: "像素空间 DiT + Qwen3-VL-4B，无需 VAE（宽高需 16 对齐）",
+    hint: "像素空间模型，无需 VAE",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -671,8 +669,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
-    generationHint:
-      "不要指定 VAE。宽高需为 16 的倍数；正向与负向提示词共用同一模板，上限 300 token（含模板后缀），超长部分会被截断而不是报错。",
+    generationHint: "无需配置 VAE；单条提示词上限 300 token，超出部分会自动截断。",
     promptTokenLimit: 300,
     genDefaults: {
       seed: -1,
@@ -691,7 +688,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // 与独立 Qwen3.5 视觉投影（--llm_vision mmproj-BF16.gguf，亦供 #2341 内联提示图使用）。
   "moss-image": {
     name: "MOSS-Image (Base / SFT)",
-    hint: "Diffusion + FLUX.2 VAE + Qwen3.5-9B + 可选视觉投影；需外部 tokenizer（宽高需 16 对齐）",
+    hint: "Diffusion + FLUX.2 VAE + Qwen3.5-9B，需配合外部 tokenizer",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -703,12 +700,12 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm_vision",
         "llm_vision",
         false,
-        "Qwen3.5-9B 视觉投影（如 mmproj-BF16.gguf），用于 HQ 参考图编辑与 <image:ID> 提示内联图片",
+        "参考图编辑或使用 <image:ID> 内联图时需配置",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     generationHint:
-      "宽高需为 16 的倍数；必须为 Qwen3.5 文本编码器单独指定 tokenizer.json。Base 与 SFT 共用同一套组件，默认 CFG 3.0，离散调度默认 flow shift 5（可用 Flow Shift 覆盖）。做图像编辑时加载 HQ 编辑 LoRA（如 armV5-moss-edit-lora，配合 SFT）并传入参考图；配置 --llm_vision（mmproj-BF16.gguf）后支持将参考图送入 Qwen3.5 以及在提示词中使用 <image:ID> 内联图片。",
+      "需单独指定 Qwen3.5 的 tokenizer.json。图像编辑可配合编辑 LoRA 与参考图；配置视觉投影后支持在提示词中使用 <image:ID> 引用图片。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -734,7 +731,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "clip_vision",
         "clip_vision",
         false,
-        "IP-Adapter 需要的 ViT-H/14 图像编码器（如 clip_vision_h），与下方 IP-Adapter 成对使用",
+        "配合下方 IP-Adapter 成对使用（如 clip_vision_h）",
       ),
       F(
         "ip-adapter",
@@ -742,7 +739,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "ip-adapter",
         "ip_adapter",
         false,
-        "图像提示权重，如 ip-adapter_sdxl_vit-h；Plus 变体由上游按权重自动识别（#1839）。仅前 DGL 内核（<= 32d516c）支持，#2396+ DGL 架构已迁至 DGL 脚本",
+        "图像参考权重（如 ip-adapter_sdxl_vit-h），仅旧版内核直接生效",
       ),
     ],
     fixedArgs: {},
@@ -767,7 +764,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "motion-module",
         "motion_module",
         false,
-        "支持 AnimateDiff SD 1.5 v2/v3；仅前 DGL 内核（<= 32d516c）开放原生视频模式，#2396+ DGL 架构已迁至 DGL 脚本",
+        "AnimateDiff SD 1.5 v2/v3 权重，仅旧版内核支持原生视频模式",
       ),
       F(
         "clip_vision",
@@ -775,7 +772,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "clip_vision",
         "clip_vision",
         false,
-        "IP-Adapter 需要的 ViT-H/14 图像编码器（如 clip_vision_h），与下方 IP-Adapter 成对使用",
+        "配合下方 IP-Adapter 成对使用（如 clip_vision_h）",
       ),
       F(
         "ip-adapter",
@@ -783,7 +780,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "ip-adapter",
         "ip_adapter",
         false,
-        "图像提示权重，如 ip-adapter_sd15；Plus 变体由上游按权重自动识别（#1839）。仅前 DGL 内核（<= 32d516c）支持，#2396+ DGL 架构已迁至 DGL 脚本",
+        "图像参考权重（如 ip-adapter_sd15），仅旧版内核直接生效",
       ),
     ],
     fixedArgs: {},
@@ -1036,7 +1033,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "audio-vae",
         "audio_vae",
         false,
-        "缺省仍可生成视频，但成品没有解码出的音轨",
+        "不填也可生成视频，但成品不含音轨",
       ),
       F(
         "llm",
@@ -1044,7 +1041,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm",
         "llm",
         true,
-        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+        "可选 Qwen3-VL 32B，或更轻量的 P-H3 Qwen3-VL 4B",
       ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
       F(
@@ -1053,7 +1050,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+        "使用裸 Qwen3-VL 4B 时需选配文本连接器，用 32B 或内置版请留空",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1093,11 +1090,11 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       },
     ],
     generationHint:
-      "上游 #2249 起支持二次放大（hires）二段采样：Latent 插值或学习型放大器（--hires-upscalers-dir，训练域 1.2–2.0×），但不能与首尾帧同用。VAE 可换 Sol-H3-VAE 蒸馏解码器（上游 #2317）：时间分块默认 10/5 latent 帧，temporal_tile_frames / temporal_tile_overlap 须为 5 的倍数。长序列显存紧张时可在附加启动参数写 --model-args minimax_h3_attn_chunk_budget=0.25（GiB，默认 2，0=关闭分组，上游 #2292）。",
+      "二次放大不可与首尾帧同时开启；使用 Sol-H3-VAE 时时间分块帧数与重叠需为 5 的倍数。长视频显存紧张时可在附加启动参数添加 --model-args minimax_h3_attn_chunk_budget=0.25。",
   },
   "minimax-h3-ref2va": {
     name: "MiniMax-H3 (Ref2VA)",
-    hint: "参考图像/视频/音频条件音视频生成（上游 #2194 起服务端已开放参考媒体）",
+    hint: "支持参考图、参考视频与参考音频的音视频生成",
     mode: "vid",
     // 上游 #2194 起 /sdcpp/v1 vid_gen 接受 ref_videos（24fps 帧数组）/
     // ref_audios / ref_video_audios（WAV），参考媒体可完整走 HTTP。
@@ -1154,7 +1151,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm",
         "llm",
         true,
-        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+        "可选 Qwen3-VL 32B，或更轻量的 P-H3 Qwen3-VL 4B",
       ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
       F(
@@ -1163,7 +1160,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+        "使用裸 Qwen3-VL 4B 时需选配文本连接器，用 32B 或内置版请留空",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1184,7 +1181,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm",
         "llm",
         true,
-        "支持 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340）",
+        "可选 Qwen3-VL 32B，或更轻量的 P-H3 Qwen3-VL 4B",
       ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision", false),
       F(
@@ -1193,7 +1190,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+        "使用裸 Qwen3-VL 4B 时需选配文本连接器，用 32B 或内置版请留空",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1212,7 +1209,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       },
     },
     generationHint:
-      "上游 docs/minimax_h3_image.md：Euler / CFG 1 / 6 步专用调度（custom_sigmas，步数由调度表决定，改步数不生效）；宽高按 32 对齐，从 1024×1024 起步。参考图编辑用 <Picture N> 编号（最多 16 张），提示词不加自动前缀；视频 VAE 与 P-H3-Image VAE 不兼容。",
+      "使用 6 步固定调度表（手动改步数不生效），且需搭配图像专用 VAE。编辑时可用 <Picture N> 指代参考图，最多 16 张。",
   },
   // P-H3-Image（上游 #2272，docs/p_h3_image.md）：H3 DiT + 单帧 VAE +
   // Qwen3-VL-4B + 文本连接器。官方 PrunaAI 包的编码器已内置连接器；复用裸
@@ -1220,7 +1217,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // （8.5MP）极吃显存，按 docs 口径采用并在提示里建议小画布起步。
   "p-h3-image": {
     name: "P-H3-Image",
-    hint: "文生图 + 参考图编辑：Diffusion + 单帧 VAE + Qwen3-VL 4B / 32B + 可选文本连接器",
+    hint: "文生图 + 参考图编辑：Diffusion + 单帧 VAE + Qwen3-VL 4B / 32B",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1231,7 +1228,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm",
         "llm",
         true,
-        "支持 P-H3 Qwen3-VL 4B 或 H3 原版 Qwen3-VL 32B（上游 #2337/#2340 统一文本编码器选择）",
+        "可选 P-H3 Qwen3-VL 4B 或 Qwen3-VL 32B",
       ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision", false),
       F(
@@ -1240,7 +1237,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "官方 PrunaAI 包已内置连接器、或改用 Qwen3-VL 32B 时可留空；复用裸 Qwen3-VL-4B 时必传 p-h3-image_text_connector.safetensors",
+        "官方整合编码器或 32B 可留空，使用裸 Qwen3-VL 4B 时需选配",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1260,14 +1257,14 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       vae_tiling_params: { enabled: true, tile_size_w: 256, tile_size_h: 256 },
     },
     generationHint:
-      "上游 docs/p_h3_image.md：Euler / CFG 1 / 8 步专用调度（custom_sigmas，步数由调度表决定）；上游默认 2912×2912（8.5MP，显存需求极高，建议 1024² 起步），宽高为 32 的倍数；VAE 分块保持 256px。普通编辑指令会自动加「Edit <Picture 1>.」前缀，以 Edit <Picture N> 或 subject_definitions: 开头的提示词原样使用。",
+      "使用 8 步固定调度表（手动改步数不生效）。默认 2912×2912 显存开销极高，建议先从 1024×1024 试跑，并保持 VAE 分块 256px。",
   },
   // HyperFlow H3 Flash（上游 #2299，docs/minimax_h3.md §HyperFlow）：
   // MiniMax-H3 的蒸馏视频权重，组件与输入同 H3，采样换 4/6/8 步专用调度
   // （预设已含 flow shift 12，保持默认）。FL2VA / Ref2VA 两支拆族。
   "hyperflow-h3-flash": {
     name: "HyperFlow H3 Flash",
-    hint: "H3 蒸馏视频权重：组件同 MiniMax-H3 FL2VA，6 步专用调度（可换 4/8 步）",
+    hint: "H3 快速蒸馏视频版（默认 6 步，组件同 MiniMax-H3）",
     mode: "vid",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1279,7 +1276,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm",
         "llm",
         true,
-        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+        "可选 Qwen3-VL 32B，或更轻量的 P-H3 Qwen3-VL 4B",
       ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
       F(
@@ -1288,7 +1285,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+        "使用裸 Qwen3-VL 4B 时需选配文本连接器，用 32B 或内置版请留空",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1324,11 +1321,11 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       },
     ],
     generationHint:
-      "上游 docs/minimax_h3.md §HyperFlow H3 Flash：Euler / CFG 1，默认 6 步调度表（hyperflow-h3-flash-6）；4 步 [1.0, 0.962575853, 0.755781889, 0.312497854, 0.0]、8 步 [1.0, 0.993909776, 0.9842875, 0.966063678, 0.923076928, 0.834942341, 0.696852028, 0.468753338, 0.0] 可在高级采样里替换 custom_sigmas。调度已含 flow shift 12，保持默认；帧数按 17k+5 向上对齐、24fps。",
+      "默认使用 6 步专用调度表（含预设 Flow Shift），保持 CFG 1 即可；也可在高级采样中替换为 4 步或 8 步自定义 sigma。",
   },
   "hyperflow-h3-flash-ref2va": {
     name: "HyperFlow H3 Flash (Ref2VA)",
-    hint: "H3 蒸馏权重的参考条件支：参考图/视频/音频，6 步专用调度",
+    hint: "H3 快速蒸馏版（参考图 / 视频 / 音频，默认 6 步）",
     mode: "vid",
     // 同 MiniMax-H3 Ref2VA：参考图 / 视频 / 音频任一即可。
     requiredAnyInputGroupsByMode: {
@@ -1344,7 +1341,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm",
         "llm",
         true,
-        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+        "可选 Qwen3-VL 32B，或更轻量的 P-H3 Qwen3-VL 4B",
       ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
       F(
@@ -1353,7 +1350,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+        "使用裸 Qwen3-VL 4B 时需选配文本连接器，用 32B 或内置版请留空",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1404,8 +1401,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         message: "MiniMax-H3 的参考视频 / 音频不能与初始图片 / 结束帧同时使用",
       },
     ],
-    generationHint:
-      "采样默认值同 HyperFlow H3 Flash（6 步调度表）；参考条件（图/视频/音频）与首尾帧互斥，二次放大（hires）同样不能与首尾帧同用。参考视频按 24fps 抽帧，音频只收 WAV。",
+    generationHint: "参考素材及二次放大均不可与首尾帧同时使用；参考音频仅支持 WAV 格式。",
   },
   zimage: {
     name: "Z-Image",
@@ -1560,7 +1556,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // RGBA 输出由提示词决定，且只在 png / webp 下保留 alpha。
   "qwen-image-2.1": {
     name: "Qwen Image 2.1",
-    hint: "Diffusion + qwen_image_2.1 VAE + Qwen3-VL-8B（宽高需 32 对齐）",
+    hint: "Diffusion + 专用 VAE + Qwen3-VL-8B",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1570,7 +1566,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     generationHint:
-      "宽高需为 32 的倍数；必须使用该模型自带的 VAE。做图片编辑要另配视觉塔；要透明背景就在提示词里写明输出 RGBA，且只有 PNG / WebP 会保留 alpha。分辨率相关的 flow schedule（上游 #2048）由内核按尺寸自动选择，手动指定调度器或自定义 sigma 会覆盖它。文本前缀缓存默认 auto：想省显存可在附加启动参数里写 --model-args qwen_image_2_1_prefix_cache_type=q8_0（也支持 f32 / f16 等，含权重量化以外的大小写敏感类型名）；启用 SageAttention 或自定义 attention scale 时 auto 会保留 FP32，缓存占用偏高不等于配置失效。",
+      "需使用配套专用 VAE，图像编辑需另配视觉编码器；导出透明背景请在提示词中说明 RGBA 并选择 PNG / WebP。显存紧张时可在附加启动参数添加 --model-args qwen_image_2_1_prefix_cache_type=q8_0。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -1601,8 +1597,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
-    generationHint:
-      "基础模型用 50 步 / CFG 5。做参考图编辑需要带图元编码器的连接器文件；编辑时参考图与目标同序列计算，显存占用约为文生图的两倍。启动前必须选好 tokenizer。",
+    generationHint: "参考图编辑需使用含 SigVQ 的连接器，显存占用约为文生图的两倍。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -1631,8 +1626,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
-    generationHint:
-      "Turbo 用 4 步 / CFG 1.0，调高 CFG 会明显劣化。它与基础模型的权重不能混用，混搭只会让出图变差而不会报错。512 与 1024 都能正常编辑。",
+    generationHint: "请保持 4 步与 CFG 1.0，调高 CFG 会劣化画质；与基础版权重不可混用。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -1649,7 +1643,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // Turbo 4 步 / cfg 1.0；RL 版 20 步、Base / Edit 版 30 步；尺寸需为 16 的倍数。
   "mage-flow": {
     name: "Mage-Flow",
-    hint: "T2I：Diffusion + Mage-VAE + Qwen3-VL（Base 模型建议 30 步）",
+    hint: "Diffusion + Mage-VAE + Qwen3-VL",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1674,7 +1668,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "mage-flow-turbo": {
     name: "Mage-Flow Turbo",
-    hint: "T2I：Diffusion + Mage-VAE + Qwen3-VL",
+    hint: "Diffusion + Mage-VAE + Qwen3-VL（4 步快速版）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1696,7 +1690,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "mage-flow-edit": {
     name: "Mage-Flow Edit",
-    hint: "图像编辑（参考图）+ Mage-VAE + Qwen3-VL",
+    hint: "图像编辑 + Mage-VAE + Qwen3-VL",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1718,7 +1712,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "mage-flow-edit-turbo": {
     name: "Mage-Flow Edit Turbo",
-    hint: "图像编辑（参考图）+ Mage-VAE + Qwen3-VL",
+    hint: "图像编辑 + Mage-VAE + Qwen3-VL（4 步快速版）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1812,7 +1806,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // 推荐参数取自上游 T2V 示例：cfg 3.0、121 帧 @24fps（2.3 为 cfg 6.0、33 帧）。
   ltx25: {
     name: "LTX-2.5",
-    hint: "视频生成 + Gemma 4（投影内置，无需嵌入连接器）",
+    hint: "视频生成 + Gemma 4（无需嵌入连接器）",
     mode: "vid",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1822,7 +1816,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "vae",
         "vae",
         true,
-        "必须选 conv 变体（ltx-2.5-video-vae-conv-bf16.safetensors）；默认的 video-vae 是 diffusion 解码器，上游未实现",
+        "请选择 conv 变体（ltx-2.5-video-vae-conv），标准 video-vae 暂不支持",
       ),
       F("audio_vae", "音频 VAE", "audio-vae", "audio_vae"),
       F(
@@ -1831,7 +1825,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "llm",
         "llm",
         true,
-        "须用 LTX 微调版 gemma4-12b-with-proj-ltx-2.5（文本投影内置），Google 原版 Gemma 4 不可替代",
+        "需使用 LTX 微调版 gemma4-12b-with-proj-ltx-2.5，原版 Gemma 4 不兼容",
       ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
       F(
@@ -1840,7 +1834,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "LTX-2.5 的文本投影已内置于 Gemma 4，无需此文件；它是 LTX-2.3 的必需组件",
+        "LTX-2.5 已内置投影，此处留空即可",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1900,7 +1894,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "ernie-image": {
     name: "ERNIE-Image",
-    hint: "Diffusion + VAE + Ministral（base：cfg 5 / 20 步）",
+    hint: "Diffusion + VAE + Ministral",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1923,7 +1917,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "ernie-image-turbo": {
     name: "ERNIE-Image Turbo",
-    hint: "Turbo 模型 + VAE + Ministral（8 步 cfg 1）",
+    hint: "Turbo 版 + VAE + Ministral",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1967,7 +1961,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   krea2: {
     name: "Krea2",
-    hint: "Krea2 Raw + Wan VAE + Qwen3-VL 4B（官方 52 步 / CFG 3.5）",
+    hint: "Krea2 + Wan VAE + Qwen3-VL 4B",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1990,7 +1984,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "krea2-turbo": {
     name: "Krea2 Turbo",
-    hint: "Krea2 Turbo + Wan VAE + Qwen3-VL 4B（官方 8 步蒸馏）",
+    hint: "Krea2 Turbo + Wan VAE + Qwen3-VL 4B",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2013,7 +2007,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   sefi: {
     name: "SeFi-Image",
-    hint: "Diffusion + Flux2 VAE + Qwen3-VL（base/RL，50 步 cfg 4）",
+    hint: "Diffusion + Flux.2 VAE + Qwen3-VL",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2034,7 +2028,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "sefi-turbo": {
     name: "SeFi-Image Turbo",
-    hint: "Turbo 模型 + Flux2 VAE + Qwen3-VL（4 步 cfg 1）",
+    hint: "Turbo 版 + Flux.2 VAE + Qwen3-VL",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2077,7 +2071,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "lens-turbo": {
     name: "Lens Turbo",
-    hint: "Turbo 模型 + VAE + GPT-OSS（4 步 cfg 1）",
+    hint: "Turbo 版 + VAE + GPT-OSS",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2122,7 +2116,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "boogu-edit": {
     name: "Boogu Image Edit",
-    hint: "图像编辑 + FLUX VAE + Qwen3-VL (需要 LLM Vision)",
+    hint: "图像编辑 + FLUX VAE + Qwen3-VL（需配置视觉编码器）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2145,7 +2139,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "boogu-turbo": {
     name: "Boogu Image Turbo",
-    hint: "Turbo 模型 + FLUX VAE + Qwen3-VL (少步数)",
+    hint: "Turbo 版 + FLUX VAE + Qwen3-VL",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2213,7 +2207,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   minit2i: {
     name: "MiniT2I",
-    hint: "Diffusion + flan-t5-large（512, 100 步 cfg 6，无 VAE）",
+    hint: "Diffusion + flan-t5-large，无需 VAE（固定 512×512）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2223,8 +2217,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     // 上游 #2189：内核把宽高硬夹到 512×512（request.cpp 的
     // `align to fixed size 512x512 for MiniT2I`），界面不能再让用户改。
     fixedSize: { width: 512, height: 512 },
-    generationHint:
-      "像素空间模型，不需要 VAE。内核强制 512×512：改尺寸不会生效，hires 二次放大仍可用。推荐 100 步 / CFG 6。",
+    generationHint: "无需 VAE，输出分辨率固定为 512×512，如需更高分辨率可启用二次放大。",
     genDefaults: {
       seed: -1,
       width: 512,
@@ -2238,7 +2231,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "distilled-sd": {
     name: "Distilled SD",
-    hint: "SSD-1B / SDXS / 蒸馏模型（SDXS 需手动改成 1 步 + CFG 1）",
+    hint: "SSD-1B / SDXS 等蒸馏模型（SDXS 需改 1 步 / CFG 1）",
     mode: "img",
     fields: [F("model", "完整模型", "model", "model")],
     fixedArgs: {},
@@ -2254,14 +2247,14 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       sample_params: { sample_steps: 20, guidance: { txt_cfg: 7 } },
     },
     generationHint:
-      "SDXS-512 系列（SDXS-512-DreamShaper / SDXS-512-0.9）必须把步数改成 1、CFG 改成 1，并把尺寸改回 512×512；SSD-1B / Vega / tiny-SD 用默认的 1024×1024、20 步、CFG 7 即可。",
+      "SDXS-512 系列请改为 512×512、1 步、CFG 1；SSD-1B 与 Vega 直接使用默认参数即可。",
   },
   // PixArt-α / PixArt-Σ（上游 #2047）：DiT + T5-XXL + 4 通道 VAE。两者
   // checkpoint 的 DiT 张量布局相同，但默认 VAE 缩放因子不同（Σ 0.13025，
   // α 常用 0.18215），所以拆成两族。T5 词表内嵌，不要配外部 tokenizer。
   "pixart-sigma": {
     name: "PixArt-Σ",
-    hint: "Diffusion (Σ) + T5-XXL + 4 通道 VAE（SDXL latent 空间）",
+    hint: "Diffusion (Σ) + T5-XXL + SDXL 对应的 VAE",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2269,8 +2262,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("vae", "VAE (SDXL latent)", "vae", "vae"),
     ],
     fixedArgs: {},
-    generationHint:
-      "T5 词表内嵌，无需外部 tokenizer。Σ 默认 VAE 缩放因子 0.13025，VAE 用 SDXL latent 空间那一份（不要混用 SD1.x 的 VAE）。宽高按 16 对齐，推荐 1024×1024 / 20 步 / CFG 4.5。上游尚未应用部分 checkpoint 的 resolution / aspect-ratio 微条件，输出与参考实现可能有差异。",
+    generationHint: "请搭配 SDXL 对应的 VAE（勿混用 SD1.x 的 VAE），无需外部 tokenizer。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -2284,7 +2276,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   },
   "pixart-alpha": {
     name: "PixArt-α",
-    hint: "Diffusion (α) + T5-XXL + 4 通道 VAE（SD1.x latent 空间）",
+    hint: "Diffusion (α) + T5-XXL + SD1.x 对应的 VAE",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -2293,7 +2285,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     ],
     fixedArgs: {},
     generationHint:
-      'T5 词表内嵌，无需外部 tokenizer。α 的 VAE 用 SD1.x latent 空间那一份；带分辨率微条件权重的 checkpoint 会自动使用 0.18215。α 512 与 Σ 的权重布局相同、上游无法自动区分，需要在「附加启动参数」里显式覆盖（整段用引号包住）：--model-args "pixart_vae_scale_factor=0.18215"，512 训练分辨率再补 pixart_pos_embed_base_size=32,pixart_interpolation_scale=1（放在同一个 --model-args 的值里，用逗号分隔）。宽高按 16 对齐，1024 checkpoint 推荐 1024×1024 / 20 步 / CFG 4.5。',
+      '请搭配 SD1.x 对应的 VAE，无需外部 tokenizer。使用 α-512 权重时，请在附加启动参数中添加 --model-args "pixart_vae_scale_factor=0.18215,pixart_pos_embed_base_size=32,pixart_interpolation_scale=1"。',
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -2319,7 +2311,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     generationHint:
-      "当前仅支持文生图：参考图会被内核拒绝，负向提示词也不参与编码（上游用全零 uncond）。文本编码器必须用配套的 Ling-mini-2.0 BF16 完整权重（含 connector 与条件投影），INT8 / W4A8 版本会被上游拒绝；VAE 必须用 Ming 专用权重，不能换用 Wan 的。支持 RGBA 输出，另存为 PNG / WebP 才保留 alpha。宽高按 16 对齐，推荐 1024×1024 / 12 步 / Euler / CFG 1；flow shift 由分辨率自动决定，不要手工叠加其他家族的固定值。",
+      "仅支持文生图，负向提示词不生效；需使用 Ling-mini-2.0 BF16 完整编码器与 Ming 专用 VAE。导出透明背景请选择 PNG 或 WebP。",
     // 协议层的图片 features 是通用的（对所有模型都报 true），而 Ming 的
     // 实现明确拒绝参考图，必须按家族关闭并在提交前过滤旧图。
     disabledFeatures: ["ref_images"],
@@ -2380,37 +2372,37 @@ const FAKE_VAE_FAMILIES = [
 ];
 
 const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
-  { hint: "taesd（SD 1.x / 2.x latent）", families: ["sd"] },
+  { hint: "taesd（SD 1.x / 2.x）", families: ["sd"] },
   {
-    hint: "taesdxl（SDXL latent；SDXS 的 TAE 内置于主模型，无需另选）",
+    hint: "taesdxl（SDXS 已内置，无需另选）",
     families: ["sdxl", "distilled-sd"],
   },
   {
-    hint: "taesdxl（PixArt-Σ 的文生图 latent 与 SDXL 同空间）",
+    hint: "taesdxl（与 SDXL 同空间）",
     families: ["pixart-sigma"],
   },
   {
-    hint: "taesd（PixArt-α 的文生图 latent 与 SD 1.x 同空间）",
+    hint: "taesd（与 SD 1.x 同空间）",
     families: ["pixart-alpha"],
   },
   {
     // Ming 复用 Wan 系 VAE 架构但缩放因子与通道数自定义；上游没有为它
     // 记录 TAE 组合，别让默认文案暗示存在现成权重。
-    hint: "Ming-Image 使用自己的 VAE；TAE 兼容性未经上游确认，显存不足时优先降低分辨率或步数",
+    hint: "使用自己的 VAE，暂无兼容 TAE；显存紧张时建议降低分辨率",
     families: ["ming-image"],
   },
-  { hint: "taesd3（16ch latent）", families: ["sd3"] },
+  { hint: "taesd3", families: ["sd3"] },
   {
-    hint: "taef1（Flux latent，16ch）",
+    hint: "taef1",
     families: ["flux", "kontext", "chroma", "ovis", "zimage", "zimage-turbo"],
   },
   {
     // PiD 的 latent 布局随 --vae-format 变，TAE 也要跟着换。
-    hint: "按 --vae-format 选对应 latent 的 TAE：flux→taef1、sd3→taesd3、wan→taew2_1",
+    hint: "按 --vae-format 选择对应 TAE（flux 用 taef1，sd3 用 taesd3，wan 用 taew2_1）",
     families: ["pid"],
   },
   {
-    hint: "Flux.2 的 TAE（32ch latent）",
+    hint: "Flux.2 专用 TAE",
     families: [
       "flux2",
       "flux2-klein",
@@ -2428,7 +2420,7 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
     ],
   },
   {
-    hint: "TAEHV：taew2_1（Wan2.1 / Wan2.2-A14B / Qwen-Image，见上游 docs/taesd.md）",
+    hint: "taew2_1（Wan2.1 / Qwen-Image 通用）",
     families: [
       "wan-t2v",
       "wan-i2v",
@@ -2443,13 +2435,13 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
     ],
   },
   {
-    hint: "TAEHV：taew2_2（Wan2.2-TI2V-5B 专用，见上游 docs/taesd.md）",
+    hint: "taew2_2（Wan2.2 TI2V 5B 专用）",
     families: ["wan-ti2v"],
   },
-  { hint: "HunyuanVideo 的视频 TAE（32ch latent）", families: ["hunyuan-video"] },
-  { hint: "LTX-AV 的视频 TAE（128ch latent）", families: ["ltx", "ltx25"] },
+  { hint: "HunyuanVideo 专用 TAE", families: ["hunyuan-video"] },
+  { hint: "LTX-AV 专用 TAE", families: ["ltx", "ltx25"] },
   {
-    hint: "taeh3（MiniMax-H3 视频 TAE，24ch latent；上游 #1874 起支持）",
+    hint: "taeh3（MiniMax-H3 视频专用）",
     families: [
       "minimax-h3-fl2va",
       "minimax-h3-ref2va",
@@ -2461,22 +2453,22 @@ const TAE_WEIGHT_GROUPS: { hint: string; families: string[] }[] = [
   {
     // H3-Image 用专用图像 VAE，上游没有为它记录 TAE 组合；视频 taeh3
     // 是否兼容图像 latent 未经确认，别让默认文案暗示存在现成权重。
-    hint: "MiniMax-H3-Image 使用专用图像 VAE；TAE 兼容性未经上游确认，显存不足时优先降低分辨率或启用 VAE 分块",
+    hint: "暂无已确认兼容的 TAE 权重，显存紧张时建议启用 VAE 分块",
     families: ["minimax-h3-image"],
   },
   {
-    hint: "P-H3-Image 使用单帧 VAE；TAE 兼容性未经上游确认，显存不足时优先降低分辨率（上游默认 2912² 极重）",
+    hint: "暂无已确认兼容的 TAE 权重，显存紧张时建议降低分辨率",
     families: ["p-h3-image"],
   },
   {
     // Qwen Image 2.1 用专门的 TAEQI2.1（64ch latent、16x 空间缩放、支持
     // RGBA），旧 Qwen Image 的 taew2_1 不能拿来做替代。
-    hint: "taeqi2_1（Qwen Image 2.1 专用 TAE，64ch latent）",
+    hint: "taeqi2_1（Qwen Image 2.1 专用）",
     families: ["qwen-image-2.1"],
   },
 ];
 
-const DEFAULT_TAE_HINT = "按主模型 latent 空间选择对应 TAE 权重，显存不足时可替代完整 VAE";
+const DEFAULT_TAE_HINT = "按主模型 latent 空间选择对应 TAE，可降低显存占用";
 
 const TAE_HINT_BY_FAMILY: Record<string, string> = {};
 for (const group of TAE_WEIGHT_GROUPS) {

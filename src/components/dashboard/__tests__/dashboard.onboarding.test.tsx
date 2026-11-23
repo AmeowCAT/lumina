@@ -1,6 +1,6 @@
 // 注意：本 import 必须排在 `../Dashboard` 之前——`vi.mock` 的工厂要读 kit 里的
 // `mocks`，而 Vite SSR 按 import 源码顺序求值，kit 必须先完成初始化。
-import { mocks, pickOption, resetDashboard, scanFor } from "./dashboardTestKit";
+import { mocks, pickOption, resetDashboard, scanFor, settings } from "./dashboardTestKit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../../store";
@@ -116,5 +116,17 @@ describe("Dashboard onboarding validation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "确认切换" }));
     await waitFor(() => expect(mocks.switchModel).toHaveBeenCalledWith("/models/main.safetensors"));
+  });
+
+  it("guides first-time users to choose a model folder when modelDir is empty", async () => {
+    mocks.loadSettings.mockResolvedValue({ ...settings, modelDir: "" });
+    mocks.pickFolder.mockResolvedValue("/new/models");
+    mocks.scanModels.mockResolvedValue(scanFor("hidream"));
+    useStore.setState({ settings: { ...settings, modelDir: "" } });
+    render(<Dashboard />);
+
+    expect(await screen.findByText("尚未选择模型目录")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /选择模型目录/ }));
+    await waitFor(() => expect(mocks.pickFolder).toHaveBeenCalledTimes(1));
   });
 });

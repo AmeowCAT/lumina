@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Panel } from "../../ui/Panel";
+import { InfoTip, Panel } from "../../ui/Panel";
 import { imagePreprocessDraftLines } from "../../../lib/utils";
 
 interface Props {
@@ -30,14 +30,24 @@ export const ImagePreprocessPanel = memo(function ImagePreprocessPanel({
   const text = imagePreprocessDraftLines(rules).join("\n");
 
   return (
-    <Panel title="图像输入几何（image_preprocess）" collapsed>
+    <Panel title="图像预处理" collapsed>
       <div className="form-row">
-        <label className="form-label" htmlFor="image-preprocess">
-          预处理规则
-        </label>
+        <div className="form-label-row">
+          <div className="flex items-center gap-1.5">
+            <label className="form-label" htmlFor="image-preprocess">
+              预处理规则
+            </label>
+            <span className="field-anchor">每行一条</span>
+          </div>
+          <InfoTip label="语法">
+            每行一条 key=value，须含 target（init / end / mask / control
+            {hasRefImages ? " / ref" : ""} / ip-adapter），可用
+            mode、filter、width、height、index。留空使用默认。
+          </InfoTip>
+        </div>
         <textarea
           id="image-preprocess"
-          className="input"
+          className="input font-mono text-[11.5px]"
           rows={3}
           value={text}
           spellCheck={false}
@@ -50,16 +60,6 @@ export const ImagePreprocessPanel = memo(function ImagePreprocessPanel({
           }
           placeholder={PLACEHOLDER}
         />
-        <div className="field-hint field-hint-flush mt-0.5">
-          每行一条 key=value 规则，作用于生成前的输入图像几何（不影响 VAE / CLIP / ControlNet
-          的内部预处理）。必需键 target： init · end · mask · control ·
-          {hasRefImages ? " ref ·" : ""} ip-adapter · id · control-frame；可用
-          mode=auto|none|stretch|crop|crop-resize|fit-pad、
-          filter=auto|nearest|nearest-exact|bilinear|bicubic|lanczos、
-          antialias、width/height、anchor、pad_color、canny=true。 ref / id / control-frame 支持
-          index=N（0 起）单条覆盖。 留空表示沿用各输入的默认几何。参考图是否在 VAE 编码前缩放由
-          --ref-image-args 单独控制。
-        </div>
       </div>
     </Panel>
   );

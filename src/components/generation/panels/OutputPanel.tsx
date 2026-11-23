@@ -47,14 +47,15 @@ export const OutputPanel = memo(function OutputPanel({
           />
           {/* 审查 30-api §2.10：img_gen 恒发 embed_image_metadata=true，用户无法
               关闭——分享图片时提示词与全部参数都会跟着走。 */}
-          <Toggle
-            label="写入生成参数元数据"
-            checked={embedMetadata !== false}
-            onChange={(v) => onUpdate("embed_image_metadata", v)}
-          />
-          <div className="field-hint field-hint-flush">
-            关闭后图片里不再嵌入提示词/种子/参数，「从历史图恢复参数」会不可用；
-            分享原图前建议关闭。
+          <div className="form-section">
+            <Toggle
+              label="写入生成参数元数据"
+              sublabel={embedMetadata === false ? "已关闭" : undefined}
+              checked={embedMetadata !== false}
+              onChange={(v) => onUpdate("embed_image_metadata", v)}
+              hint="关闭后不保存提示词与参数，适合对外分享原图"
+              hintTone={embedMetadata === false ? "warn" : "default"}
+            />
           </div>
         </>
       )}

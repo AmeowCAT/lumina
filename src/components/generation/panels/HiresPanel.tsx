@@ -26,8 +26,8 @@ export const HiresPanel = memo(function HiresPanel({ hires, upscalers, onUpdate 
         onChange={(v) => onUpdate("hires", { ...hires, enabled: v })}
       />
       {hires?.enabled && (
-        <>
-          <div className="form-row mt-2">
+        <div className="form-section">
+          <div className="form-row">
             <label className="form-label" htmlFor="hires-upscaler">
               放大器
             </label>
@@ -69,11 +69,8 @@ export const HiresPanel = memo(function HiresPanel({ hires, upscalers, onUpdate 
             min={0}
             max={4096}
             step={64}
-            hint={
-              hires.target_width
-                ? undefined
-                : "宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）"
-            }
+            sublabel={hires.target_width ? undefined : "0 = 按缩放"}
+            hint={hires.target_width ? undefined : "均为 0 时按缩放比例计算，仅填一边则生成正方形"}
           />
           <Slider
             label="目标高度"
@@ -82,11 +79,8 @@ export const HiresPanel = memo(function HiresPanel({ hires, upscalers, onUpdate 
             min={0}
             max={4096}
             step={64}
-            hint={
-              hires.target_height
-                ? undefined
-                : "宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）"
-            }
+            sublabel={hires.target_height ? undefined : "0 = 按缩放"}
+            hint={hires.target_height ? undefined : "均为 0 时按缩放比例计算，仅填一边则生成正方形"}
           />
           <Slider
             label="放大分块"
@@ -95,9 +89,9 @@ export const HiresPanel = memo(function HiresPanel({ hires, upscalers, onUpdate 
             min={32}
             max={1024}
             step={32}
-            hint="模型放大器的分块尺寸；显存不足时调小"
+            hint="显存不足时调小"
           />
-        </>
+        </div>
       )}
     </Panel>
   );

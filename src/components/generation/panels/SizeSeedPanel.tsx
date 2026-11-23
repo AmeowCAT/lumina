@@ -95,13 +95,15 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
     <Panel title="尺寸与种子" forceOpen={forceOpen}>
       {fixedSize ? (
         <div className="form-row">
-          <div className="form-label">尺寸</div>
-          <div className="size-locked" data-testid="size-locked">
-            {fixedSize.width} × {fixedSize.height}
+          <div className="form-label-row">
+            <div className="form-label">尺寸</div>
+            <span className="field-anchor">固定输出</span>
           </div>
-          <div className="field-hint field-hint-flush mt-0.5">
-            该模型由内核强制 {fixedSize.width}×{fixedSize.height}（上游
-            #2189），改尺寸不会生效；需要更大输出请用二次放大。
+          <div
+            className="size-locked inline-flex items-center rounded-sm border border-line bg-well px-2.5 py-1"
+            data-testid="size-locked"
+          >
+            {fixedSize.width} × {fixedSize.height}
           </div>
         </div>
       ) : (
@@ -113,6 +115,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
                 <div className="size-group-btns">
                   {grp.sizes.map(([l, w, h]) => (
                     <button
+                      type="button"
                       key={l}
                       className={cn("size-preset", width === w && height === h && "active")}
                       aria-pressed={width === w && height === h}
@@ -129,52 +132,51 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
               </div>
             ))}
           </div>
-          <div className="form-row">
-            <label className="form-label" htmlFor="generation-width">
-              宽度
-            </label>
-            <NumberInput
-              id="generation-width"
-              value={width}
-              onChange={(value) => {
-                onUpdate("width", value);
-                onSizeBaseReset?.(value, height);
-              }}
-              min={limits?.min_width || 64}
-              max={limits?.max_width || 4096}
-              step={sizeStep}
-            />
+          <div className="form-grid">
+            <div className="form-row">
+              <label className="form-label" htmlFor="generation-width">
+                宽度
+              </label>
+              <NumberInput
+                id="generation-width"
+                value={width}
+                onChange={(value) => {
+                  onUpdate("width", value);
+                  onSizeBaseReset?.(value, height);
+                }}
+                min={limits?.min_width || 64}
+                max={limits?.max_width || 4096}
+                step={sizeStep}
+              />
+            </div>
+            <div className="form-row">
+              <label className="form-label" htmlFor="generation-height">
+                高度
+              </label>
+              <NumberInput
+                id="generation-height"
+                value={height}
+                onChange={(value) => {
+                  onUpdate("height", value);
+                  onSizeBaseReset?.(width, value);
+                }}
+                min={limits?.min_height || 64}
+                max={limits?.max_height || 4096}
+                step={sizeStep}
+              />
+            </div>
           </div>
-          <div className="form-row">
-            <label className="form-label" htmlFor="generation-height">
-              高度
-            </label>
-            <NumberInput
-              id="generation-height"
-              value={height}
-              onChange={(value) => {
-                onUpdate("height", value);
-                onSizeBaseReset?.(width, value);
-              }}
-              min={limits?.min_height || 64}
-              max={limits?.max_height || 4096}
-              step={sizeStep}
-            />
-            {spatialMultiple && sizeWillChange && (
-              <div className="field-hint field-hint-flush mt-0.5">
-                实际生成 {alignedWidth}×{alignedHeight}（该模型按 {spatialMultiple} 向上对齐）
-              </div>
-            )}
-          </div>
+          {spatialMultiple && sizeWillChange && (
+            <div className="field-hint field-hint-flush mb-3.5">
+              实际输出 {alignedWidth}×{alignedHeight}（按 {spatialMultiple} 对齐）
+            </div>
+          )}
         </>
       )}
       {!fixedSize && (
         <div className="form-row">
           <label className="form-label" htmlFor="generation-size-step">
             像素步进
-            <span className="form-sublabel">
-              宽 / 高滑杆每跳的像素数，默认 1；填 32 则每次加减 32
-            </span>
           </label>
           <NumberInput
             id="generation-size-step"
@@ -195,10 +197,9 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
           min={0}
           max={2}
           step={0.05}
-          hint="相对基准尺寸（初始图片/上次设定）等比缩放，1 为不变"
         />
       )}
-      <div className="form-row mt-2">
+      <div className="form-row form-section">
         <label className="form-label" htmlFor="generation-seed">
           种子
         </label>
@@ -212,6 +213,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             placeholder="随机"
           />
           <button
+            type="button"
             className={cn("seed-btn", seedRandom && "active")}
             title="随机种子"
             aria-label="切换每次生成使用随机种子"
@@ -232,10 +234,13 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
         />
       )}
       {mode === "img_gen" && family === "qwen-image-layered" && (
-        <div className="form-row mt-2">
-          <label className="form-label" htmlFor="qwen-image-layers">
-            分层数量
-          </label>
+        <div className="form-row">
+          <div className="form-label-row">
+            <label className="form-label" htmlFor="qwen-image-layers">
+              分层数量
+            </label>
+            <span className="field-anchor">输出 N+1</span>
+          </div>
           <NumberInput
             id="qwen-image-layers"
             value={qwenLayers ?? 3}
@@ -244,7 +249,6 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             step={1}
             className="w-20"
           />
-          <div className="field-hint field-hint-flush mt-0.5">最终输出数量为分层数量 + 1</div>
         </div>
       )}
       {mode === "vid_gen" && (
@@ -289,12 +293,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             onChange={(v) => onUpdate("fps", v)}
             min={1}
             max={60}
-            hint={
-              // 引擎对 MiniMax-H3 / HyperFlow H3 Flash 强制 24 fps
-              // （src/stable-diffusion.cpp GenerationRequest），其他取值会被
-              // 静默覆盖，提前说明。
-              isH3VideoFamily(family) ? "该模型固定 24 fps，其他值会被引擎覆盖" : undefined
-            }
+            sublabel={isH3VideoFamily(family) ? "固定 24 fps" : undefined}
           />
         </>
       )}

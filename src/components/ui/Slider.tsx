@@ -1,6 +1,7 @@
 import { type ReactNode, useId } from "react";
 import { Slider as RxSlider } from "radix-ui";
 import { formatNumberForInput } from "../../lib/utils";
+import { InfoTip } from "./InfoTip";
 import { cn } from "./cn";
 
 /**
@@ -28,6 +29,10 @@ export function Slider({
   max,
   step,
   hint,
+  hintTone,
+  hintLabel,
+  sublabel,
+  disabled,
 }: {
   label?: ReactNode;
   value: number | undefined;
@@ -35,7 +40,13 @@ export function Slider({
   min: number;
   max: number;
   step?: number;
+  /** 收纳于 ⓘ InfoTip 浮层中的完整参数说明 */
   hint?: ReactNode;
+  hintTone?: "default" | "accent" | "warn";
+  hintLabel?: ReactNode;
+  /** 可选极短内联锚点（如 "0 = 自动"） */
+  sublabel?: ReactNode;
+  disabled?: boolean;
 }) {
   const labelId = useId();
   const hintId = useId();
@@ -45,16 +56,17 @@ export function Slider({
   return (
     <div className="form-row">
       {label ? (
-        <span id={labelId} className="form-label">
-          {label}
+        <span className="form-label">
+          <span id={labelId}>{label}</span>
+          {sublabel ? <span className="field-anchor">{sublabel}</span> : null}
           {hint ? (
-            <span id={hintId} className="form-sublabel">
+            <InfoTip id={hintId} tone={hintTone} label={hintLabel}>
               {hint}
-            </span>
+            </InfoTip>
           ) : null}
         </span>
       ) : null}
-      <div className={cn("slider-row", !isSet && "slider-unset")}>
+      <div className={cn("slider-row", !isSet && "slider-unset", disabled && "opacity-50")}>
         <RxSlider.Root
           className="slider-root"
           value={[numVal]}
@@ -62,6 +74,7 @@ export function Slider({
           min={min}
           max={max}
           step={step || 1}
+          disabled={disabled}
         >
           <RxSlider.Track className="slider-track">
             <RxSlider.Range className="slider-range" />
@@ -74,7 +87,7 @@ export function Slider({
             aria-valuetext={isSet ? String(d) : "未设置"}
           />
         </RxSlider.Root>
-        <span className="slider-val">{d}</span>
+        <span className="slider-val font-variant-tnum">{d}</span>
       </div>
     </div>
   );

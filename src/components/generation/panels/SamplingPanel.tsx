@@ -119,9 +119,11 @@ export const SamplingPanel = memo(function SamplingPanel({
         />
       </div>
       {(staleSampler || staleScheduler) && (
-        <div className="field-hint field-hint-flush" role="alert">
-          当前内核的采样器/调度器列表里没有已保存的值：内核会静默忽略未知枚举，
-          界面上显示的并不是实际生效的采样方式。建议改选「默认（自动）」。
+        <div
+          className="mb-3.5 rounded-md border border-warn/30 bg-warn-dim px-2.5 py-2 text-[11px] leading-relaxed text-warn"
+          role="alert"
+        >
+          当前内核不支持已选采样器或调度器，将自动回落默认，建议改选「默认（自动）」。
         </div>
       )}
       {sampleMethod === "lms" && (
@@ -133,7 +135,7 @@ export const SamplingPanel = memo(function SamplingPanel({
             min={1}
             max={12}
             step={1}
-            hint="线性多步的历史点数，上游默认 4；1 等同 Euler，越高越锐利但需要更多步数（>12 可能出 NaN）"
+            hint="默认 4，越高细节越锐利"
           />
           <Slider
             label="LMS 历史偏移"
@@ -142,14 +144,10 @@ export const SamplingPanel = memo(function SamplingPanel({
             min={0}
             max={4}
             step={1}
-            hint="上游默认 1（少步数更稳）；0 为原始 k-diffusion 历史顺序"
           />
           <div className="form-row">
             <label className="form-label" htmlFor="lms-divisions">
               LMS 积分分段
-              <span className="form-sublabel">
-                系数积分的分段数，上游默认 1000；越大越精确也越慢
-              </span>
             </label>
             <NumberInput
               id="lms-divisions"
@@ -171,7 +169,6 @@ export const SamplingPanel = memo(function SamplingPanel({
             min={0.05}
             max={2}
             step={0.05}
-            hint="调度器曲线形状参数（>0），上游默认 0.6"
           />
           <Slider
             label="Beta β"
@@ -180,7 +177,6 @@ export const SamplingPanel = memo(function SamplingPanel({
             min={0.05}
             max={2}
             step={0.05}
-            hint="调度器曲线形状参数（>0），上游默认 0.6"
           />
         </>
       )}
@@ -207,15 +203,13 @@ export const SamplingPanel = memo(function SamplingPanel({
           min={0}
           max={30}
           step={0.5}
-          hint="蒸馏模型"
         />
       )}
       {previewChoices.length > 0 && (
-        <>
+        <div className="form-section">
           <div className="form-row">
             <label className="form-label" htmlFor="preview-mode">
               生成预览
-              <span className="form-sublabel">显示生成中的中间结果，可能增加耗时</span>
             </label>
             <Select
               id="preview-mode"
@@ -226,10 +220,12 @@ export const SamplingPanel = memo(function SamplingPanel({
           </div>
           {activePreviewMode !== "none" && (
             <div className="form-row">
-              <label className="form-label" htmlFor="preview-interval">
-                预览间隔
-                <span className="form-sublabel">每 N 步更新一次</span>
-              </label>
+              <div className="form-label-row">
+                <label className="form-label" htmlFor="preview-interval">
+                  预览间隔
+                </label>
+                <span className="field-anchor">每 N 步</span>
+              </div>
               <NumberInput
                 id="preview-interval"
                 value={previewInterval ?? 1}
@@ -240,9 +236,9 @@ export const SamplingPanel = memo(function SamplingPanel({
               />
             </div>
           )}
-        </>
+        </div>
       )}
-      <button className="btn btn-sm w-full" onClick={onReset}>
+      <button type="button" className="btn btn-sm mt-3.5 w-full" onClick={onReset}>
         {IC.refresh}
         <span>恢复当前模型推荐值</span>
       </button>

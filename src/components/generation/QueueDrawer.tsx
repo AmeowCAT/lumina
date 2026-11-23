@@ -42,7 +42,7 @@ export function QueueDrawer({
           initial={{ x: "-100%" }}
           animate={{ x: 0 }}
           exit={{ x: "-100%" }}
-          transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
         >
           {children}
         </motion.div>,

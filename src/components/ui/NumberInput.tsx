@@ -82,7 +82,7 @@ export function NumberInput({
           event.currentTarget.blur();
         }
         if (event.key === "Escape") {
-          setDraft(String(value));
+          setDraft(formatNumberForInput(value));
           setInvalid(false);
           event.currentTarget.blur();
         }

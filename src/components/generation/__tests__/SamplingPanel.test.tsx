@@ -38,7 +38,7 @@ describe("SamplingPanel option fallbacks", () => {
     render(<SamplingPanel {...baseProps} scheduler="discrete" />);
 
     expect(screen.getByLabelText("调度器")).toHaveTextContent("当前内核不支持");
-    expect(screen.getByRole("alert")).toHaveTextContent("静默忽略");
+    expect(screen.getByRole("alert")).toHaveTextContent("回落默认");
   });
 });
 

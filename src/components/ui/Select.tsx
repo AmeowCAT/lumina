@@ -89,7 +89,9 @@ export function Select({
                 placeholder="搜索…"
                 aria-label="搜索选项"
                 onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key !== "Escape") e.stopPropagation();
+                }}
               />
             </div>
           )}
@@ -106,7 +108,7 @@ export function Select({
                 >
                   <RxSelect.ItemText className="select-item-text">{o.label}</RxSelect.ItemText>
                   <RxSelect.ItemIndicator className="select-item-indicator">
-                    <Check size={12} strokeWidth={2.4} aria-hidden="true" />
+                    <Check size={12} strokeWidth={2} aria-hidden="true" />
                   </RxSelect.ItemIndicator>
                 </RxSelect.Item>
               ))

@@ -18,8 +18,6 @@ describe("HiresPanel", () => {
     );
 
     expect(screen.getByRole("slider", { name: /放大分块/ })).toHaveAttribute("aria-valuemin", "32");
-    expect(
-      screen.getByText("宽高均为 0：按缩放换算；仅一边为 0：补为另一边（正方形）"),
-    ).toBeTruthy();
+    expect(screen.getByText("均为 0 时按缩放比例计算，仅填一边则生成正方形")).toBeTruthy();
   });
 });
