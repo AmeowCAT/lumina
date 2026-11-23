@@ -169,6 +169,8 @@ export interface Features {
   cancel_generating?: boolean;
   /** 上游 #2093 起支持生成过程预览（请求体 `preview` / `preview_interval`）。 */
   preview?: boolean;
+  /** 上游 #2341：提示词内联图片（`prompt_images` + `<image:ID>`）；仅部分家族禁用（如 SenseNova U1.5）。 */
+  prompt_images?: boolean;
 }
 
 export interface SlgGuidance {
@@ -435,6 +437,12 @@ export interface UpscalerInfo {
 
 export interface Capabilities {
   model: { name: string; stem: string; path: string };
+  /**
+   * 服务端按当前模型/recipe 汇总的生成特性开关（上游 #2176 引入，#2396 起
+   * 强制将 DGL 专属项 `slg` / `shifted_timestep` / `ip_adapter` 置为 `false`）。
+   * 旧内核缺该键。
+   */
+  generation_features?: Record<string, boolean>;
   /** 上游两种模式都不支持时返回 ""（routes_sdcpp.cpp），不能假定必为合法模式 */
   current_mode: GenMode | "";
   supported_modes: GenMode[];
@@ -493,19 +501,22 @@ export interface UpscaleResponse {
   width?: number;
   height?: number;
   output_format?: string;
-  /** 多次 repeats 合并后的放大参数快照（上游 #2206）；旧内核缺该键。 */
-  generation_info?: Record<string, unknown>;
+  /**
+   * 多次 repeats 合并后的放大参数快照（上游 #2206 为 JSON 对象；#2396 起为
+   * UTF-8 DGL 源码字符串）；旧内核缺该键。
+   */
+  generation_info?: Record<string, unknown> | string;
 }
 
 export interface JobImage {
   index?: number;
   b64_json: string;
   /**
-   * 该图的实际生成参数快照（上游 #2206，`sdcpp.generation/v1`）：含每张图
-   * 的**实际 seed**（十进制字符串），与 embed_image_metadata 开关无关。
-   * 旧内核缺该键。结构宽松处理，消费方只取已知键。
+   * 该图的实际生成参数快照：上游 #2206–32d516c 为 `sdcpp.generation/v1` JSON
+   * 对象，#2396 起改为 UTF-8 DGL 源码字符串（仍含每张图的实际 `seed`），与
+   * `embed_image_metadata` 开关无关。旧内核缺该键。
    */
-  generation_info?: Record<string, unknown>;
+  generation_info?: Record<string, unknown> | string;
 }
 
 export interface JobResult {
@@ -515,8 +526,11 @@ export interface JobResult {
   frame_count?: number;
   b64_json?: string;
   images?: JobImage[];
-  /** 视频结果的请求级参数快照（上游 #2206）；旧内核缺该键。 */
-  generation_info?: Record<string, unknown>;
+  /**
+   * 视频结果的请求级参数快照（上游 #2206 为 JSON 对象，#2396 起为 DGL 源码
+   * 字符串）；旧内核缺该键。
+   */
+  generation_info?: Record<string, unknown> | string;
 }
 
 export type JobStatus = "queued" | "generating" | "completed" | "failed" | "cancelled" | "unknown";
@@ -552,6 +566,11 @@ export interface GenImages {
   refAudios?: string[];
   /** 与 refVideos 按序配对的音轨（base64 WAV dataURL），数量 ≤ 视频数。 */
   refVideoAudios?: string[];
+  /**
+   * 提示词内联图片映射（上游 #2341，`prompt_images`）：`ID → dataURL`，配合
+   * 正/反向提示词里的 `<image:ID>` 标记使用（Qwen2.5-VL / Qwen3-VL / Qwen3.5）。
+   */
+  promptImages?: Record<string, string>;
 }
 
 export interface JobConfig {

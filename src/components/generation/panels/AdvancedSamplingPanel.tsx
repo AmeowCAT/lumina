@@ -8,6 +8,7 @@ import type {
 } from "../../../types";
 import { CACHE_MODES } from "../../../config/families";
 import {
+  cacheModeGroup,
   cacheOptionFields,
   clearLegacyLatentTiling,
   formatLayerList,
@@ -54,6 +55,12 @@ interface Props {
   scmMask?: string;
   clipSkip: number | undefined;
   extraSampleArgs: string | undefined;
+  /** 内核是否支持原生 SLG（上游 #2396+ 已迁入 DGL 脚本，发送即 400）。 */
+  supportsSlg?: boolean;
+  /** 内核是否支持原生 shifted_timestep（上游 #2396+ 已迁入 DGL 脚本，发送即 400）。 */
+  supportsShiftedTimestep?: boolean;
+  /** 所选内核是否为上游 #2396+ DGL 架构（用于隐藏已失效的块级缓存 Fn/Bn 控件）。 */
+  dglBackend?: boolean;
   onUpdate: (path: string, v: unknown) => void;
 }
 
@@ -73,6 +80,9 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   scmMask,
   clipSkip,
   extraSampleArgs,
+  supportsSlg = true,
+  supportsShiftedTimestep = true,
+  dglBackend = false,
   onUpdate,
 }: Props) {
   const tilingEnabled = !!vaeTilingParams?.enabled;
@@ -112,7 +122,7 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
   // 语义来源 docs/audit/95-f18-semantics.md：cache_option 是 key=value 串且
   // 同名键跨模式含义不同、scm_mask 非法会让内核 terminate、SLG 的 layers
   // 空数组等于关闭。这里只负责渲染与「按模式裁剪」，拼串在 utils 里做。
-  const cacheFields = cacheOptionFields(cacheMode);
+  const cacheFields = cacheOptionFields(cacheMode, { dglBackend });
   const cacheDraft = cacheOptions || {};
   const unknownCachePairs = parseCacheOption(cacheOption).unknownPairs;
   const writeCacheOption = (key: keyof CacheOptionDraft, value: number | boolean) =>
@@ -162,92 +172,105 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
         hint="Flow 类模型的时间步偏移"
       />
       {/* 审查 50-ux F-18：`shifted_timestep` 一直会随请求体发送（utils.ts），
-          但界面没有入口——Flow 类模型微调时间步的第二个旋钮。0 表示用内核默认。 */}
-      <Slider
-        label="Shifted Timestep"
-        value={shiftedTimestep ?? 0}
-        onChange={(v) => onUpdate("sample_params.shifted_timestep", v)}
-        min={0}
-        max={1000}
-        step={10}
-        hint="时间步平移；0 = 用内核默认"
-      />
-      <Slider
-        label="SLG Scale"
-        value={slg?.scale ?? 0}
-        onChange={(v) => writeSlg({ scale: v })}
-        min={0}
-        max={10}
-        step={0.1}
-        hint="跳层引导，0 表示关闭"
-      />
-      {/* 审查 F-18：SLG 的另外三个上游参数此前没有入口。
-          layers 缺省 = 不下发（沿用内核 --skip-layers）；layer_start/end 是
-          **总步数的分数**，按 int(start*N) < step < int(end*N) 生效
-          （src/runtime/guidance.cpp:313-315），start>=end 时静默不生效。 */}
-      <div className="form-row">
-        <label className="form-label" htmlFor="slg-layer-start">
-          SLG 起始比例
-          <span className="form-sublabel">总步数分数，默认 0.01</span>
-        </label>
-        <NumberInput
-          id="slg-layer-start"
-          value={slg?.layer_start ?? 0.01}
-          onChange={(v) => writeSlg({ layer_start: v })}
+          但界面没有入口——Flow 类模型微调时间步的第二个旋钮。0 表示用内核默认。
+          上游 #2396+（DGL 架构）原生接口拒绝 shifted_timestep 与 SLG，按内核能力隐藏。 */}
+      {supportsShiftedTimestep && (
+        <Slider
+          label="Shifted Timestep"
+          value={shiftedTimestep ?? 0}
+          onChange={(v) => onUpdate("sample_params.shifted_timestep", v)}
           min={0}
-          max={1}
-          step={0.01}
+          max={1000}
+          step={10}
+          hint="时间步平移；0 = 用内核默认"
         />
-      </div>
-      <div className="form-row">
-        <label className="form-label" htmlFor="slg-layer-end">
-          SLG 结束比例
-          <span className="form-sublabel">总步数分数，默认 0.2</span>
-        </label>
-        <NumberInput
-          id="slg-layer-end"
-          value={slg?.layer_end ?? 0.2}
-          onChange={(v) => writeSlg({ layer_end: v })}
-          min={0}
-          max={1}
-          step={0.01}
-        />
-      </div>
-      {slgWindowError && (
-        <div className="field-hint field-hint-flush" role="alert">
-          {slgWindowError}
-        </div>
       )}
-      <div className="form-row">
-        <label className="form-label" htmlFor="slg-layers">
-          跳层索引
-          <span className="form-sublabel">
-            逗号分隔整数，默认 7,8,9；留空则沿用内核 --skip-layers
-          </span>
-        </label>
-        <input
-          id="slg-layers"
-          className={cn("input", layersError && "invalid")}
-          type="text"
-          inputMode="numeric"
-          value={layersText}
-          spellCheck={false}
-          placeholder="7,8,9"
-          aria-invalid={layersError ? true : undefined}
-          aria-describedby={layersError ? "slg-layers-error" : undefined}
-          onChange={(e) => {
-            const text = e.target.value;
-            setLayersText(text);
-            const parsed = parseLayerList(text);
-            if (!parsed.ok) return; // 非法：保留文本，只提示，不写参数
-            layersCommitted.current = formatLayerList(parsed.layers);
-            writeSlg({ layers: parsed.layers });
-          }}
-        />
-      </div>
-      {layersError && (
-        <div id="slg-layers-error" className="field-hint field-hint-flush" role="alert">
-          {layersError}
+      {supportsSlg && (
+        <>
+          <Slider
+            label="SLG Scale"
+            value={slg?.scale ?? 0}
+            onChange={(v) => writeSlg({ scale: v })}
+            min={0}
+            max={10}
+            step={0.1}
+            hint="跳层引导，0 表示关闭"
+          />
+          {/* 审查 F-18：SLG 的另外三个上游参数此前没有入口。
+              layers 缺省 = 不下发（沿用内核 --skip-layers）；layer_start/end 是
+              **总步数的分数**，按 int(start*N) < step < int(end*N) 生效
+              （src/runtime/guidance.cpp:313-315），start>=end 时静默不生效。 */}
+          <div className="form-row">
+            <label className="form-label" htmlFor="slg-layer-start">
+              SLG 起始比例
+              <span className="form-sublabel">总步数分数，默认 0.01</span>
+            </label>
+            <NumberInput
+              id="slg-layer-start"
+              value={slg?.layer_start ?? 0.01}
+              onChange={(v) => writeSlg({ layer_start: v })}
+              min={0}
+              max={1}
+              step={0.01}
+            />
+          </div>
+          <div className="form-row">
+            <label className="form-label" htmlFor="slg-layer-end">
+              SLG 结束比例
+              <span className="form-sublabel">总步数分数，默认 0.2</span>
+            </label>
+            <NumberInput
+              id="slg-layer-end"
+              value={slg?.layer_end ?? 0.2}
+              onChange={(v) => writeSlg({ layer_end: v })}
+              min={0}
+              max={1}
+              step={0.01}
+            />
+          </div>
+          {slgWindowError && (
+            <div className="field-hint field-hint-flush" role="alert">
+              {slgWindowError}
+            </div>
+          )}
+          <div className="form-row">
+            <label className="form-label" htmlFor="slg-layers">
+              跳层索引
+              <span className="form-sublabel">
+                逗号分隔整数，默认 7,8,9；留空则沿用内核 --skip-layers
+              </span>
+            </label>
+            <input
+              id="slg-layers"
+              className={cn("input", layersError && "invalid")}
+              type="text"
+              inputMode="numeric"
+              value={layersText}
+              spellCheck={false}
+              placeholder="7,8,9"
+              aria-invalid={layersError ? true : undefined}
+              aria-describedby={layersError ? "slg-layers-error" : undefined}
+              onChange={(e) => {
+                const text = e.target.value;
+                setLayersText(text);
+                const parsed = parseLayerList(text);
+                if (!parsed.ok) return; // 非法：保留文本，只提示，不写参数
+                layersCommitted.current = formatLayerList(parsed.layers);
+                writeSlg({ layers: parsed.layers });
+              }}
+            />
+          </div>
+          {layersError && (
+            <div id="slg-layers-error" className="field-hint field-hint-flush" role="alert">
+              {layersError}
+            </div>
+          )}
+        </>
+      )}
+      {(!supportsSlg || !supportsShiftedTimestep) && (
+        <div className="field-hint field-hint-flush">
+          当前内核（DGL 架构）已将 SLG、Shifted Timestep、图像预处理与参考图参数覆盖迁入 DGL
+          脚本，原生接口不再接受这些字段。
         </div>
       )}
       {showVaeTiling && (
@@ -465,6 +488,9 @@ export const AdvancedSamplingPanel = memo(function AdvancedSamplingPanel({
           <div className="field-hint field-hint-flush">
             缓存微调（cache_option）：只发送改动过的键，未改动的沿用内核默认。
             同名键在不同缓存模式下对应不同内核字段，切换模式会清掉不适用的项。
+            {dglBackend && cacheModeGroup(cacheMode) === "block"
+              ? "当前内核（DGL 架构）仅使用条件级缓存，Fn / Bn 块数参数已废弃并自动跳过。"
+              : ""}
           </div>
           {cacheFields.map((spec) => {
             const raw = cacheDraft[spec.key];

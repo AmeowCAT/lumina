@@ -9,7 +9,9 @@ import {
   controlTypeSupported,
   deepClone,
   deepMerge,
+  dglGenerationToGenParams,
   extractApiError,
+  extractPromptImageRefs,
   fmtSize,
   formatError,
   formatLayerList,
@@ -17,34 +19,48 @@ import {
   generationInfoSeed,
   hasLegacyLatentTiling,
   hasPixelTiling,
+  isDglBackend,
   jobElapsed,
   jobProgressSummary,
   legacyLatentTilingAxes,
   legacyTilingDroppedOnPixels,
   LINGBOT_PROMPT_TEMPLATE,
   matchAvailableLora,
+  MAX_PROMPT_IMAGES,
   modelFileOptionLabel,
+  neutralModeDefaults,
   normalizeSizeStep,
   normalizeScmMask,
   parseCacheOption,
+  parseDglVarBlock,
   parseLayerList,
   pixelTilingDroppedOnLatent,
   previewModesFromCapabilities,
   progressDetailLabel,
   progressStageLabel,
   resolveCacheOption,
+  resolveInitialParams,
   resolvePreviewMode,
+  resolveResetParams,
   resolveVaeTilingForProtocol,
   sanitizeCacheOptionsForMode,
   sdcppMetadataToGenParams,
   setStringArgValue,
   setTilingArgValue,
   stringArgValue,
+  stripNullish,
+  supportsFullHighNoiseSampling,
+  supportsImagePreprocess,
+  supportsIpAdapter,
+  supportsRefImageOverrides,
+  supportsShiftedTimestep,
+  supportsSlg,
   tilingArgValue,
   toEpochMs,
   trimJobsToBudget,
   vaeTilingProtocolFromCapabilities,
   validateLingbotPrompt,
+  validatePromptImages,
   validateScmMask,
   validateSlgWindow,
 } from "../utils";
@@ -2169,5 +2185,473 @@ describe("formatNumberForInput", () => {
     for (const value of [NaN, Infinity, -Infinity]) {
       expect(formatNumberForInput(value)).toBe("");
     }
+  });
+});
+
+// 上游 #2365/#2396：defaults_by_mode 里的 std::optional<T> 输出 JSON null；
+// stripNullish / resolveInitialParams / resolveResetParams 必须保住有效默认值。
+describe("null-safe defaults resolution (#2365 / #2396)", () => {
+  it("recursively strips null and undefined while preserving arrays and falsy values", () => {
+    expect(
+      stripNullish({
+        width: null,
+        height: 1024,
+        seed: 0,
+        enabled: false,
+        emptyNested: { a: null, b: undefined },
+        sample_params: {
+          sample_steps: null,
+          sample_method: "euler",
+          custom_sigmas: [1.0, 0.0],
+          guidance: { txt_cfg: null, img_cfg: 1.5 },
+        },
+      }),
+    ).toEqual({
+      height: 1024,
+      seed: 0,
+      enabled: false,
+      sample_params: {
+        sample_method: "euler",
+        custom_sigmas: [1.0, 0.0],
+        guidance: { img_cfg: 1.5 },
+      },
+    });
+  });
+
+  it("never lets null server defaults clobber family or neutral defaults", () => {
+    const nullCapsDefaults = {
+      width: null,
+      height: null,
+      seed: -1,
+      sample_params: {
+        sample_steps: null,
+        sample_method: null,
+        guidance: { txt_cfg: null },
+      },
+    } as unknown as Partial<GenParams>;
+    const familyRec = {
+      width: 1024,
+      height: 1024,
+      sample_params: { sample_steps: 28, sample_method: "euler", guidance: { txt_cfg: 1.0 } },
+    };
+
+    const initial = resolveInitialParams("img_gen", nullCapsDefaults, familyRec);
+    expect(initial.width).toBe(1024);
+    expect(initial.height).toBe(1024);
+    expect(initial.sample_params.sample_steps).toBe(28);
+    expect(initial.sample_params.guidance.txt_cfg).toBe(1.0);
+
+    // 服务端显式配置的非空默认值仍可覆盖家族推荐；持久化配置优先级最高。
+    const withServerOverride = resolveInitialParams(
+      "img_gen",
+      { width: 768, height: null } as unknown as Partial<GenParams>,
+      familyRec,
+      { height: 512 },
+    );
+    expect(withServerOverride.width).toBe(768);
+    expect(withServerOverride.height).toBe(512);
+
+    // 显式重置时家族推荐优先于服务端通用默认，且保留服务端非空附加字段（如 output_format）。
+    const reset = resolveResetParams(
+      "img_gen",
+      { width: 512, height: null, output_format: "webp" } as unknown as Partial<GenParams>,
+      familyRec,
+    );
+    expect(reset.width).toBe(1024);
+    expect(reset.output_format).toBe("webp");
+
+    // 无家族预设且服务端全 null 时退回中性兜底。
+    const vidNeutral = resolveInitialParams("vid_gen", nullCapsDefaults, undefined);
+    expect(vidNeutral).toMatchObject(neutralModeDefaults("vid_gen"));
+  });
+});
+
+// 上游 #2396：DGL 内核检测、能力探测与请求体过滤。
+describe("DGL backend capability detection & request body filtering (#2396)", () => {
+  const baseCaps = {
+    model: { name: "m", stem: "m", path: "m" },
+    current_mode: "img_gen",
+    supported_modes: ["img_gen", "vid_gen"],
+    output_formats_by_mode: { img_gen: ["png"], vid_gen: ["webp"] },
+    features_by_mode: { img_gen: {}, vid_gen: {} },
+    limits: {},
+    samplers: ["euler"],
+    schedulers: ["discrete"],
+    loras: [],
+    upscalers: [],
+  } as unknown as Capabilities;
+
+  it("distinguishes DGL kernels from pre-DGL kernels across all four kernel eras", () => {
+    // 1. 远古内核（无 control_type / image_preprocess / generation_features）→ 非 DGL
+    expect(isDglBackend({ ...baseCaps, defaults_by_mode: { img_gen: {} as GenParams } })).toBe(
+      false,
+    );
+    // 2. #2028–32d516c 内核（含 image_preprocess / ref_image_args / control_type）→ 非 DGL
+    const preDgl32d516c = {
+      ...baseCaps,
+      defaults_by_mode: {
+        img_gen: {
+          control_type: "none",
+          image_preprocess: [],
+          ref_image_args: "",
+          increase_ref_index: false,
+        } as unknown as GenParams,
+      },
+    };
+    expect(isDglBackend(preDgl32d516c)).toBe(false);
+    expect(supportsSlg(preDgl32d516c)).toBe(true);
+    expect(supportsShiftedTimestep(preDgl32d516c)).toBe(true);
+    expect(supportsImagePreprocess(preDgl32d516c)).toBe(true);
+    expect(supportsRefImageOverrides(preDgl32d516c)).toBe(true);
+    expect(supportsIpAdapter(preDgl32d516c)).toBe(true);
+    expect(supportsFullHighNoiseSampling(preDgl32d516c)).toBe(true);
+
+    // 3. #2396+ DGL 内核（有 control_type 且无 pre-DGL 键；generation_features 全 false）→ DGL
+    const dglCaps = {
+      ...baseCaps,
+      generation_features: {
+        slg: false,
+        shifted_timestep: false,
+        ip_adapter: false,
+      },
+      defaults_by_mode: {
+        img_gen: {
+          control_type: "none",
+          vae_tiling_params: { enabled: false, tile_size_w: null, tile_size_h: null },
+        } as unknown as GenParams,
+      },
+      features_by_mode: {
+        img_gen: { prompt_images: true },
+        vid_gen: { high_noise_sample_params: false },
+      },
+    };
+    expect(isDglBackend(dglCaps)).toBe(true);
+    expect(supportsSlg(dglCaps)).toBe(false);
+    expect(supportsShiftedTimestep(dglCaps)).toBe(false);
+    expect(supportsImagePreprocess(dglCaps)).toBe(false);
+    expect(supportsRefImageOverrides(dglCaps)).toBe(false);
+    expect(supportsIpAdapter(dglCaps)).toBe(false);
+    expect(supportsFullHighNoiseSampling(dglCaps)).toBe(false);
+    // #2396+ tile_size_w 为 null 时仍须识别为像素协议。
+    expect(vaeTilingProtocolFromCapabilities(dglCaps)).toBe("pixels");
+  });
+
+  it("omits Fn/Bn from block cache fields and buildCacheOption on DGL kernels", () => {
+    expect(cacheOptionFields("dbcache", { dglBackend: false }).map((f) => f.key)).toContain("Fn");
+    expect(cacheOptionFields("dbcache", { dglBackend: true }).map((f) => f.key)).not.toContain(
+      "Fn",
+    );
+    expect(cacheOptionFields("dbcache", { dglBackend: true }).map((f) => f.key)).not.toContain(
+      "Bn",
+    );
+    expect(
+      buildCacheOption("dbcache", { threshold: 0.12, Fn: 8, Bn: 2, warmup: 4 }, "", {
+        dglBackend: true,
+      }),
+    ).toBe("threshold=0.12,warmup=4");
+    expect(
+      resolveCacheOption(
+        {
+          cache_mode: "dbcache",
+          cache_options: { threshold: 0.12, Fn: 8, Bn: 2, warmup: 4 },
+        },
+        { dglBackend: true },
+      ),
+    ).toBe("threshold=0.12,warmup=4");
+  });
+
+  it("strips all dgl_only_parameter fields and non-layered qwen_image_layers on DGL backend", () => {
+    const emptyImages: GenImages = {
+      initImage: null,
+      maskImage: null,
+      controlImage: null,
+      ipAdapterImage: null,
+      endImage: null,
+      refImages: [],
+      controlFrames: [],
+      promptImages: { ref1: "data:image/png;base64,QUJD" },
+    };
+    const imgParams: GenParams = {
+      prompt: "draw <image:ref1>",
+      width: 1024,
+      height: 1024,
+      seed: 42,
+      ip_adapter_strength: 0.5,
+      image_preprocess: ["target=ref,mode=none"],
+      ref_image_args: "ref_image_size=max",
+      increase_ref_index: true,
+      auto_resize_ref_image: false,
+      qwen_image_layers: 4,
+      cache_mode: "dbcache",
+      cache_options: { threshold: 0.15, Fn: 8, Bn: 1, warmup: 3 },
+      sample_params: {
+        sample_steps: 20,
+        shifted_timestep: 120,
+        guidance: {
+          txt_cfg: 5,
+          slg: { scale: 2.5, layers: [7, 8], layer_start: 0.01, layer_end: 0.2 },
+        },
+      },
+    };
+
+    const imgBody = buildRequestBody("img_gen", imgParams, emptyImages, {
+      dglBackend: true,
+      family: "flux",
+      supportsSlg: false,
+      supportsShiftedTimestep: false,
+      supportsImagePreprocess: false,
+      supportsRefImageOverrides: false,
+      supportsIpAdapter: false,
+      supportsFullHighNoise: false,
+    });
+    expect(imgBody).not.toHaveProperty("ip_adapter_strength");
+    expect(imgBody).not.toHaveProperty("image_preprocess");
+    expect(imgBody).not.toHaveProperty("ref_image_args");
+    expect(imgBody).not.toHaveProperty("increase_ref_index");
+    expect(imgBody).not.toHaveProperty("auto_resize_ref_image");
+    expect(imgBody).not.toHaveProperty("qwen_image_layers");
+    expect(imgBody.cache_option).toBe("threshold=0.15,warmup=3");
+    expect(imgBody.prompt_images).toEqual({ ref1: "data:image/png;base64,QUJD" });
+    const sp = imgBody.sample_params as Record<string, unknown>;
+    expect(sp).not.toHaveProperty("shifted_timestep");
+    expect((sp.guidance as Record<string, unknown>) ?? {}).not.toHaveProperty("slg");
+
+    // qwen-image-layered 家族下保留 qwen_image_layers。
+    const layeredBody = buildRequestBody("img_gen", imgParams, emptyImages, {
+      dglBackend: true,
+      family: "qwen-image-layered",
+      supportsSlg: false,
+      supportsShiftedTimestep: false,
+      supportsImagePreprocess: false,
+      supportsRefImageOverrides: false,
+      supportsIpAdapter: false,
+      supportsFullHighNoise: false,
+    });
+    expect(layeredBody.qwen_image_layers).toBe(4);
+
+    // vid_gen 下高噪段仅发 sample_steps（不发 sample_method / scheduler / guidance 等）。
+    const vidBody = buildRequestBody(
+      "vid_gen",
+      {
+        ...imgParams,
+        video_frames: 33,
+        fps: 16,
+        moe_boundary: 0.875,
+        high_noise_sample_params: {
+          sample_steps: 8,
+          sample_method: "euler",
+          scheduler: "karras",
+          eta: 0.5,
+          guidance: { txt_cfg: 3.5 },
+        },
+      },
+      emptyImages,
+      {
+        dglBackend: true,
+        family: "wan-a14b",
+        supportsSlg: false,
+        supportsShiftedTimestep: false,
+        supportsImagePreprocess: false,
+        supportsRefImageOverrides: false,
+        supportsIpAdapter: false,
+        supportsFullHighNoise: false,
+      },
+    );
+    expect(vidBody.high_noise_sample_params).toEqual({ sample_steps: 8 });
+    expect(vidBody.moe_boundary).toBe(0.875);
+    expect(vidBody.prompt_images).toEqual({ ref1: "data:image/png;base64,QUJD" });
+  });
+});
+
+// 上游 #2341：提示词内联图片 <image:ID> 解析、转义、校验与内存预算。
+describe("prompt_images parsing & validation (#2341)", () => {
+  it("extracts unique unescaped <image:ID> refs and ignores escaped markers", () => {
+    expect(
+      extractPromptImageRefs(
+        "put <image:cat> next to \\<image:literal> and \\\\<image:dog> and <image:cat>",
+      ),
+    ).toEqual({ ids: ["cat", "dog"], error: null });
+    expect(extractPromptImageRefs("broken <image:unclosed").error).toMatch(/未闭合/);
+    expect(extractPromptImageRefs("empty <image:>").error).toMatch(/缺少图片 ID/);
+  });
+
+  it("validates unbound IDs, invalid IDs, and the 32-image cap", () => {
+    expect(
+      validatePromptImages("a <image:cat>", "", { cat: "data:image/png;base64,AA" }),
+    ).toBeNull();
+    expect(
+      validatePromptImages("a <image:cat>", "", { dog: "data:image/png;base64,AA" }),
+    ).toContain("cat");
+    expect(validatePromptImages("a <image:cat>", "", {}, { strictUnbound: true })).toContain("cat");
+    // 未提供 prompt_images 且未开 strictUnbound 时不拦截普通提示词。
+    expect(validatePromptImages("a <image:cat>", "", {})).toBeNull();
+    expect(validatePromptImages("hi", "", { "bad>id": "data:image/png;base64,AA" })).toContain(
+      '">"',
+    );
+
+    const manyPrompt = Array.from(
+      { length: MAX_PROMPT_IMAGES + 1 },
+      (_, i) => `<image:img${i}>`,
+    ).join(" ");
+    const manyMap: Record<string, string> = {};
+    for (let i = 0; i <= MAX_PROMPT_IMAGES; i++) {
+      manyMap[`img${i}`] = "data:image/png;base64,AA";
+    }
+    expect(validatePromptImages(manyPrompt, "", manyMap)).toContain(String(MAX_PROMPT_IMAGES));
+  });
+
+  it("counts promptImages toward trimJobsToBudget", () => {
+    const makeJob = (id: string, payload: string): Job => ({
+      id,
+      kind: "img_gen",
+      status: "completed",
+      config: {
+        mode: "img_gen",
+        params: { width: 512, height: 512, seed: 1, sample_params: { guidance: {} } },
+        images: {
+          initImage: null,
+          maskImage: null,
+          controlImage: null,
+          ipAdapterImage: null,
+          endImage: null,
+          refImages: [],
+          controlFrames: [],
+          promptImages: { p1: payload },
+        },
+      },
+    });
+    const trimmed = trimJobsToBudget(
+      [makeJob("newest", "A".repeat(1024)), makeJob("oldest", "B".repeat(1024))],
+      1024,
+    );
+    expect(trimmed[0].config?.images?.promptImages).toBeDefined();
+    expect(trimmed[1].config?.images).toBeUndefined();
+  });
+});
+
+// 上游 #2396：DGL 源码元数据（sdcpp.dgl/v1）& HTTP generation_info 字符串解析。
+describe("DGL metadata & generation_info parsing (#2396)", () => {
+  const SAMPLE_DGL_IMAGE = `# generated by sdcpp
+var {
+  source_prompt = "a <image:cat> in sunlight"
+  prompt = "a cat in sunlight"
+  negative_prompt = "blurry"
+  width = 1024
+  height = 768
+  seed = 1234567890
+  steps = 24
+  method = "euler"
+  scheduler = "beta"
+  eta = 0.5
+  cfg_scale = 4.5
+  image_cfg_scale = 1.5
+  strength = 0.65
+  control_strength = 0.85
+  layers = 4
+  hires_target_width = 2048
+  hires_target_height = 1536
+  hires_steps = 12
+  hires_scheduler_steps = 24
+  hires_mode = "lanczos"
+  hires_antialias = false
+}
+cond = encode_prompt(prompt=prompt, clip_skip=2)
+sigmas = make_sigmas(scheduler=scheduler, steps=steps, flow_shift=3.0, extra_args="alpha=0.8,beta=0.5")
+pred = predictor(guidance=3.5)
+ctrl = controlnet::apply(type="canny", strength=control_strength)
+t = tiling(tile_size_w=512, tile_size_h=384, target_overlap=0.25)
+c = cache(mode="cache_dit", residual_diff_threshold=0.12, max_warmup_steps=4, scm_mask="1,1,0", scm_policy_dynamic=true)
+lora_0 = load_lora("sub/style.safetensors")
+m = apply_lora(m, lora_0, weight=0.75)
+out = sample(pred, sigmas=sigmas, method=method, eta=eta)
+hires_pixels = resize(out, mode=hires_mode)
+`;
+
+  it("extracts seed from DGL source strings and sdcpp.dgl/v1 metadata objects", () => {
+    expect(generationInfoSeed(SAMPLE_DGL_IMAGE)).toBe(1234567890);
+    expect(generationInfoSeed({ schema: "sdcpp.dgl/v1", dgl: SAMPLE_DGL_IMAGE })).toBe(1234567890);
+    expect(generationInfoSeed("var {\n  seed = -1\n}")).toBeUndefined();
+    expect(parseDglVarBlock(SAMPLE_DGL_IMAGE)).toMatchObject({
+      width: 1024,
+      height: 768,
+      seed: 1234567890,
+      steps: 24,
+      method: "euler",
+    });
+  });
+
+  it("maps sdcpp.dgl/v1 image metadata back to GenParams including hires, tiling, cache, LoRAs and layers-1", () => {
+    const p = sdcppMetadataToGenParams({ schema: "sdcpp.dgl/v1", dgl: SAMPLE_DGL_IMAGE }, [
+      { name: "style", path: "D:/loras/sub/style.safetensors" },
+    ]);
+    expect(p.prompt).toBe("a <image:cat> in sunlight");
+    expect(p.negative_prompt).toBe("blurry");
+    expect(p.width).toBe(1024);
+    expect(p.height).toBe(768);
+    expect(p.seed).toBe(1234567890);
+    expect(p.clip_skip).toBe(2);
+    expect(p.strength).toBe(0.65);
+    expect(p.control_strength).toBe(0.85);
+    expect(p.control_type).toBe("canny");
+    expect(p.qwen_image_layers).toBe(3); // var.layers = 4 → qwen_image_layers = 3
+    expect(p.sample_params).toMatchObject({
+      sample_steps: 24,
+      sample_method: "euler",
+      scheduler: "beta",
+      eta: 0.5,
+      flow_shift: 3.0,
+      beta_alpha: 0.8,
+      beta_beta: 0.5,
+      guidance: { txt_cfg: 4.5, img_cfg: 1.5, distilled_guidance: 3.5 },
+    });
+    expect(p.hires).toMatchObject({
+      enabled: true,
+      upscaler: "Lanczos",
+      target_width: 2048,
+      target_height: 1536,
+      steps: 12,
+      denoising_strength: 0.5,
+    });
+    expect(p.vae_tiling_params).toMatchObject({
+      enabled: true,
+      tile_size_w: 512,
+      tile_size_h: 384,
+      target_overlap: 0.25,
+    });
+    expect(p.cache_mode).toBe("cache-dit");
+    expect(p.cache_options).toEqual({ threshold: 0.12, warmup: 4 });
+    expect(p.scm_mask).toBe("1,1,0");
+    expect(p.scm_policy_dynamic).toBe(true);
+    expect(p.lora).toEqual([
+      { path: "D:/loras/sub/style.safetensors", multiplier: 0.75, is_high_noise: undefined },
+    ]);
+  });
+
+  it("splits dual-expert high_noise_steps back out of total DGL steps for video", () => {
+    const videoDgl = `var {
+  prompt = "aerial shot"
+  width = 832
+  height = 480
+  frames = 37
+  fps = 16
+  seed = 77
+  steps = 28
+  high_noise_steps = 8
+  moe_boundary = 0.875
+}
+pred = predictor(vace_strength=1.0, video_sigma_shift=5.0)
+`;
+    const p = dglGenerationToGenParams(videoDgl);
+    expect(p.video_frames).toBe(37);
+    expect(p.fps).toBe(16);
+    expect(p.moe_boundary).toBe(0.875);
+    expect(p.vace_strength).toBe(1.0);
+    expect(p.sample_params?.sample_steps).toBe(20); // 28 - 8
+    expect(p.sample_params?.flow_shift).toBe(5.0);
+    expect(p.high_noise_sample_params).toEqual({ sample_steps: 8, guidance: {} });
+  });
+
+  it("labels DGL executing/dgl progress stage and detail", () => {
+    expect(jobProgressSummary({ stage: "executing", detail: "dgl" })).toBe("执行中 · DGL 脚本");
   });
 });

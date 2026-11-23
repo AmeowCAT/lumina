@@ -4,7 +4,13 @@ import { FAMILY_CONFIG, SIZE_PRESETS, VIDEO_FRAME_PRESETS } from "../../config/f
 import {
   controlTypeSupported,
   featureEnabled,
+  isDglBackend,
   previewModesFromCapabilities,
+  supportsFullHighNoiseSampling,
+  supportsImagePreprocess,
+  supportsRefImageOverrides,
+  supportsShiftedTimestep,
+  supportsSlg,
   vaeTilingProtocolFromCapabilities,
 } from "../../lib/utils";
 import { ParamsSheet } from "./ParamsSheet";
@@ -53,6 +59,11 @@ export interface GenerationParamsSheetProps {
   onSetRefVideos: (updater: (r: string[][]) => string[][]) => void;
   onSetRefAudios: (updater: (r: string[]) => string[]) => void;
   onSetRefVideoAudios: (updater: (r: string[]) => string[]) => void;
+  /** 提示词内联图片（上游 #2341，`prompt_images`）。 */
+  promptImages?: Record<string, string>;
+  promptImagesSupported?: boolean;
+  onSetPromptImages?: (updater: (r: Record<string, string>) => Record<string, string>) => void;
+  onInsertPromptImageRef?: (id: string) => void;
   params: GenParams;
   seedRandom: boolean;
   sizeScale: number;
@@ -102,6 +113,10 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
     onSetRefVideos,
     onSetRefAudios,
     onSetRefVideoAudios,
+    promptImages,
+    promptImagesSupported = false,
+    onSetPromptImages,
+    onInsertPromptImageRef,
     params,
     seedRandom,
     sizeScale,
@@ -129,6 +144,15 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
   );
   const framePresets = useMemo(() => VIDEO_FRAME_PRESETS[family], [family]);
   const vaeTilingProtocol = useMemo(() => vaeTilingProtocolFromCapabilities(caps), [caps]);
+  const dglBackend = useMemo(() => isDglBackend(caps), [caps]);
+  const slgSupported = useMemo(() => supportsSlg(caps), [caps]);
+  const shiftedTimestepSupported = useMemo(() => supportsShiftedTimestep(caps), [caps]);
+  const imagePreprocessSupported = useMemo(() => supportsImagePreprocess(caps), [caps]);
+  const refImageOverridesSupported = useMemo(() => supportsRefImageOverrides(caps), [caps]);
+  const fullHighNoiseSupported = useMemo(
+    () => supportsFullHighNoiseSampling(caps, features),
+    [caps, features],
+  );
 
   return (
     <ParamsSheet open={open} onClose={onClose}>
@@ -138,7 +162,8 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         featureEnabled(features, "ip_adapter_image") ||
         featureEnabled(features, "end_image") ||
         refImagesSupported ||
-        controlFramesSupported) && (
+        controlFramesSupported ||
+        promptImagesSupported) && (
         <ImageInputsPanel
           features={features}
           mode={mode}
@@ -151,6 +176,11 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           refImages={refImages}
           controlFrames={controlFrames}
           refImageArgs={params.ref_image_args}
+          refImageOverridesSupported={refImageOverridesSupported}
+          promptImages={promptImages}
+          promptImagesSupported={promptImagesSupported}
+          onSetPromptImages={onSetPromptImages}
+          onInsertPromptImageRef={onInsertPromptImageRef}
           controlFramesSupported={controlFramesSupported}
           refImagesSupported={refImagesSupported}
           refVideos={refVideos}
@@ -193,6 +223,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         sizeScale={sizeScale}
         framePresets={framePresets}
         framePresetsLabel={`${FAMILY_CONFIG[family]?.name || "视频"} 帧数快捷项`}
+        frameRounding={dglBackend ? "ceil" : "floor"}
         onUpdate={onUpdate}
         sizeStep={sizeStep}
         onSizeStep={onSizeStep}
@@ -239,17 +270,21 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
         scmMask={params.scm_mask}
         clipSkip={params.clip_skip}
         extraSampleArgs={sp?.extra_sample_args}
+        supportsSlg={slgSupported}
+        supportsShiftedTimestep={shiftedTimestepSupported}
+        dglBackend={dglBackend}
         onUpdate={onUpdate}
       />
-      {(featureEnabled(features, "init_image") ||
-        featureEnabled(features, "ref_images") ||
-        featureEnabled(features, "control_image")) && (
-        <ImagePreprocessPanel
-          rules={params.image_preprocess}
-          hasRefImages={featureEnabled(features, "ref_images")}
-          onUpdate={onUpdate}
-        />
-      )}
+      {imagePreprocessSupported &&
+        (featureEnabled(features, "init_image") ||
+          featureEnabled(features, "ref_images") ||
+          featureEnabled(features, "control_image")) && (
+          <ImagePreprocessPanel
+            rules={params.image_preprocess}
+            hasRefImages={featureEnabled(features, "ref_images")}
+            onUpdate={onUpdate}
+          />
+        )}
       {mode === "vid_gen" && family === "wan-a14b" && (
         <HighNoisePanel
           samplers={caps.samplers || []}
@@ -261,6 +296,7 @@ export function GenerationParamsSheet(props: GenerationParamsSheetProps) {
           showDistilled={showDistilled}
           betaAlpha={hsp?.beta_alpha}
           betaBeta={hsp?.beta_beta}
+          fullSampling={fullHighNoiseSupported}
           onUpdate={onUpdate}
         />
       )}

@@ -31,10 +31,22 @@ export function isH3VideoFamily(family: string): boolean {
   );
 }
 
-/** 返回该家族下 `frames` 实际生效的帧数；不对齐的家族原样返回。 */
-export function alignVideoFrames(family: string, frames: number): number {
-  // MiniMax-H3：17k+5 网格向上取整、最小 5（src/stable-diffusion.cpp
-  // align_video_frames）。50 → 56，5 → 5，6 → 22。
+/**
+ * 返回该家族下 `frames` 实际生效的帧数；不对齐的家族原样返回。
+ *
+ * `rounding` 对应两代上游内核的差异：
+ *  - 上游 #2396+（`src/model/vae/geometry.hpp::aligned_frames`）：`step·n + 1`
+ *    改为**向上取整**（`ceil`），如 Wan 34 → 37、32 → 33，LTX 40 → 41；
+ *  - 前 DGL 内核（<= 32d516c）：`step·n + 1` **向下取整**（`floor`），如 34 → 33；
+ *  - MiniMax-H3 / HyperFlow H3：两代内核均为 `17k + 5` 向上取整、最小 5。
+ * 缺省按当前对齐的最新上游（`ceil`）。
+ */
+export function alignVideoFrames(
+  family: string,
+  frames: number,
+  rounding: "ceil" | "floor" = "ceil",
+): number {
+  // MiniMax-H3：17k+5 网格向上取整、最小 5（src/model/vae/geometry.hpp）。
   // HyperFlow H3 Flash（上游 #2299）共用 H3 架构与帧网格。
   if (isH3VideoFamily(family)) {
     if (!Number.isFinite(frames)) return frames;
@@ -43,7 +55,9 @@ export function alignVideoFrames(family: string, frames: number): number {
   }
   const step = VIDEO_FRAME_ALIGN[family];
   if (!step || !Number.isFinite(frames) || frames <= 1) return frames;
-  return Math.floor((frames - 1) / step) * step + 1;
+  return rounding === "floor"
+    ? Math.floor((frames - 1) / step) * step + 1
+    : Math.ceil((frames - 1) / step) * step + 1;
 }
 
 /** 返回该家族下 `dim` 实际生效的宽/高；无对齐要求的家族原样返回。 */

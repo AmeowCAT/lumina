@@ -164,9 +164,13 @@ function saveBtnTitle(state?: ImageSaveState): string {
   }
 }
 
-function seedLabel(config?: JobConfig, index?: number, info?: Record<string, unknown>): string {
-  // 上游 #2206：结果项携带该图的实际 seed（十进制字符串），随机种子任务
-  // 也能回显真实值；旧内核无 generation_info 时回落「请求 seed + 批次偏移」。
+function seedLabel(
+  config?: JobConfig,
+  index?: number,
+  info?: Record<string, unknown> | string,
+): string {
+  // 上游 #2206（JSON 对象）/#2396（DGL 源码字符串）：结果项携带该图的实际 seed，
+  // 随机种子任务也能回显真实值；旧内核无 generation_info 时回落「请求 seed + 批次偏移」。
   const actual = generationInfoSeed(info);
   if (actual != null) return `种子 ${actual}`;
   const base = config?.params?.seed;

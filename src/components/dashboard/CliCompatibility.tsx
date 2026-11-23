@@ -73,6 +73,12 @@ export function CliCompatibility({
             <div>auto-fit 使用 on/off；无手动设备/权重放置时默认开启。</div>
           )}
           {result.autoFit === "flag" && <div>auto-fit 是旧版裸开关，不能附加 on/off。</div>}
+          {result.options.includes("--dgl-dir") && (
+            <div>
+              DGL 架构内核（#2396+）：AnimateDiff / IP-Adapter / ADetailer / SLG /
+              图像预处理与参考图参数覆盖已迁至 DGL 脚本，「参考图处理」请保持自动检测。
+            </div>
+          )}
           {result.warnings.map((warning) => (
             <div key={warning}>{warning}</div>
           ))}

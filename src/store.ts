@@ -109,6 +109,8 @@ interface StoreState {
   refVideos: string[][];
   refAudios: string[];
   refVideoAudios: string[];
+  /** 提示词内联图片（上游 #2341，`prompt_images`）：ID -> dataURL。 */
+  promptImages: Record<string, string>;
   setImage: (
     which: "initImage" | "maskImage" | "controlImage" | "ipAdapterImage" | "endImage",
     v: string | null,
@@ -118,6 +120,7 @@ interface StoreState {
   setRefVideos: (updater: (r: string[][]) => string[][]) => void;
   setRefAudios: (updater: (r: string[]) => string[]) => void;
   setRefVideoAudios: (updater: (r: string[]) => string[]) => void;
+  setPromptImages: (updater: (r: Record<string, string>) => Record<string, string>) => void;
   seedRandom: boolean;
   setSeedRandom: (v: boolean) => void;
   /**
@@ -328,12 +331,14 @@ export const useStore = create<StoreState>((set, get) => ({
   refVideos: [],
   refAudios: [],
   refVideoAudios: [],
+  promptImages: {},
   setImage: (which, v) => set({ [which]: v } as Partial<StoreState>),
   setRefImages: (updater) => set((s) => ({ refImages: updater(s.refImages) })),
   setControlFrames: (updater) => set((s) => ({ controlFrames: updater(s.controlFrames) })),
   setRefVideos: (updater) => set((s) => ({ refVideos: updater(s.refVideos) })),
   setRefAudios: (updater) => set((s) => ({ refAudios: updater(s.refAudios) })),
   setRefVideoAudios: (updater) => set((s) => ({ refVideoAudios: updater(s.refVideoAudios) })),
+  setPromptImages: (updater) => set((s) => ({ promptImages: updater(s.promptImages) })),
   seedRandom: true,
   setSeedRandom: (v) => set({ seedRandom: v }),
   sizeStep: DEFAULT_SIZE_STEP,
@@ -352,6 +357,7 @@ export const useStore = create<StoreState>((set, get) => ({
       refVideos: [],
       refAudios: [],
       refVideoAudios: [],
+      promptImages: {},
     }),
   logs: [],
   lastProgress: false,

@@ -50,6 +50,11 @@ interface Props {
   onRandomSeed: () => void;
   /** 参数 chip 深链:召唤 Sheet 时强制展开本面板 */
   forceOpen?: boolean;
+  /**
+   * 帧数对齐取整方向：上游 #2396+（DGL 内核）改为向上对齐（`ceil`），
+   * 旧内核为向下对齐（`floor`）。缺省按最新上游（`ceil`）。
+   */
+  frameRounding?: "ceil" | "floor";
 }
 
 export const SizeSeedPanel = memo(function SizeSeedPanel({
@@ -76,6 +81,7 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
   onSeedEdit,
   onRandomSeed,
   forceOpen,
+  frameRounding = "ceil",
 }: Props) {
   // 上游 align_image_size 会把宽高向上对齐到家族的空间基数（MiniMax-H3 为 32）；
   // 与帧数提示同理，提前说明显示尺寸与实际输出不一致的情况。
@@ -250,13 +256,15 @@ export const SizeSeedPanel = memo(function SizeSeedPanel({
             min={1}
             max={VIDEO_FRAME_MAX[family] ?? 121}
             hint={
-              // 上游会调整帧数（step·n+1 向下；MiniMax-H3 是 17k+5 向上）；
-              // 提前说明避免"设了 34 却出 33 帧 / 设了 50 却出 56 帧"。
-              alignVideoFrames(family, videoFrames || 33) !== (videoFrames || 33)
-                ? `实际生成 ${alignVideoFrames(family, videoFrames || 33)} 帧（${
+              // 上游会调整帧数（#2396+ 起 step·n+1 向上，旧内核向下；MiniMax-H3 恒为 17k+5 向上）；
+              // 提前说明避免"设了 34 却出 37 / 33 帧"。
+              alignVideoFrames(family, videoFrames || 33, frameRounding) !== (videoFrames || 33)
+                ? `实际生成 ${alignVideoFrames(family, videoFrames || 33, frameRounding)} 帧（${
                     isH3VideoFamily(family)
                       ? "该模型按 17k+5 向上对齐"
-                      : `该模型按 ${VIDEO_FRAME_ALIGN[family]}n+1 对齐`
+                      : `该模型按 ${VIDEO_FRAME_ALIGN[family]}n+1 ${
+                          frameRounding === "floor" ? "向下" : "向上"
+                        }对齐`
                   }）`
                 : undefined
             }

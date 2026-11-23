@@ -225,3 +225,25 @@ describe("F-18 SLG 三参数", () => {
     );
   });
 });
+
+// 上游 #2396（DGL 架构）：SLG、Shifted Timestep 及块级缓存 Fn/Bn 迁入 DGL 或被忽略。
+describe("DGL 内核能力裁剪（#2396）", () => {
+  it("隐藏 SLG、Shifted Timestep 与块级缓存 Fn/Bn 并显示说明", () => {
+    renderPanel({
+      cacheMode: "dbcache",
+      supportsSlg: false,
+      supportsShiftedTimestep: false,
+      dglBackend: true,
+    });
+
+    expect(screen.queryByLabelText(/跳层索引/)).toBeNull();
+    expect(screen.queryByRole("slider", { name: /SLG 强度/ })).toBeNull();
+    expect(screen.queryByRole("slider", { name: /Shifted Timestep/ })).toBeNull();
+    expect(screen.queryByRole("slider", { name: /前段强制计算块数（Fn）/ })).toBeNull();
+    expect(screen.queryByRole("slider", { name: /后段强制计算块数（Bn）/ })).toBeNull();
+    // 仍有效的块级缓存参数保留。
+    expect(screen.getByRole("slider", { name: /残差阈值（threshold）/ })).toBeTruthy();
+    expect(screen.getByRole("slider", { name: /预热步数（warmup）/ })).toBeTruthy();
+    expect(screen.getByText(/当前内核（DGL 架构）已将 SLG/)).toBeTruthy();
+  });
+});

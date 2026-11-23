@@ -209,6 +209,8 @@ fn parse_help(help: &str) -> CliCapabilities {
         // 上游 #2316：异步队列治理参数，都收整数。
         "--max-pending-jobs",
         "--completed-ttl-seconds",
+        // 上游 #2396：DGL 脚本目录（/sdcpp/v1/dgl/*），同时也是 DGL 架构内核的确定性标识。
+        "--dgl-dir",
     ] {
         value_options.insert(name.into());
     }
@@ -631,13 +633,84 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     bail!("{}", error);
                 }
             }
-            // 上游 #2164：ADetailer 检测器。老内核只把该参数当 sd-cli 的配置，
-            // sd-server 会直接报 unknown argument 退出；新内核则每次 img_gen
-            // 后自动跑一遍检测 + 局部重绘（下面还会补一条提示）。
-            // 用 match guard 而不是嵌套 if：新版 clippy 的 collapsible_match
-            // 会把「单一 if + 空分支」判为可折叠，CI 上是 -D warnings。
-            "--ad-model" if caps.supports(name) == Some(false) => {
-                bail!("所选 sd-server 不支持 --ad-model（ADetailer）；请升级内核或移除该参数。");
+            "--dgl-dir" => {
+                if caps.supports(name) == Some(false) {
+                    bail!("所选 sd-server 不支持 --dgl-dir（DGL 架构，上游 #2396+）；请删除该参数或升级内核。");
+                }
+                if !value.is_some_and(|v| !v.trim().is_empty()) {
+                    bail!("--dgl-dir 缺少脚本目录路径。");
+                }
+            }
+            // 上游 #2396（DGL 架构）移除了 32 个已迁入 DGL 脚本的启动参数：
+            // 在确认是 DGL 内核（声明了 --dgl-dir 且不支持该参数）时给出指向性说明，
+            // 避免 sd-server 启动即报 unknown argument 退出而用户不知道去哪清理。
+            "--ref-image-args"
+                if caps.supports(name) == Some(false)
+                    && caps.supports("--dgl-dir") == Some(true) =>
+            {
+                bail!("所选 sd-server 为 DGL 架构（#2396+），已移除 --ref-image-args；请将控制台「参考图处理」改为「自动检测（推荐）」，并从附加启动参数中移除它。");
+            }
+            "--motion-module"
+                if caps.supports(name) == Some(false)
+                    && caps.supports("--dgl-dir") == Some(true) =>
+            {
+                bail!("所选 sd-server 为 DGL 架构（#2396+），已移除 --motion-module（AnimateDiff 现需通过 DGL 脚本执行）；请清空控制台的 AnimateDiff Motion Module 组件，或改用旧版内核（<= 32d516c）。");
+            }
+            "--ip-adapter" | "--ip-adapter-image" | "--ip-adapter-strength"
+                if caps.supports(name) == Some(false)
+                    && caps.supports("--dgl-dir") == Some(true) =>
+            {
+                bail!(
+                    "所选 sd-server 为 DGL 架构（#2396+），已移除 {}（IP-Adapter 现需通过 DGL 脚本执行）；请清空控制台的 IP-Adapter 组件/附加启动参数，或改用旧版内核（<= 32d516c）。",
+                    name
+                );
+            }
+            // 上游 #2164：ADetailer 检测器在 #2164–32d516c 期间由服务端自动执行，
+            // #2396 起迁入 DGL 脚本并移除对应启动参数。按内核是否支持 --dgl-dir 区分提示。
+            "--ad-model" | "--ad-prompt" | "--ad-negative-prompt" | "--extra-ad-args"
+                if caps.supports(name) == Some(false) =>
+            {
+                if caps.supports("--dgl-dir") == Some(true) {
+                    bail!(
+                        "所选 sd-server 为 DGL 架构（#2396+），已移除 {}（ADetailer 现需通过 DGL 脚本执行）；请从附加启动参数中移除。",
+                        name
+                    );
+                } else if name == "--ad-model" {
+                    bail!(
+                        "所选 sd-server 不支持 --ad-model（ADetailer）；请升级内核或移除该参数。"
+                    );
+                }
+            }
+            "--image-preprocess"
+            | "--increase-ref-index"
+            | "--slg-scale"
+            | "--skip-layers"
+            | "--skip-layer-start"
+            | "--skip-layer-end"
+            | "--timestep-shift"
+            | "--high-noise-cfg-scale"
+            | "--high-noise-img-cfg-scale"
+            | "--high-noise-guidance"
+            | "--high-noise-eta"
+            | "--high-noise-sampling-method"
+            | "--high-noise-slg-scale"
+            | "--high-noise-skip-layers"
+            | "--high-noise-skip-layer-start"
+            | "--high-noise-skip-layer-end"
+            | "--photo-maker"
+            | "--pulid-weights"
+            | "--pm-id-images-dir"
+            | "--pm-id-embed-path"
+            | "--pm-style-strength"
+            | "--pulid-id-embedding"
+            | "--pulid-id-weight"
+                if caps.supports(name) == Some(false)
+                    && caps.supports("--dgl-dir") == Some(true) =>
+            {
+                bail!(
+                    "所选 sd-server 为 DGL 架构（#2396+），已移除 {}（该功能现需通过 DGL 脚本执行）；请从附加启动参数或该模型快照中移除。",
+                    name
+                );
             }
             _ => {}
         }
@@ -670,6 +743,7 @@ pub fn validate_args(args: &[String], caps: &CliCapabilities) -> Result<Vec<Stri
                     | "--rpc-servers"
                     | "--max-pending-jobs"
                     | "--completed-ttl-seconds"
+                    | "--dgl-dir"
             )
             || name == "--auto-fit"
                 && (caps.auto_fit == AutoFitSyntax::OnOff
@@ -1076,5 +1150,50 @@ mod tests {
         assert!(warns(&["--ad-model", "face_yolov8n.safetensors"]));
         assert!(warns(&["--ad-model=D:/models/face_yolov8n.safetensors"]));
         assert!(!warns(&["--prompt", "no detector here"]));
+    }
+
+    fn dgl() -> CliCapabilities {
+        parse_help(&help(
+            "  --auto-fit            on|off (default: on)\n  --disable-segmented-compute   force monolithic\n  --dgl-dir <string>    directory for DGL scripts\n  --high-noise-steps <int>   high noise steps\n  --flash-attn          on|off|auto or module assignments (default: auto)\n",
+        ))
+    }
+
+    /// 上游 #2396（DGL 架构）：新增 --dgl-dir，并移除了 32 个已迁至 DGL 脚本的启动参数。
+    /// 预检必须能识别 --dgl-dir、保留仍有效的 --high-noise-steps，并对已移除参数给出明确引导。
+    #[test]
+    fn validates_dgl_dir_and_rejects_dgl_removed_flags_with_guidance() {
+        let dgl_caps = dgl();
+        assert_eq!(dgl_caps.supports("--dgl-dir"), Some(true));
+        assert!(validate_args(&argv(&["--dgl-dir", "D:/scripts"]), &dgl_caps).is_ok());
+        assert!(validate_args(&argv(&["--high-noise-steps", "8"]), &dgl_caps).is_ok());
+        assert!(validate_args(&argv(&["--dgl-dir"]), &dgl_caps)
+            .unwrap_err()
+            .to_string()
+            .contains("缺少脚本目录"));
+        assert!(validate_args(&argv(&["--dgl-dir", "D:/scripts"]), &new())
+            .unwrap_err()
+            .to_string()
+            .contains("不支持 --dgl-dir"));
+
+        for (args, expected) in [
+            (
+                vec!["--ref-image-args", "preset=flux_kontext"],
+                "参考图处理",
+            ),
+            (vec!["--motion-module", "mm_sd_v15_v2.ckpt"], "AnimateDiff"),
+            (vec!["--ip-adapter", "ip-adapter.safetensors"], "IP-Adapter"),
+            (vec!["--ad-model", "face.safetensors"], "ADetailer"),
+            (vec!["--slg-scale", "2.5"], "DGL"),
+            (vec!["--timestep-shift", "100"], "DGL"),
+            (vec!["--high-noise-cfg-scale", "3.5"], "DGL"),
+            (vec!["--image-preprocess", "target=init,mode=none"], "DGL"),
+            (vec!["--pulid-id-weight", "0.8"], "DGL"),
+        ] {
+            let err = validate_args(&argv(&args), &dgl_caps).unwrap_err();
+            assert!(
+                err.to_string().contains(expected),
+                "{args:?} 应包含 {expected}：{err}"
+            );
+        }
     }
 }

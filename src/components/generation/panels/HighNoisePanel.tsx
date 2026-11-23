@@ -17,6 +17,12 @@ interface Props {
   showDistilled: boolean;
   betaAlpha: number | undefined;
   betaBeta: number | undefined;
+  /**
+   * 内核是否支持高噪段完整独立采样参数（采样器/调度器/CFG/Eta/Flow Shift/额外参数）。
+   * 上游 #2396+（DGL 架构）原生 vid_gen 仅保留 `sample_steps` 与 `moe_boundary`，
+   * 其余高噪段字段会被直接拒绝（400）。缺省 true 保持旧内核及独立单测行为不变。
+   */
+  fullSampling?: boolean;
   onUpdate: (path: string, v: unknown) => void;
 }
 
@@ -30,8 +36,37 @@ export const HighNoisePanel = memo(function HighNoisePanel({
   showDistilled,
   betaAlpha,
   betaBeta,
+  fullSampling = true,
   onUpdate,
 }: Props) {
+  if (!fullSampling) {
+    return (
+      <Panel title="高噪段采样">
+        <Slider
+          label="高噪段步数"
+          value={hsp?.sample_steps ?? -1}
+          onChange={(v) => onUpdate("high_noise_sample_params.sample_steps", v)}
+          min={-1}
+          max={100}
+          step={1}
+          hint="-1 = 按 MoE Boundary 自动分配步数；≥0 = 显式指定高噪段步数"
+        />
+        <Slider
+          label="MoE Boundary"
+          value={moeBoundary ?? 0.8}
+          onChange={(v) => onUpdate("moe_boundary", v)}
+          min={0}
+          max={1}
+          step={0.05}
+          hint="低噪段/高噪段分界比例"
+        />
+        <div className="field-hint field-hint-flush">
+          当前内核（DGL 架构）的高噪段复用主采样器、调度器与 CFG；需要完全独立的高噪段采样配置请改用
+          DGL 脚本。
+        </div>
+      </Panel>
+    );
+  }
   const sampler = hsp?.sample_method || fallbackSampleMethod;
   const scheduler = hsp?.scheduler || fallbackScheduler;
   // capabilities 对"未设置"返回 "default"（routes_sdcpp.cpp

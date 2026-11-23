@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useRef, useState } from "react";
 import type { Features, GenMode } from "../../../types";
 import { FAMILY_CONFIG, isH3VideoFamily } from "../../../config/families";
 import { useStore } from "../../../store";
@@ -12,6 +12,7 @@ import {
   CONTROL_TYPES,
   featureEnabled,
   formatNumberForInput,
+  MAX_PROMPT_IMAGES,
   readFileAsDataUrl,
   setStringArgValue,
   stringArgValue,
@@ -104,6 +105,224 @@ function MultiImageRow({
   );
 }
 
+function makeUniquePromptImageId(existing: Record<string, string>, fileName: string): string {
+  const stem =
+    fileName
+      .replace(/\.[^.]+$/, "")
+      .replace(/>/g, "")
+      .trim() || "img";
+  if (!(stem in existing)) return stem;
+  let n = 2;
+  while (`${stem}_${n}` in existing) n++;
+  return `${stem}_${n}`;
+}
+
+function PromptImageRow({
+  id,
+  src,
+  allIds,
+  onRename,
+  onInsert,
+  onRemove,
+}: {
+  id: string;
+  src: string;
+  allIds: string[];
+  onRename: (oldId: string, nextId: string) => void;
+  onInsert?: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [draft, setDraft] = useState(id);
+  const toast = useStore((s) => s.toast);
+  const commit = () => {
+    const next = draft.trim();
+    if (next === id) return;
+    if (!next || next.includes(">")) {
+      toast('图片 ID 不能为空且不能包含 ">"', true);
+      setDraft(id);
+      return;
+    }
+    if (allIds.includes(next)) {
+      toast(`图片 ID「${next}」已存在`, true);
+      setDraft(id);
+      return;
+    }
+    onRename(id, next);
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border border-line bg-well">
+        <img src={src} alt={id} className="h-full w-full object-cover" />
+      </div>
+      <input
+        type="text"
+        className="input flex-1"
+        aria-label={`内联图片 ${id} 的 ID`}
+        value={draft}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+      {onInsert && (
+        <button
+          type="button"
+          className="btn btn-sm shrink-0"
+          title={`在正向提示词末尾插入 <image:${id}>`}
+          aria-label={`插入 <image:${id}>`}
+          onClick={() => onInsert(id)}
+        >
+          插入
+        </button>
+      )}
+      <button
+        type="button"
+        className="icon-btn shrink-0"
+        aria-label={`移除内联图片 ${id}`}
+        onClick={() => onRemove(id)}
+      >
+        {IC.x}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * 提示词内联图片（上游 #2341，`prompt_images` + `<image:ID>`）：
+ * 与参考图（`ref_images`）独立，按 ID 绑定给 Qwen2.5-VL / Qwen3-VL / Qwen3.5
+ * 视觉语言编码器，最多 32 张。
+ */
+function PromptImagesSection({
+  promptImages,
+  onChange,
+  onInsert,
+}: {
+  promptImages: Record<string, string>;
+  onChange: (updater: (r: Record<string, string>) => Record<string, string>) => void;
+  onInsert?: (id: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+  const toast = useStore((s) => s.toast);
+  const entries = Object.entries(promptImages);
+  const allIds = entries.map(([k]) => k);
+
+  const handleRename = (oldId: string, nextId: string) => {
+    onChange((prev) => {
+      const next: Record<string, string> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        next[k === oldId ? nextId : k] = v;
+      }
+      return next;
+    });
+  };
+
+  const handleRemove = (id: string) => {
+    onChange((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  return (
+    <div className="form-row mt-2">
+      <div className="form-label">
+        提示内联图片（&lt;image:ID&gt;）
+        <span className="form-sublabel">
+          prompt_images；供 Qwen2.5-VL / Qwen3-VL / Qwen3.5 在提示词中按位置插入视觉信息
+        </span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {entries.map(([id, src]) => (
+          <PromptImageRow
+            key={id}
+            id={id}
+            src={src}
+            allIds={allIds}
+            onRename={handleRename}
+            onInsert={onInsert}
+            onRemove={handleRemove}
+          />
+        ))}
+        <div>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="sr-only"
+            tabIndex={-1}
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              e.target.value = "";
+              if (!files.length) return;
+              const invalid = files
+                .map((f) =>
+                  !f.type.startsWith("image/")
+                    ? `${f.name}（非图片格式）`
+                    : f.size > MAX_UPLOAD_BYTES
+                      ? `${f.name}（超过 100MB）`
+                      : null,
+                )
+                .filter((x): x is string => !!x);
+              if (invalid.length) {
+                toast(`已跳过 ${invalid.length} 个无效文件：${invalid.join("、")}`, true);
+              }
+              const valid = files.filter(
+                (f) => f.type.startsWith("image/") && f.size <= MAX_UPLOAD_BYTES,
+              );
+              if (!valid.length) return;
+              const remaining = MAX_PROMPT_IMAGES - entries.length;
+              if (remaining <= 0) {
+                toast(`单次请求最多支持 ${MAX_PROMPT_IMAGES} 张提示内联图片`, true);
+                return;
+              }
+              const accepted = valid.slice(0, remaining);
+              if (valid.length > remaining) {
+                toast(`最多保留 ${MAX_PROMPT_IMAGES} 张，已跳过超出部分`, true);
+              }
+              Promise.all(
+                accepted.map(async (f) => ({ name: f.name, url: await readFileAsDataUrl(f) })),
+              ).then((loaded) => {
+                onChange((prev) => {
+                  const next = { ...prev };
+                  for (const item of loaded) {
+                    if (Object.keys(next).length >= MAX_PROMPT_IMAGES) break;
+                    const id = makeUniquePromptImageId(next, item.name);
+                    next[id] = item.url;
+                  }
+                  return next;
+                });
+              });
+              requestAnimationFrame(() => addBtnRef.current?.focus());
+            }}
+          />
+          <button
+            ref={addBtnRef}
+            type="button"
+            className="btn btn-sm"
+            aria-label="添加提示内联图片"
+            disabled={entries.length >= MAX_PROMPT_IMAGES}
+            onClick={() => inputRef.current?.click()}
+          >
+            {IC.plus} 添加内联图片
+          </button>
+        </div>
+        <div className="field-hint field-hint-flush">
+          需搭配视觉编码器（--llm_vision 或内置视觉塔）。在提示词中写 &lt;image:ID&gt;
+          引用（可重复，最多 32 个唯一 ID）；输出字面文本请写 \&lt;image:ID&gt;。
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   features: Features;
   mode: GenMode;
@@ -117,6 +336,13 @@ interface Props {
   controlFrames: string[];
   /** 视频侧参考图参数串（`ref_image_args`，MiniMax-H3 的 ref_image_size）。 */
   refImageArgs?: string;
+  /** 内核是否支持原生 `ref_image_args` 覆盖（上游 #2396+ DGL 内核发送即 400）。 */
+  refImageOverridesSupported?: boolean;
+  /** 提示词内联图片（上游 #2341，`prompt_images`）。 */
+  promptImages?: Record<string, string>;
+  promptImagesSupported?: boolean;
+  onSetPromptImages?: (updater: (r: Record<string, string>) => Record<string, string>) => void;
+  onInsertPromptImageRef?: (id: string) => void;
   controlFramesSupported: boolean;
   refImagesSupported: boolean;
   /** Ref2VA 参考媒体（上游 #2194）：仅 ref2va 家族且内核声明 feature 时渲染。 */
@@ -162,6 +388,11 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
   refImages,
   controlFrames,
   refImageArgs,
+  refImageOverridesSupported = true,
+  promptImages,
+  promptImagesSupported = false,
+  onSetPromptImages,
+  onInsertPromptImageRef,
   controlFramesSupported,
   refImagesSupported,
   refVideos,
@@ -305,30 +536,33 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
           addLabel="添加参考图片"
         />
       )}
-      {refImagesSupported && mode === "vid_gen" && isH3VideoFamily(family) && (
-        <div className="form-row">
-          <label className="form-label" htmlFor="ref-image-size">
-            参考图尺寸
-            <span className="form-sublabel">
-              ref_image_size；max 保留更多身份细节，但每步都更慢
-            </span>
-          </label>
-          <Select
-            id="ref-image-size"
-            value={stringArgValue(refImageArgs, "ref_image_size") || "match"}
-            onChange={(v) =>
-              onUpdate(
-                "ref_image_args",
-                setStringArgValue(refImageArgs, "ref_image_size", v === "match" ? null : v),
-              )
-            }
-            options={[
-              { value: "match", label: "匹配画布（默认）" },
-              { value: "max", label: "最高 2048 短边（更慢）" },
-            ]}
-          />
-        </div>
-      )}
+      {refImagesSupported &&
+        refImageOverridesSupported &&
+        mode === "vid_gen" &&
+        isH3VideoFamily(family) && (
+          <div className="form-row">
+            <label className="form-label" htmlFor="ref-image-size">
+              参考图尺寸
+              <span className="form-sublabel">
+                ref_image_size；max 保留更多身份细节，但每步都更慢
+              </span>
+            </label>
+            <Select
+              id="ref-image-size"
+              value={stringArgValue(refImageArgs, "ref_image_size") || "match"}
+              onChange={(v) =>
+                onUpdate(
+                  "ref_image_args",
+                  setStringArgValue(refImageArgs, "ref_image_size", v === "match" ? null : v),
+                )
+              }
+              options={[
+                { value: "match", label: "匹配画布（默认）" },
+                { value: "max", label: "最高 2048 短边（更慢）" },
+              ]}
+            />
+          </div>
+        )}
       {mode === "vid_gen" &&
         (family === "minimax-h3-ref2va" || family === "hyperflow-h3-flash-ref2va") && (
           <RefMediaSection
@@ -362,6 +596,13 @@ export const ImageInputsPanel = memo(function ImageInputsPanel({
             step={0.05}
           />
         </>
+      )}
+      {promptImagesSupported && onSetPromptImages && (
+        <PromptImagesSection
+          promptImages={promptImages ?? {}}
+          onChange={onSetPromptImages}
+          onInsert={onInsertPromptImageRef}
+        />
       )}
     </Panel>
   );

@@ -71,4 +71,27 @@ describe("UpscaleDialog", () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+
+  // 上游 #2396：/upscale 对 0 < tile_size < 32 改为 HTTP 400（不再静默钳制到 32）。
+  it("blocks tileSize between 1 and 31 and allows 0 or >= 32", async () => {
+    const onSubmit = vi.fn();
+    renderDialog({ onSubmit });
+
+    const input = screen.getByLabelText(/分块尺寸/);
+    await userEvent.clear(input);
+    await userEvent.type(input, "16{Enter}");
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/≥ 32/);
+    expect(screen.getByRole("button", { name: "开始放大" })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "64{Enter}");
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    const submit = screen.getByRole("button", { name: "开始放大" });
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ tileSize: 64 }));
+  });
 });

@@ -13,19 +13,29 @@ import {
   b64ToDataUrl,
   buildRequestBody,
   deepClone,
-  deepMerge,
   extractApiError,
   featureEnabled,
   formatError,
+  isDglBackend,
   jobProgressSummary,
   LINGBOT_PROMPT_TEMPLATE,
   MAX_JOBS,
   MAX_RESULTS,
+  neutralModeDefaults,
   previewModesFromCapabilities,
   reconcileOutputFormat,
+  resolveInitialParams,
   resolvePreviewMode,
+  resolveResetParams,
   sdcppMetadataToGenParams,
+  supportsFullHighNoiseSampling,
+  supportsImagePreprocess,
+  supportsIpAdapter,
+  supportsRefImageOverrides,
+  supportsShiftedTimestep,
+  supportsSlg,
   validateLingbotPrompt,
+  validatePromptImages,
   vaeTilingProtocolFromCapabilities,
 } from "../../lib/utils";
 import {
@@ -115,12 +125,14 @@ export function GenerationUI() {
   const refVideos = useStore((s) => s.refVideos);
   const refAudios = useStore((s) => s.refAudios);
   const refVideoAudios = useStore((s) => s.refVideoAudios);
+  const promptImages = useStore((s) => s.promptImages);
   const setImage = useStore((s) => s.setImage);
   const setRefImages = useStore((s) => s.setRefImages);
   const setControlFrames = useStore((s) => s.setControlFrames);
   const setRefVideos = useStore((s) => s.setRefVideos);
   const setRefAudios = useStore((s) => s.setRefAudios);
   const setRefVideoAudios = useStore((s) => s.setRefVideoAudios);
+  const setPromptImages = useStore((s) => s.setPromptImages);
   const seedRandom = useStore((s) => s.seedRandom);
   const setSeedRandom = useStore((s) => s.setSeedRandom);
   const sizeStep = useStore((s) => s.sizeStep);
@@ -249,6 +261,10 @@ export function GenerationUI() {
   const refAudiosSupported = mode === "vid_gen" && featureEnabled(features, "ref_audios");
   const refVideoAudiosSupported =
     mode === "vid_gen" && featureEnabled(features, "ref_video_audios");
+  // 上游 #2341：提示词内联图片（prompt_images + <image:ID>），img_gen 与 vid_gen
+  // 均支持；SenseNova U1.5 在家族配置中显式禁用。
+  const promptImagesSupported = featureEnabled(features, "prompt_images", true);
+  const dglBackend = isDglBackend(caps);
   useEffect(() => {
     if (activeFamilyOverride) return;
     const p = caps?.model?.path || caps?.model?.name || "";
@@ -323,13 +339,12 @@ export function GenerationUI() {
   useEffect(() => {
     if (!caps) return;
     const familyCfg = FAMILY_CONFIG[family];
-    const candidates: (Partial<GenParams> | undefined)[] = [
-      caps.defaults_by_mode?.[mode],
-      caps.defaults,
-      familyCfg ? familyDefaults(familyCfg, mode) : undefined,
-    ];
-    const d = candidates.find((c) => c && typeof c === "object");
-    if (!d) {
+    const capsDefaults = caps.defaults_by_mode?.[mode] ?? caps.defaults;
+    const recommended = familyCfg ? familyDefaults(familyCfg, mode) : undefined;
+    const hasAnyDefaults =
+      (capsDefaults && typeof capsDefaults === "object") ||
+      (recommended && typeof recommended === "object");
+    if (!hasAnyDefaults) {
       const fallback = caps.current_mode || caps.supported_modes?.[0];
       if (fallback && fallback !== mode) {
         setMode(fallback);
@@ -340,20 +355,23 @@ export function GenerationUI() {
         toast("内核过旧：无法读取生成默认值，已使用中性默认值，请核对参数", true);
       }
       // 最后一道兜底：至少给出尺寸/步数的中性默认值，保证界面可用。
-      setParams({ width: 1024, height: 1024, seed: -1, sample_params: {} } as GenParams);
+      setParams(neutralModeDefaults(mode));
       return;
     }
     try {
       const s = localStorage.getItem("sdcpp:params:" + mode);
+      const persisted = s ? (JSON.parse(s) as Record<string, unknown>) : null;
       setParams(
         reconcileOutputFormat(
-          s ? deepMerge(deepClone(d as GenParams), JSON.parse(s)) : deepClone(d as GenParams),
+          resolveInitialParams(mode, capsDefaults, recommended, persisted),
           caps,
           mode,
         ),
       );
     } catch {
-      setParams(reconcileOutputFormat(deepClone(d as GenParams), caps, mode));
+      setParams(
+        reconcileOutputFormat(resolveInitialParams(mode, capsDefaults, recommended), caps, mode),
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- family/familyCfg 变化由 mode/caps 覆盖（切换模型时 caps 必变）
   }, [mode, caps, family]);
@@ -396,6 +414,7 @@ export function GenerationUI() {
         refVideos: refVideos.map((frames) => [...frames]),
         refAudios: [...refAudios],
         refVideoAudios: [...refVideoAudios],
+        promptImages: { ...promptImages },
       };
       const next = imageSnapshots.current[m];
       setImage("initImage", next.initImage);
@@ -408,6 +427,7 @@ export function GenerationUI() {
       setRefVideos(() => (next.refVideos ?? []).map((frames) => [...frames]));
       setRefAudios(() => [...(next.refAudios ?? [])]);
       setRefVideoAudios(() => [...(next.refVideoAudios ?? [])]);
+      setPromptImages(() => ({ ...(next.promptImages ?? {}) }));
       setMode(m);
     },
     [
@@ -422,12 +442,14 @@ export function GenerationUI() {
       refVideos,
       refAudios,
       refVideoAudios,
+      promptImages,
       setImage,
       setRefImages,
       setControlFrames,
       setRefVideos,
       setRefAudios,
       setRefVideoAudios,
+      setPromptImages,
       setMode,
       flushParamsWrite,
     ],
@@ -461,12 +483,23 @@ export function GenerationUI() {
         refVideos: refVideosSupported ? refVideos : [],
         refAudios: refAudiosSupported ? refAudios : [],
         refVideoAudios: refVideoAudiosSupported ? refVideoAudios : [],
+        ...(promptImagesSupported && Object.keys(promptImages).length ? { promptImages } : {}),
       },
       FAMILY_CONFIG[family],
     );
     const missingInputs = missingRequiredInputs(FAMILY_CONFIG[family], mode, images);
     if (missingInputs.length > 0) {
       toast("请先提供: " + missingInputs.join("、"), true);
+      return;
+    }
+    const promptImagesError = validatePromptImages(
+      params.prompt || "",
+      params.negative_prompt || "",
+      images.promptImages,
+      { strictUnbound: dglBackend },
+    );
+    if (promptImagesError) {
+      toast(promptImagesError, true);
       return;
     }
     // 互斥组合（MiniMax-H3：参考图/参考媒体与首尾帧、hires 与首尾帧）上游
@@ -518,6 +551,14 @@ export function GenerationUI() {
         // 实际声明的键名发送，避免"设置了但内核读不到"。
         vaeTilingProtocol: vaeTilingProtocolFromCapabilities(caps),
         previewModes: previewModesFromCapabilities(caps, mode),
+        dglBackend,
+        family,
+        supportsSlg: supportsSlg(caps),
+        supportsShiftedTimestep: supportsShiftedTimestep(caps),
+        supportsImagePreprocess: supportsImagePreprocess(caps),
+        supportsRefImageOverrides: supportsRefImageOverrides(caps),
+        supportsIpAdapter: supportsIpAdapter(caps, features),
+        supportsFullHighNoise: supportsFullHighNoiseSampling(caps, features),
       });
       const { status, body: respBody } = await api.sdcppSubmit(mode, body);
       if (status === 202) {
@@ -538,6 +579,7 @@ export function GenerationUI() {
                   refVideos: (images.refVideos ?? []).map((frames) => [...frames]),
                   refAudios: [...(images.refAudios ?? [])],
                   refVideoAudios: [...(images.refVideoAudios ?? [])],
+                  ...(images.promptImages ? { promptImages: { ...images.promptImages } } : {}),
                 },
               },
             },
@@ -575,11 +617,15 @@ export function GenerationUI() {
     refVideos,
     refAudios,
     refVideoAudios,
+    promptImages,
     controlFramesSupported,
     refImagesSupported,
     refVideosSupported,
     refAudiosSupported,
     refVideoAudiosSupported,
+    promptImagesSupported,
+    dglBackend,
+    features,
     seedRandom,
     update,
     setJobs,
@@ -696,15 +742,14 @@ export function GenerationUI() {
 
   const resetToDefaults = useCallback(() => {
     if (!caps || !params) return;
-    // 防御：某 mode 在 capabilities 中无默认值时 deepClone(undefined) 会抛
-    // SyntaxError（JSON.parse(undefined)），这里回落空对象（对抗性审查 B6）。
-    const defaults = caps.defaults_by_mode?.[mode];
-    const base = defaults ? deepClone(defaults) : ({} as Partial<GenParams>);
+    const defaults = caps.defaults_by_mode?.[mode] ?? caps.defaults;
     const cfg = FAMILY_CONFIG[family];
     const recommended = cfg ? familyDefaults(cfg, mode) : undefined;
-    const merged = (
-      recommended ? deepMerge(base as GenParams, deepClone(recommended)) : base
-    ) as GenParams;
+    const merged = reconcileOutputFormat(
+      resolveResetParams(mode, defaults, recommended),
+      caps,
+      mode,
+    );
     merged.prompt = params.prompt || "";
     merged.negative_prompt = params.negative_prompt || "";
     setParams(merged);
@@ -910,6 +955,7 @@ export function GenerationUI() {
       setRefVideos(() => (img?.refVideos ?? []).map((frames) => [...frames]));
       setRefAudios(() => [...(img?.refAudios ?? [])]);
       setRefVideoAudios(() => [...(img?.refVideoAudios ?? [])]);
+      setPromptImages(() => ({ ...(img?.promptImages ?? {}) }));
       // 恢复配置的意图是复现：种子已是提交时的具体值，关闭随机开关。
       if (p.seed >= 0) setSeedRandom(false);
       // 跨 mode 时还要写入 localStorage，供 mode 切换后的 init effect 读取。
@@ -933,6 +979,7 @@ export function GenerationUI() {
       setRefVideos,
       setRefAudios,
       setRefVideoAudios,
+      setPromptImages,
       setSeedRandom,
       setMode,
       toast,
@@ -980,9 +1027,9 @@ export function GenerationUI() {
     (metadata: Record<string, unknown>, _imageSrc: string) => {
       try {
         if (!params) return;
-        // sd-server 元数据：上游 #2206 起是 sdcpp.generation/v1 schema，
-        // 旧图仍是 sdcpp.image.params/v1；sdcppMetadataToGenParams 按 schema
-        // 分流映射为 GenParams（含 Beta 参数回填）。
+        // sd-server 元数据：上游 #2396 起是 sdcpp.dgl/v1（DGL 源码），
+        // #2206–32d516c 是 sdcpp.generation/v1，旧图仍是 sdcpp.image.params/v1；
+        // sdcppMetadataToGenParams 按三代 schema 分流映射为 GenParams（含 Beta 参数回填）。
         const merged = {
           ...deepClone(params),
           ...sdcppMetadataToGenParams(metadata, caps?.loras),
@@ -1074,6 +1121,16 @@ export function GenerationUI() {
   const handleInsertLingbot = useCallback(() => {
     update("prompt", LINGBOT_PROMPT_TEMPLATE);
   }, [update]);
+
+  const handleInsertPromptImageRef = useCallback(
+    (id: string) => {
+      const current = useStore.getState().params?.prompt || "";
+      const sep = current.length > 0 && !/\s$/.test(current) ? " " : "";
+      update("prompt", `${current}${sep}<image:${id}>`);
+      toast(`已插入 <image:${id}>`);
+    },
+    [update, toast],
+  );
 
   const openDashboard = useCallback(() => setDashboardOpen(true), [setDashboardOpen]);
   const toggleNegative = useCallback(() => setShowNegative((v) => !v), []);
@@ -1349,6 +1406,10 @@ export function GenerationUI() {
               refVideosSupported={refVideosSupported}
               refAudiosSupported={refAudiosSupported}
               refVideoAudiosSupported={refVideoAudiosSupported}
+              promptImages={promptImages}
+              promptImagesSupported={promptImagesSupported}
+              onSetPromptImages={setPromptImages}
+              onInsertPromptImageRef={handleInsertPromptImageRef}
               params={params}
               seedRandom={seedRandom}
               sizeScale={sizeScale}

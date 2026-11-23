@@ -37,12 +37,53 @@ fn xml_unescape(text: &str) -> String {
         .replace("&apos;", "'")
 }
 
+/// 将上游 #2396+ 嵌入的 UTF-8 DGL 源码包装成统一的 schema 对象，供前端
+/// `sdcppMetadataToGenParams` 与历史画廊搜索消费。
+fn dgl_metadata_value(source: &str) -> serde_json::Value {
+    serde_json::json!({
+        "schema": "sdcpp.dgl/v1",
+        "dgl": source,
+    })
+}
+
 fn parse_webp_xmp(xmp: &str) -> Option<serde_json::Value> {
+    // 上游 #2396+（media_metadata.cpp::generation_xmp）：优先读取 `<sdcpp:dgl>`
+    // 中的完整 DGL 源码，旧图无该标签时回落 `<sdcpp:parameters>` 里的 SDCPP JSON。
+    const DGL_OPEN: &str = "<sdcpp:dgl>";
+    const DGL_CLOSE: &str = "</sdcpp:dgl>";
+    if let Some(start) = xmp.find(DGL_OPEN) {
+        let content_start = start + DGL_OPEN.len();
+        if let Some(rel_end) = xmp[content_start..].find(DGL_CLOSE) {
+            let source = xml_unescape(&xmp[content_start..content_start + rel_end]);
+            if !source.trim().is_empty() {
+                return Some(dgl_metadata_value(&source));
+            }
+        }
+    }
     const OPEN: &str = "<sdcpp:parameters>";
     const CLOSE: &str = "</sdcpp:parameters>";
     let start = xmp.find(OPEN)? + OPEN.len();
     let rel_end = xmp[start..].find(CLOSE)?;
     extract_sdcpp_metadata(&xml_unescape(&xmp[start..start + rel_end]))
+}
+
+/// 解析未压缩的 PNG `iTXt` chunk：`keyword\0compression_flag(0)\0language\0translated\0text`。
+/// 上游 #2396+ `media_metadata.cpp::png_text` 统一以未压缩 UTF-8 `iTXt` 写入
+/// `"dgl"` 与 `"parameters"`。
+fn parse_png_itxt(chunk_data: &[u8]) -> Option<(&str, &str)> {
+    let nul = chunk_data.iter().position(|&b| b == 0)?;
+    let keyword = std::str::from_utf8(&chunk_data[..nul]).ok()?;
+    let rest = chunk_data.get(nul + 1..)?;
+    if rest.len() < 2 || rest[0] != 0 {
+        return None;
+    }
+    // 跳过 compression_flag(1) + compression_method(1) + language_tag\0 + translated_keyword\0
+    let after_flags = &rest[2..];
+    let lang_nul = after_flags.iter().position(|&b| b == 0)?;
+    let after_lang = &after_flags[lang_nul + 1..];
+    let trans_nul = after_lang.iter().position(|&b| b == 0)?;
+    let text = std::str::from_utf8(&after_lang[trans_nul + 1..]).ok()?;
+    Some((keyword, text))
 }
 
 /// 元数据一般写在文件前部（PNG 的 tEXt 通常紧跟 IHDR，WebP 的 XMP 在 VP8X 头后），
@@ -61,7 +102,7 @@ fn read_head(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// 在已知字节上扫 PNG chunk，找 `parameters` tEXt。
+/// 在已知字节上扫 PNG chunk，找 `iTXt` (`dgl` / `parameters`) 与旧版 `tEXt` (`parameters`)。
 fn scan_png_metadata(data: &[u8]) -> Result<Option<serde_json::Value>> {
     if data.len() < 33 {
         return Err(anyhow!("file too small to be PNG"));
@@ -72,22 +113,31 @@ fn scan_png_metadata(data: &[u8]) -> Result<Option<serde_json::Value>> {
         return Err(anyhow!("不是有效的 PNG 文件"));
     }
     let mut off = 8usize;
+    let mut legacy: Option<serde_json::Value> = None;
     while off + 12 <= data.len() {
         let len = read_be_u32(data, off) as usize;
         if off + 12 + len > data.len() {
             break;
         }
         let chunk_type = &data[off + 4..off + 8];
-        if chunk_type == b"tEXt" {
+        if chunk_type == b"iTXt" {
+            let chunk_data = &data[off + 8..off + 8 + len];
+            if let Some((keyword, text)) = parse_png_itxt(chunk_data) {
+                if keyword == "dgl" && !text.trim().is_empty() {
+                    return Ok(Some(dgl_metadata_value(text)));
+                }
+                if keyword == "parameters" && legacy.is_none() {
+                    legacy = extract_sdcpp_metadata(text);
+                }
+            }
+        } else if chunk_type == b"tEXt" {
             let chunk_data = &data[off + 8..off + 8 + len];
             // tEXt: keyword\0text
             if let Some(nul) = chunk_data.iter().position(|&b| b == 0) {
                 let keyword = std::str::from_utf8(&chunk_data[..nul]).unwrap_or("");
-                if keyword == "parameters" {
+                if keyword == "parameters" && legacy.is_none() {
                     let text = std::str::from_utf8(&chunk_data[nul + 1..]).unwrap_or("");
-                    if let Some(v) = extract_sdcpp_metadata(text) {
-                        return Ok(Some(v));
-                    }
+                    legacy = extract_sdcpp_metadata(text);
                 }
             }
         } else if chunk_type == b"IEND" {
@@ -95,7 +145,7 @@ fn scan_png_metadata(data: &[u8]) -> Result<Option<serde_json::Value>> {
         }
         off += 12 + len;
     }
-    Ok(None)
+    Ok(legacy)
 }
 
 /// Parse a PNG file and extract the `parameters` tEXt chunk (sd-server
@@ -160,6 +210,82 @@ pub fn parse_webp_metadata(path: &str) -> Result<Option<serde_json::Value>> {
         return Ok(None);
     }
     scan_webp_metadata(&fs::read(path)?)
+}
+
+/// 在已知字节上扫 JPEG COM 段（`0xFF 0xFE`），提取上游 #2396+ 写入的
+/// `dgl\0<source>\0`（以及旧版 `parameters\0...SDCPP: {...}\0`）。
+fn scan_jpeg_metadata(data: &[u8]) -> Result<Option<serde_json::Value>> {
+    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+        return Err(anyhow!("not a valid JPEG"));
+    }
+    let mut off = 2usize;
+    let mut legacy: Option<serde_json::Value> = None;
+    while off + 2 <= data.len() {
+        if data[off] != 0xFF {
+            break;
+        }
+        while off < data.len() && data[off] == 0xFF {
+            off += 1;
+        }
+        if off >= data.len() {
+            break;
+        }
+        let marker = data[off];
+        off += 1;
+        // EOI 或 SOS（压缩扫描数据开始）之后不再有段头。
+        if marker == 0xD9 || marker == 0xDA {
+            break;
+        }
+        // 无长度字段的独立标记（RST0–RST7、TEM、填充 0x00）。
+        if matches!(marker, 0x00 | 0x01 | 0xD0..=0xD8) {
+            continue;
+        }
+        if off + 2 > data.len() {
+            break;
+        }
+        let seg_len = u16::from_be_bytes([data[off], data[off + 1]]) as usize;
+        if seg_len < 2 || off + seg_len > data.len() {
+            break;
+        }
+        let payload = &data[off + 2..off + seg_len];
+        if marker == 0xFE {
+            if let Some(nul) = payload.iter().position(|&b| b == 0) {
+                let label = std::str::from_utf8(&payload[..nul]).unwrap_or("");
+                let raw_val = &payload[nul + 1..];
+                let trimmed_val = raw_val.strip_suffix(&[0]).unwrap_or(raw_val);
+                let text = std::str::from_utf8(trimmed_val).unwrap_or("");
+                if label == "dgl" && !text.trim().is_empty() {
+                    return Ok(Some(dgl_metadata_value(text)));
+                }
+                if label == "parameters" && legacy.is_none() {
+                    legacy = extract_sdcpp_metadata(text);
+                }
+            } else if legacy.is_none() {
+                let text = std::str::from_utf8(payload).unwrap_or("");
+                legacy = extract_sdcpp_metadata(text);
+            }
+        }
+        off += seg_len;
+    }
+    Ok(legacy)
+}
+
+/// Parse a JPEG file and extract COM segment metadata (`dgl` / `parameters`).
+pub fn parse_jpeg_metadata(path: &str) -> Result<Option<serde_json::Value>> {
+    let path = Path::new(path);
+    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size > MAX_METADATA_FILE_BYTES {
+        return Err(anyhow!("文件超过 64 MB，跳过元数据解析"));
+    }
+    // 上游 `embed_jpeg_metadata` 把 COM 段直接插在 SOI（偏移 2）之后，头部读取即可命中。
+    let head = read_head(path, METADATA_HEAD_BYTES)?;
+    if let Some(v) = scan_jpeg_metadata(&head)? {
+        return Ok(Some(v));
+    }
+    if size <= METADATA_HEAD_BYTES {
+        return Ok(None);
+    }
+    scan_jpeg_metadata(&fs::read(path)?)
 }
 
 /// 去掉 Windows canonicalize 产出的 `\\?\` verbatim 前缀。starts_with 比较
@@ -264,6 +390,8 @@ pub fn list_output_files(dir: &str) -> Result<Vec<serde_json::Value>> {
                     parse_png_metadata(&path_str)
                 } else if ext == "webp" {
                     parse_webp_metadata(&path_str)
+                } else if ext == "jpg" || ext == "jpeg" {
+                    parse_jpeg_metadata(&path_str)
                 } else {
                     Ok(None)
                 };
@@ -423,5 +551,87 @@ mod tests {
         let v = extract_sdcpp_metadata("prompt\nSteps: 4, SDCPP: {\"a\":1}").unwrap();
         assert_eq!(v["a"], 1);
         assert!(extract_sdcpp_metadata("no metadata here").is_none());
+    }
+
+    fn make_png_itxt(keyword: &str, text: &str) -> Vec<u8> {
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&1u32.to_be_bytes());
+        ihdr.extend_from_slice(&1u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let mut itxt = keyword.as_bytes().to_vec();
+        itxt.extend_from_slice(&[0, 0, 0, 0, 0]); // nul + comp_flag + comp_method + lang nul + trans nul
+        itxt.extend_from_slice(text.as_bytes());
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        png.extend_from_slice(&chunk(b"IHDR", &ihdr));
+        png.extend_from_slice(&chunk(b"iTXt", &itxt));
+        png.extend_from_slice(&chunk(b"IEND", &[]));
+        png
+    }
+
+    fn make_jpeg_com(segments: &[(&str, &str)]) -> Vec<u8> {
+        let mut jpeg = vec![0xFF, 0xD8]; // SOI
+        for (label, value) in segments {
+            let mut payload = label.as_bytes().to_vec();
+            payload.push(0);
+            payload.extend_from_slice(value.as_bytes());
+            payload.push(0);
+            let len = (payload.len() + 2) as u16;
+            jpeg.extend_from_slice(&[0xFF, 0xFE]);
+            jpeg.extend_from_slice(&len.to_be_bytes());
+            jpeg.extend_from_slice(&payload);
+        }
+        jpeg.extend_from_slice(&[0xFF, 0xD9]); // EOI
+        jpeg
+    }
+
+    const DGL_SOURCE: &str = "# version: 0.0.0\nvar {\n    prompt = \"a cat\"\n    seed = 99\n    width = 1024\n    height = 1024\n}\n";
+
+    #[test]
+    fn parses_dgl_source_from_png_itxt_chunk() {
+        let p = temp_path("png");
+        fs::write(&p, make_png_itxt("dgl", DGL_SOURCE)).unwrap();
+        let meta = parse_png_metadata(p.to_str().unwrap())
+            .unwrap()
+            .expect("dgl metadata");
+        let _ = fs::remove_file(&p);
+        assert_eq!(meta["schema"], "sdcpp.dgl/v1");
+        assert_eq!(meta["dgl"], DGL_SOURCE);
+    }
+
+    #[test]
+    fn parses_dgl_source_from_webp_xmp() {
+        let escaped = DGL_SOURCE
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;");
+        let xmp = format!(
+            "<x:xmpmeta><rdf:RDF><rdf:Description><sdcpp:dgl>{}</sdcpp:dgl><sdcpp:parameters>a cat\nSteps: 20</sdcpp:parameters></rdf:Description></rdf:RDF></x:xmpmeta>",
+            escaped
+        );
+        let p = temp_path("webp");
+        fs::write(&p, make_webp(&xmp)).unwrap();
+        let meta = parse_webp_metadata(p.to_str().unwrap())
+            .unwrap()
+            .expect("webp dgl metadata");
+        let _ = fs::remove_file(&p);
+        assert_eq!(meta["schema"], "sdcpp.dgl/v1");
+        assert_eq!(meta["dgl"], DGL_SOURCE);
+    }
+
+    #[test]
+    fn parses_dgl_source_from_jpeg_com_segment() {
+        let p = temp_path("jpg");
+        fs::write(
+            &p,
+            make_jpeg_com(&[("parameters", "a cat\nSteps: 20"), ("dgl", DGL_SOURCE)]),
+        )
+        .unwrap();
+        let meta = parse_jpeg_metadata(p.to_str().unwrap())
+            .unwrap()
+            .expect("jpeg dgl metadata");
+        let _ = fs::remove_file(&p);
+        assert_eq!(meta["schema"], "sdcpp.dgl/v1");
+        assert_eq!(meta["dgl"], DGL_SOURCE);
     }
 }

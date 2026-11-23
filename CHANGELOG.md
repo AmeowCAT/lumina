@@ -5,8 +5,23 @@
 
 ## [Unreleased]
 
-（下一轮的改动写这里。发版时把本节改成 `## <版本号> — <日期>`，并在上方新开一个空的
-`[Unreleased]`。）
+### 同步上游 `0d71f96`（2026-11-23）
+
+- **正确性（DGL 架构双代兼容，上游 #2396 / #2365）**：按 `/sdcpp/v1/capabilities` 的协议指纹（`isDglBackend`）动态识别前 DGL 内核（`<= 32d516c`）与 DGL 架构内核（`#2396+`），避免新版内核 HTTP 400 崩溃：
+  - 新增 `stripNullish` / `resolveInitialParams` / `resolveResetParams`，安全过滤 `#2365/#2396` 序列化为 `null` 的 `std::optional` 默认值，修复全新启动与「重置为推荐值」时宽/高/步数/种子被覆写成 `null` 的问题；`vaeTilingProtocolFromCapabilities` 改为按属性存在性识别协议。
+  - 连接 DGL 内核时，`buildRequestBody` 与参数面板自动省略/隐藏已迁入 DGL 的原生字段：`slg`（含 `{ scale: 0 }`）、`shifted_timestep`、`ip_adapter_strength`/`ip_adapter_image`、`image_preprocess`、`ref_image_args`、`increase_ref_index`、块级缓存 `Fn`/`Bn` 与非 `sample_steps` 的高噪段独立采样参数；非 `qwen-image-layered` 模型不再携带残留的 `qwen_image_layers`。连接旧内核时完整保持原有行为。
+  - Wan2.2 A14B 高噪段面板在 DGL 内核下收敛为「高噪段步数（支持 `-1` 按 MoE Boundary 自动分段）」+「MoE Boundary」并说明共享主采样器/CFG。
+  - 独立放大（`POST /sdcpp/v1/upscale`）对话框拦截 `1–31` 的非法 `tile_size`（#2396+ 从静默抬升 32 改为直接返回 HTTP 400）；进度标签补齐 `executing` / `dgl`。
+- **正确性（三代元数据与 `generation_info` 解析，上游 #2396）**：
+  - Rust 端 `png_info.rs` 新增 PNG `iTXt`（`dgl` / `parameters`）、WebP XMP `<sdcpp:dgl>` 与 JPEG COM 段（`0xFF 0xFE`）解析，并将 `.jpg`/`.jpeg` 纳入历史画廊元数据读取。
+  - 前端 `generationInfoSeed` 兼容 `#2396+` UTF-8 DGL 源码字符串（结果卡/下载文件名继续回显随机种子任务的真实 seed），`sdcppMetadataToGenParams` 新增 `sdcpp.dgl/v1` 分支（`dglGenerationToGenParams`），恢复提示词、尺寸、种子、采样参数、高噪步数、分层数（`layers - 1`）、hires、VAE 分块、缓存草稿与 LoRA。
+- **新增（提示词内联图片，上游 #2341）**：原生 `img_gen` / `vid_gen` 接入 `prompt_images`（`<image:ID>`）：图片输入面板新增内联图片上传、ID 重命名、一键插入 `<image:ID>` 与提交前校验（ID 合法性、未闭合标记、32 张上限、未绑定 ID 拦截），任务快照与字节预算同步纳管；SenseNova U1.5 按家族禁用。
+- **工程化（CLI 预检双代适配，上游 #2396）**：`cli.rs` 登记 `--dgl-dir`（支持旧内核拦截与路径校验），并在确认 DGL 内核时对已移除的 32 个旧启动参数（`--ref-image-args`、`--motion-module`、`--ip-adapter`、`--ad-model`、`--slg-scale`、`--high-noise-*` 等）给出指向性清理错误；控制台兼容性面板与「参考图处理」提示同步更新。
+- **正确性（视频帧对齐与家族完善，上游 #2396 / #2337 / #2340 / #2203）**：
+  - `alignVideoFrames` 支持 `"ceil" | "floor"`，默认按 `#2396+` 向上对齐（Wan/Hunyuan/LingBot `4n+1`、LTX `8n+1`），连接前 DGL 内核时自动切换为向下对齐并同步界面提示。
+  - MiniMax-H3 / HyperFlow H3 / P-H3-Image 全部 6 族补齐统一文本编码器说明（支持 Qwen3-VL 32B 或 P-H3 Qwen3-VL 4B）与可选 `--embeddings-connectors` 槽位。
+  - MOSS-Image 补齐可选 `--llm_vision` 视觉投影槽位（`mmproj-BF16.gguf`），并更新 HQ 编辑 LoRA（`armV5-moss-edit-lora`）与 `<image:ID>` 内联提示图使用提示。
+- **工程化与文档**：`scripts/upstream-diff.mjs` 补齐 `prompt_images` 键提取与 DGL 架构 / ADetailer 移除 / `/upscale` `tile_size` 语义漂移检查；修正 `README.md` 已迁移的上游文档链接（`docs/guides/performance.md`、`docs/guides/backend.md`）；完整分析与落点见 `docs/UPSTREAM-SYNC-2026-11-23.md`。
 
 ## 0.10.0 — 2026-11-11
 

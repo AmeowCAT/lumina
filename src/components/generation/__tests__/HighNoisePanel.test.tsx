@@ -113,4 +113,28 @@ describe("HighNoisePanel lms/extra args", () => {
 
     expect(onUpdate).toHaveBeenCalledWith("high_noise_sample_params.extra_sample_args", "gamma=4");
   });
+
+  // 上游 #2396（DGL）：high_noise_sample_params 仅保留 sample_steps 与 moe_boundary。
+  it("hides DGL-removed high-noise fields when fullSampling is false", () => {
+    const onUpdate = vi.fn();
+    render(
+      <HighNoisePanel
+        {...base}
+        fullSampling={false}
+        hsp={{ sample_steps: -1, sample_method: "euler", guidance: { txt_cfg: 3.5 } }}
+        moeBoundary={0.85}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    expect(screen.getByRole("slider", { name: /高噪段步数/ })).toHaveAttribute(
+      "aria-valuetext",
+      "-1",
+    );
+    expect(screen.getByRole("slider", { name: /^MoE Boundary/ })).toBeTruthy();
+    expect(screen.getByText(/当前内核（DGL 架构）的高噪段复用主采样器/)).toBeTruthy();
+    expect(screen.queryByLabelText("采样器")).toBeNull();
+    expect(screen.queryByLabelText("调度器")).toBeNull();
+    expect(screen.queryByLabelText("额外采样参数 (高噪)")).toBeNull();
+  });
 });

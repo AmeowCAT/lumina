@@ -157,3 +157,101 @@ describe("GenerationParamsSheet ref media", () => {
     expect(screen.queryByRole("button", { name: "添加视频音轨" })).toBeNull();
   });
 });
+
+// 上游 #2396（DGL）与 #2341（prompt_images）：Sheet 按内核能力动态隐藏 DGL-only 控件、
+// 切向上帧对齐提示，并按 feature 展示提示词内联图片区。
+describe("GenerationParamsSheet DGL & prompt_images gating", () => {
+  const DGL_CAPS = {
+    generation_features: {
+      slg: false,
+      shifted_timestep: false,
+      image_preprocess: false,
+      ref_image_args: false,
+      increase_ref_index: false,
+      ip_adapter: false,
+    },
+    defaults_by_mode: {
+      vid_gen: {
+        width: null,
+        height: null,
+        vae_tiling_params: { tile_size_w: null, tile_size_h: null },
+      },
+    },
+    features_by_mode: {
+      vid_gen: {
+        ref_images: true,
+        prompt_images: true,
+        high_noise_sample_params: false,
+      },
+    },
+  } as unknown as Capabilities;
+
+  it("hides ImagePreprocessPanel / SLG / H3 ref_image_size and shows prompt_images & upward frame hint on DGL kernels", () => {
+    render(
+      <GenerationParamsSheet
+        open
+        onClose={vi.fn()}
+        caps={DGL_CAPS}
+        mode="vid_gen"
+        family="wan-t2v"
+        features={{ ref_images: true, prompt_images: true, high_noise_sample_params: false }}
+        refImagesSupported
+        controlFramesSupported={false}
+        initImage={null}
+        maskImage={null}
+        controlImage={null}
+        ipAdapterImage={null}
+        endImage={null}
+        refImages={[]}
+        controlFrames={[]}
+        refVideos={[]}
+        refAudios={[]}
+        refVideoAudios={[]}
+        refVideosSupported={false}
+        refAudiosSupported={false}
+        refVideoAudiosSupported={false}
+        onSetRefVideos={vi.fn()}
+        onSetRefAudios={vi.fn()}
+        onSetRefVideoAudios={vi.fn()}
+        promptImages={{}}
+        promptImagesSupported
+        onSetPromptImages={vi.fn()}
+        onInsertPromptImageRef={vi.fn()}
+        params={
+          {
+            width: 832,
+            height: 480,
+            video_frames: 34,
+            fps: 16,
+            seed: 1,
+            sample_params: {},
+          } as GenParams
+        }
+        seedRandom={false}
+        sizeScale={1}
+        sizeStep={1}
+        onSizeStep={vi.fn()}
+        showDistilled={false}
+        sheetTarget={null}
+        onUpdate={vi.fn()}
+        onSetImage={vi.fn()}
+        onSetRefImages={vi.fn()}
+        onSetControlFrames={vi.fn()}
+        onInitSize={vi.fn()}
+        onSizeScale={vi.fn()}
+        onSizeBaseReset={vi.fn()}
+        onSeedEdit={vi.fn()}
+        onRandomSeed={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    );
+
+    // DGL 内核隐藏图像预处理面板和 SLG 跳层
+    expect(screen.queryByRole("button", { name: "图像预处理" })).toBeNull();
+    expect(screen.queryByLabelText(/跳层索引/)).toBeNull();
+    // 提示内联图片区（#2341）可见
+    expect(screen.getByText(/提示内联图片/)).toBeTruthy();
+    // Wan 34 帧在 DGL 内核下提示向上对齐到 37 帧
+    expect(screen.getByText(/实际生成 37 帧.*4n\+1 向上对齐/)).toBeTruthy();
+  });
+});

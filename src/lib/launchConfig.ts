@@ -438,6 +438,11 @@ export function filterFamilyInputs(images: GenImages, config?: FamilyConfig): Ge
     refVideos: disabled.has("ref_videos") ? [] : (images.refVideos ?? []),
     refAudios: disabled.has("ref_audios") ? [] : (images.refAudios ?? []),
     refVideoAudios: disabled.has("ref_video_audios") ? [] : (images.refVideoAudios ?? []),
+    ...(images.promptImages !== undefined
+      ? {
+          promptImages: disabled.has("prompt_images") ? {} : { ...images.promptImages },
+        }
+      : {}),
   };
 }
 

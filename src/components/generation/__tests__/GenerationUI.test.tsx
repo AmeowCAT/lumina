@@ -473,4 +473,130 @@ describe("GenerationUI 结构（暗房重构版）", () => {
     await screen.findByRole("button", { name: "生成" });
     expect(screen.queryByRole("button", { name: "添加条件帧" })).toBeNull();
   });
+
+  // 上游 #2365/#2396：DGL 内核的 /capabilities 默认值里 std::optional<T> 为 null，
+  // 且发送已迁入 DGL 的字段会返回 HTTP 400（dgl_only_parameter）。
+  it("handles all-null DGL capabilities defaults and strips DGL-only fields on submit", async () => {
+    const dglCaps = {
+      ...CAPS,
+      generation_features: {
+        slg: false,
+        shifted_timestep: false,
+        image_preprocess: false,
+        ref_image_args: false,
+        increase_ref_index: false,
+        ip_adapter: false,
+      },
+      defaults_by_mode: {
+        img_gen: {
+          prompt: "",
+          negative_prompt: "",
+          width: null,
+          height: null,
+          seed: -1,
+          batch_count: 1,
+          control_type: "none",
+          sample_params: {
+            sample_method: null,
+            scheduler: null,
+            sample_steps: null,
+            eta: null,
+            shifted_timestep: null,
+            guidance: { txt_cfg: null, img_cfg: null, distilled_guidance: null },
+          },
+          vae_tiling_params: {
+            enabled: false,
+            tile_size_w: null,
+            tile_size_h: null,
+          },
+        },
+      },
+      features_by_mode: {
+        img_gen: {
+          init_image: true,
+          ref_images: true,
+          prompt_images: true,
+          vae_tiling: true,
+        },
+      },
+    };
+    localStorage.setItem(
+      "sdcpp:params:img_gen",
+      JSON.stringify({
+        width: 1024,
+        height: 1024,
+        seed: 42,
+        ip_adapter_strength: 0.7,
+        image_preprocess: ["target=ref,mode=none"],
+        ref_image_args: "ref_image_size=max",
+        increase_ref_index: true,
+        auto_resize_ref_image: false,
+        qwen_image_layers: 3,
+        cache_mode: "dbcache",
+        cache_options: { threshold: 0.12, Fn: 8, Bn: 2, warmup: 4 },
+        sample_params: {
+          sample_steps: 20,
+          shifted_timestep: 100,
+          guidance: { txt_cfg: 5, slg: { scale: 2.5, layers: [7, 8] } },
+        },
+      }),
+    );
+    useStore.setState({
+      caps: dglCaps as never,
+      mode: "img_gen",
+      params: null,
+      mainModel: CAPS.model.path,
+      familyOverride: "flux",
+      seedRandom: false,
+    });
+    render(<GenerationUI />);
+    fireEvent.click(await screen.findByRole("button", { name: "生成" }));
+
+    await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
+    const body = apiMocks.sdcppSubmit.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.width).toBe(1024);
+    expect(body.height).toBe(1024);
+    expect(body).not.toHaveProperty("ip_adapter_strength");
+    expect(body).not.toHaveProperty("image_preprocess");
+    expect(body).not.toHaveProperty("ref_image_args");
+    expect(body).not.toHaveProperty("increase_ref_index");
+    expect(body).not.toHaveProperty("auto_resize_ref_image");
+    expect(body).not.toHaveProperty("qwen_image_layers");
+    expect(body.cache_option).toBe("threshold=0.12,warmup=4");
+    const sp = body.sample_params as Record<string, unknown>;
+    expect(sp).not.toHaveProperty("shifted_timestep");
+    expect((sp.guidance as Record<string, unknown>) ?? {}).not.toHaveProperty("slg");
+  });
+
+  // 上游 #2341：提示词 <image:ID> 必须与 prompt_images 一一对应，否则阻塞提交。
+  it("validates prompt_images tags before submit and sends matched map", async () => {
+    const promptImgCaps = {
+      ...CAPS,
+      features_by_mode: { img_gen: { prompt_images: true } },
+    };
+    useStore.setState({
+      caps: promptImgCaps as never,
+      mode: "img_gen",
+      params: null,
+      mainModel: CAPS.model.path,
+      familyOverride: "qwen-image",
+      promptImages: { cat: "data:image/png;base64,Q0FU" },
+      seedRandom: false,
+    });
+    render(<GenerationUI />);
+    const promptBox = await screen.findByLabelText("正向提示词");
+    fireEvent.change(promptBox, { target: { value: "draw <image:dog> next to <image:cat>" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成" }));
+
+    expect(apiMocks.sdcppSubmit).not.toHaveBeenCalled();
+    expect(useStore.getState().toasts.at(-1)?.msg).toContain("dog");
+
+    fireEvent.change(promptBox, { target: { value: "draw <image:cat> on a sofa" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成" }));
+
+    await waitFor(() => expect(apiMocks.sdcppSubmit).toHaveBeenCalledTimes(1));
+    expect(apiMocks.sdcppSubmit.mock.calls[0][1].prompt_images).toEqual({
+      cat: "data:image/png;base64,Q0FU",
+    });
+  });
 });

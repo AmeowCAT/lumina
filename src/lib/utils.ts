@@ -164,6 +164,100 @@ export function deepMerge<T extends object>(target: T, source: object): T {
   return r as T;
 }
 
+/**
+ * 递归剥离 plain object 中值为 `null` / `undefined` 的键（保留数组与非空原始值）。
+ *
+ * 上游 #2365/#2396 起 `SDGenerationParams` / `SDSampleParams` 的大多数成员改为
+ * `std::optional<T>`，`/capabilities` 的 `defaults_by_mode` 对启动期未显式配置的
+ * 字段统一输出 JSON `null`。直接 `deepMerge` 会把家族推荐值和中性默认值冲成
+ * `null`（导致宽/高/步数/种子全部失效），合并前必须先过滤空值。
+ */
+export function stripNullish<T>(value: T): T {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (raw === null || raw === undefined) continue;
+    if (typeof raw === "object" && !Array.isArray(raw)) {
+      const nested = stripNullish(raw as Record<string, unknown>);
+      if (Object.keys(nested).length > 0) out[key] = nested;
+    } else {
+      out[key] = raw;
+    }
+  }
+  return out as T;
+}
+
+/** 各生成模式的中性兜底默认值（当 capabilities 字段为 null 且无家族预设时兜住界面）。 */
+export function neutralModeDefaults(mode: GenMode): GenParams {
+  if (mode === "vid_gen") {
+    return {
+      prompt: "",
+      negative_prompt: "",
+      width: 832,
+      height: 480,
+      seed: -1,
+      video_frames: 33,
+      fps: 16,
+      sample_params: {
+        sample_steps: 20,
+        guidance: { txt_cfg: 6 },
+      },
+    };
+  }
+  return {
+    prompt: "",
+    negative_prompt: "",
+    width: 1024,
+    height: 1024,
+    seed: -1,
+    batch_count: 1,
+    sample_params: {
+      sample_steps: 20,
+      guidance: { txt_cfg: 7 },
+    },
+  };
+}
+
+/**
+ * 合并生成页初始化参数：中性兜底 → 家族推荐 → 服务端非空默认 → localStorage 持久化。
+ *
+ * 所有层级先过 `stripNullish`，确保 `#2396+` 内核 `defaults_by_mode` 里的 `null`
+ * 不会把家族推荐值或中性默认值覆盖掉，同时显式写在启动参数里的非空默认值仍然生效。
+ */
+export function resolveInitialParams(
+  mode: GenMode,
+  capsDefaults: Partial<GenParams> | undefined,
+  familyRecommended: Record<string, unknown> | undefined,
+  persisted?: Record<string, unknown> | null,
+): GenParams {
+  let merged = neutralModeDefaults(mode);
+  if (familyRecommended) merged = deepMerge(merged, stripNullish(deepClone(familyRecommended)));
+  if (capsDefaults) merged = deepMerge(merged, stripNullish(deepClone(capsDefaults)));
+  if (persisted && typeof persisted === "object" && !Array.isArray(persisted)) {
+    merged = deepMerge(merged, stripNullish(deepClone(persisted)));
+  }
+  if (!merged.sample_params) merged.sample_params = { guidance: {} };
+  if (!merged.sample_params.guidance) merged.sample_params.guidance = {};
+  return merged;
+}
+
+/**
+ * 合并「重置为推荐值」参数：中性兜底 → 服务端非空默认 → 家族推荐。
+ * 显式重置时家族推荐优先于服务端通用默认，且保留非空输出格式等服务端默认。
+ */
+export function resolveResetParams(
+  mode: GenMode,
+  capsDefaults: Partial<GenParams> | undefined,
+  familyRecommended: Record<string, unknown> | undefined,
+): GenParams {
+  let merged = neutralModeDefaults(mode);
+  if (capsDefaults) merged = deepMerge(merged, stripNullish(deepClone(capsDefaults)));
+  if (familyRecommended) merged = deepMerge(merged, stripNullish(deepClone(familyRecommended)));
+  if (!merged.sample_params) merged.sample_params = { guidance: {} };
+  if (!merged.sample_params.guidance) merged.sample_params.guidance = {};
+  return merged;
+}
+
 export function b64ToBlobUrl(b64: string, mime: string): string {
   const b = atob(b64.includes(",") ? b64.split(",")[1] : b64);
   const u = new Uint8Array(b.length);
@@ -486,6 +580,7 @@ const PROGRESS_STAGE_LABELS: Record<string, string> = {
   queued: "排队中",
   waiting: "等待执行",
   preparing: "准备中",
+  executing: "执行中",
   conditioning: "条件编码",
   sampling: "采样",
   vae_encode: "VAE 编码",
@@ -508,6 +603,7 @@ const PROGRESS_DETAIL_LABELS: Record<string, string> = {
   low_noise: "低噪段",
   image: "图片",
   video: "视频",
+  dgl: "DGL 脚本",
 };
 
 export function progressDetailLabel(detail: string): string {
@@ -530,14 +626,28 @@ export function jobProgressSummary(p: JobProgress): string {
 }
 
 /**
- * 结果项 `generation_info` 里的实际 seed（上游 #2206）：十进制字符串
- * （保全 int64 范围），宽松兼容 number。解析失败/负值返回 undefined，
- * 调用方回落「请求 seed + 批次偏移」的旧逻辑。
+ * 结果项 `generation_info` 里的实际 seed：
+ *  - 上游 #2206–32d516c：`sdcpp.generation/v1` JSON 对象，`seed` 为十进制字符串
+ *    （保全 int64 范围），宽松兼容 number；
+ *  - 上游 #2396+：UTF-8 DGL 源码字符串（或由 Rust 包装的 `sdcpp.dgl/v1` 对象），
+ *    从 `var { seed = <int> }` 提取。
+ * 解析失败/负值返回 undefined，调用方回落「请求 seed + 批次偏移」的旧逻辑。
  */
-export function generationInfoSeed(info?: Record<string, unknown> | null): number | undefined {
-  const raw = info?.seed;
+export function generationInfoSeed(
+  info?: Record<string, unknown> | string | null,
+): number | undefined {
+  if (!info) return undefined;
+  if (typeof info === "string") {
+    const vars = parseDglVarBlock(info);
+    return generationInfoSeed(vars);
+  }
+  const raw = info.seed;
   const n = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
-  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : undefined;
+  if (typeof n === "number" && Number.isFinite(n) && n >= 0) return n;
+  if (typeof info.dgl === "string") {
+    return generationInfoSeed(info.dgl);
+  }
+  return undefined;
 }
 
 /**
@@ -566,6 +676,8 @@ function jobImagesBytes(job: Job): number {
     ...(images.refVideos ?? []).flat(),
     ...(images.refAudios ?? []),
     ...(images.refVideoAudios ?? []),
+    // 内联提示图片（上游 #2341）：最多 32 张 base64 图，必须计入预算。
+    ...Object.values(images.promptImages ?? {}),
   ];
   let total = 0;
   for (const src of all) if (src) total += b64ByteLength(src);
@@ -899,15 +1011,24 @@ export function cacheModeGroup(mode: string | undefined): CacheModeGroup | null 
   }
 }
 
-/** 当前模式可调的缓存键（顺序即拼串顺序）；关闭/未知模式返回空数组。 */
-export function cacheOptionFields(mode: string | undefined): CacheOptionFieldSpec[] {
+/**
+ * 当前模式可调的缓存键（顺序即拼串顺序）；关闭/未知模式返回空数组。
+ * 上游 #2396+（DGL 架构）改为条件级缓存，`Fn`/`Bn` 在 common.cpp 里只打告警并忽略，
+ * 因此 `dglBackend` 为 true 时隐藏并跳过这两个键。
+ */
+export function cacheOptionFields(
+  mode: string | undefined,
+  options?: { dglBackend?: boolean },
+): CacheOptionFieldSpec[] {
   switch (cacheModeGroup(mode)) {
     case "easy":
       return EASY_FIELDS;
     case "ucache":
       return UCACHE_FIELDS;
     case "block":
-      return BLOCK_FIELDS;
+      return options?.dglBackend
+        ? BLOCK_FIELDS.filter((f) => f.key !== "Fn" && f.key !== "Bn")
+        : BLOCK_FIELDS;
     case "spectrum":
       return SPECTRUM_FIELDS;
     default:
@@ -948,9 +1069,10 @@ export function buildCacheOption(
   mode: string | undefined,
   draft: CacheOptionDraft | undefined,
   raw?: string,
+  options?: { dglBackend?: boolean },
 ): string | undefined {
   const parts: string[] = [];
-  for (const spec of cacheOptionFields(mode)) {
+  for (const spec of cacheOptionFields(mode, options)) {
     const value = draft?.[spec.key];
     if (value === undefined || value === null) continue;
     if (spec.kind === "toggle") {
@@ -1056,12 +1178,26 @@ function cacheOptionTarget(key: "threshold" | "warmup", group: CacheModeGroup | 
  */
 export function resolveCacheOption(
   params: Pick<GenParams, "cache_mode" | "cache_option" | "cache_options">,
+  options?: { dglBackend?: boolean },
 ): string | undefined {
   if (!params.cache_options) {
     const raw = (params.cache_option || "").trim();
-    return raw || undefined;
+    if (!raw) return undefined;
+    if (options?.dglBackend) {
+      const kept = raw
+        .split(",")
+        .map((part) => part.trim())
+        .filter((part) => {
+          if (!part) return false;
+          const eq = part.indexOf("=");
+          const key = eq > 0 ? part.slice(0, eq).trim() : "";
+          return key !== "Fn" && key !== "Bn";
+        });
+      return kept.length ? kept.join(",") : undefined;
+    }
+    return raw;
   }
-  return buildCacheOption(params.cache_mode, params.cache_options, params.cache_option);
+  return buildCacheOption(params.cache_mode, params.cache_options, params.cache_option, options);
 }
 
 /** SCM 步掩码只在块级缓存（dbcache/taylorseer/cache-dit）下有意义。 */
@@ -1215,12 +1351,188 @@ export function vaeTilingProtocolFromCapabilities(
   for (const mode of ["img_gen", "vid_gen"] as GenMode[]) {
     const tiling = caps?.defaults_by_mode?.[mode]?.vae_tiling_params;
     if (!tiling) continue;
-    if (tiling.tile_size_w != null || tiling.tile_size_h != null) return "pixels";
-    if (tiling.rel_size_w != null || tiling.rel_size_h != null) return "pixels";
-    if (tiling.tile_size_x != null || tiling.tile_size_y != null) return "latent";
-    if (tiling.rel_size_x != null || tiling.rel_size_y != null) return "latent";
+    // 上游 #2365/#2396 起 std::optional 未设置时输出 JSON null，键存在即表明协议类型。
+    if (
+      "tile_size_w" in tiling ||
+      "tile_size_h" in tiling ||
+      "rel_size_w" in tiling ||
+      "rel_size_h" in tiling
+    ) {
+      return "pixels";
+    }
+    if (
+      "tile_size_x" in tiling ||
+      "tile_size_y" in tiling ||
+      "rel_size_x" in tiling ||
+      "rel_size_y" in tiling
+    ) {
+      return "latent";
+    }
   }
   return "pixels";
+}
+
+/**
+ * 判断所连接的 `sd-server` 是否为上游 #2396+ DGL 架构内核。
+ *
+ * 判据取自上游 `routes_sdcpp.cpp` + `model_catalog.cpp` 的确定性协议指纹，绝不按
+ * Lumina 自身版本猜测：
+ *  1. 若 `defaults_by_mode` / `defaults` 仍含 `image_preprocess` 或 `ref_image_args`，
+ *     一定是 #2028–32d516c 的前 DGL 内核 → `false`（先早退，避免前 DGL recipe
+ *     偶发关闭 `slg` 时误判）；
+ *  2. 否则，以下任一指纹成立即确认是 #2396+ DGL 内核：
+ *     - `defaults_by_mode.img_gen`（或 `defaults`）含 `control_type`（#2284 新增，
+ *       晚于 `image_preprocess`）却不含 `image_preprocess` / `ref_image_args`；
+ *     - `features_by_mode.vid_gen.high_noise_sample_params === false`（#2396 从 true 改 false）；
+ *     - `generation_features` 同时将 `slg`、`shifted_timestep`、`ip_adapter` 置为 `false`
+ *       （#2396 `resolve_recipe_features` 强制清零这三项）。
+ */
+export function isDglBackend(caps?: Capabilities | null): boolean {
+  if (!caps) return false;
+  const imgDefaults = caps.defaults_by_mode?.img_gen ?? caps.defaults;
+  const vidDefaults = caps.defaults_by_mode?.vid_gen;
+  const hasPreDglDefaults = (d?: GenParams) =>
+    !!d && ("image_preprocess" in d || "ref_image_args" in d || "increase_ref_index" in d);
+  if (hasPreDglDefaults(imgDefaults) || hasPreDglDefaults(vidDefaults)) return false;
+
+  if (imgDefaults && "control_type" in imgDefaults) return true;
+  if (caps.features_by_mode?.vid_gen?.high_noise_sample_params === false) return true;
+  const gf = caps.generation_features;
+  if (gf && gf.slg === false && gf.shifted_timestep === false && gf.ip_adapter === false) {
+    return true;
+  }
+  return false;
+}
+
+/** 当前内核是否支持在原生请求体里发送 SLG（#2396+ 已迁至 DGL，发送即 400）。 */
+export function supportsSlg(caps?: Capabilities | null): boolean {
+  if (isDglBackend(caps)) return false;
+  if (caps?.generation_features && typeof caps.generation_features.slg === "boolean") {
+    return caps.generation_features.slg;
+  }
+  return true;
+}
+
+/** 当前内核是否支持在原生请求体里发送 `shifted_timestep`（#2396+ 已迁至 DGL，发送即 400）。 */
+export function supportsShiftedTimestep(caps?: Capabilities | null): boolean {
+  if (isDglBackend(caps)) return false;
+  if (caps?.generation_features && typeof caps.generation_features.shifted_timestep === "boolean") {
+    return caps.generation_features.shifted_timestep;
+  }
+  return true;
+}
+
+/** 当前内核是否支持原生 `image_preprocess`（#2396+ 出现即 400）。 */
+export function supportsImagePreprocess(caps?: Capabilities | null): boolean {
+  return !isDglBackend(caps);
+}
+
+/** 当前内核是否支持原生 `ref_image_args` / `increase_ref_index`（#2396+ 非空/true 即 400）。 */
+export function supportsRefImageOverrides(caps?: Capabilities | null): boolean {
+  return !isDglBackend(caps);
+}
+
+/** 当前内核是否支持原生 IP-Adapter 请求字段（#2396+ 发送 `ip_adapter_strength` 即 400）。 */
+export function supportsIpAdapter(caps?: Capabilities | null, features?: Features): boolean {
+  if (isDglBackend(caps)) return false;
+  if (features && typeof features.ip_adapter_image === "boolean") {
+    return features.ip_adapter_image;
+  }
+  if (caps?.generation_features && typeof caps.generation_features.ip_adapter === "boolean") {
+    return caps.generation_features.ip_adapter;
+  }
+  return true;
+}
+
+/**
+ * 当前内核是否支持高噪段完整独立采样参数（采样器/调度器/CFG/Eta/Flow Shift/额外参数）。
+ * 上游 #2396+ 只允许 `high_noise_sample_params.sample_steps`（配 `moe_boundary`），
+ * 发送其它高噪段字段会被 `dgl_only_parameter` 拒绝（400）。
+ */
+export function supportsFullHighNoiseSampling(
+  caps?: Capabilities | null,
+  features?: Features,
+): boolean {
+  if (isDglBackend(caps)) return false;
+  if (features && typeof features.high_noise_sample_params === "boolean") {
+    return features.high_noise_sample_params;
+  }
+  return true;
+}
+
+/** 上游 #2341 单次请求最多允许的唯一内联提示图片数（generation_prompt.cpp:93）。 */
+export const MAX_PROMPT_IMAGES = 32;
+
+/**
+ * 提取提示词里所有未转义的 `<image:ID>` 引用（对齐上游 `generation_prompt.cpp`）。
+ * 奇数个反斜杠前缀（如 `\<image:foo>`）表示字面文本，不计为图片引用；
+ * 未闭合的 `<image:` 或空 `<image:>` 返回可读错误。
+ */
+export function extractPromptImageRefs(text: string): { ids: string[]; error: string | null } {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("<image:", cursor);
+    if (start < 0) break;
+    let slashes = 0;
+    while (start > slashes && text[start - slashes - 1] === "\\") slashes++;
+    if (slashes % 2 === 1) {
+      cursor = start + 7;
+      continue;
+    }
+    const end = text.indexOf(">", start + 7);
+    if (end < 0 || end === start + 7) {
+      return { ids, error: "提示词中的 <image:ID> 标记未闭合或缺少图片 ID" };
+    }
+    const id = text.slice(start + 7, end);
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+    cursor = end + 1;
+  }
+  return { ids, error: null };
+}
+
+/**
+ * 提交前校验 `prompt_images`（上游 #2341 + `common.cpp:1938`）：
+ *  - ID 不能为空，且不能包含 `>`；
+ *  - 正/反向提示词引用的唯一 ID 总数不超过 32；
+ *  - 若已附加 `prompt_images` 或启用严格检查（`strictUnbound`），未闭合标记或
+ *    找不到对应 ID 的 `<image:ID>` 在提交前拦截并给出可读原因。
+ */
+export function validatePromptImages(
+  prompt: string,
+  negativePrompt: string,
+  promptImages?: Record<string, string>,
+  options?: { strictUnbound?: boolean },
+): string | null {
+  const entries = Object.entries(promptImages ?? {});
+  for (const [id, src] of entries) {
+    if (!id) return "提示内联图片的 ID 不能为空";
+    if (id.includes(">")) return `提示内联图片 ID 不能包含 ">"：${id}`;
+    if (!src) return `提示内联图片「${id}」缺少图片数据`;
+  }
+  const shouldCheckMarkers = entries.length > 0 || options?.strictUnbound === true;
+  if (!shouldCheckMarkers) return null;
+
+  const pos = extractPromptImageRefs(prompt);
+  if (pos.error) return pos.error;
+  const neg = extractPromptImageRefs(negativePrompt);
+  if (neg.error) return neg.error;
+
+  const unique = new Set([...pos.ids, ...neg.ids]);
+  if (unique.size > MAX_PROMPT_IMAGES) {
+    return `单次请求最多支持 ${MAX_PROMPT_IMAGES} 张提示内联图片（当前引用了 ${unique.size} 张）`;
+  }
+  const map = promptImages ?? {};
+  for (const id of unique) {
+    if (!(id in map)) {
+      return `提示词引用了 <image:${id}>，但未在「提示内联图片」中提供该 ID（如需字面文本请写 \\<image:${id}>）`;
+    }
+  }
+  return null;
 }
 
 /** 该分块设置是否带旧内核的 latent 单位字段（x/y 命名）。 */
@@ -1559,14 +1871,428 @@ function generationV1ToGenParams(
   return out;
 }
 
-/** 把 sd-server 嵌入图片的元数据映射为 GenParams：上游 #2206 起是
- * `sdcpp.generation/v1`（键位全变，见 generationV1ToGenParams），旧图仍是
- * `sdcpp.image.params/v1`，按 schema 分流。元数据中的 LoRA 只有文件名/相对
- * 路径，需用 `availableLoras` 匹配回完整路径，匹配不到的跳过。 */
+/** 跳过空白与 DGL `# ...` 行注释，返回下一个有效字符索引。 */
+function skipDglTrivia(src: string, start: number): number {
+  let i = start;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") {
+      i++;
+      continue;
+    }
+    if (ch === "#") {
+      const nl = src.indexOf("\n", i);
+      i = nl < 0 ? src.length : nl + 1;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
+/** 从 `start` 起扫描单个 JSON 字面量（字符串/数组/对象/数值/布尔/null）。 */
+function scanJsonLiteral(src: string, start: number): { value: unknown; end: number } | null {
+  const i = skipDglTrivia(src, start);
+  if (i >= src.length) return null;
+  const first = src[i];
+  if (first === '"') {
+    let j = i + 1;
+    while (j < src.length) {
+      if (src[j] === "\\") {
+        j += 2;
+        continue;
+      }
+      if (src[j] === '"') {
+        try {
+          return { value: JSON.parse(src.slice(i, j + 1)), end: j + 1 };
+        } catch {
+          return null;
+        }
+      }
+      j++;
+    }
+    return null;
+  }
+  if (first === "[" || first === "{") {
+    const open = first;
+    const close = first === "[" ? "]" : "}";
+    let depth = 0;
+    let inString = false;
+    let j = i;
+    while (j < src.length) {
+      const ch = src[j];
+      if (inString) {
+        if (ch === "\\") j += 2;
+        else {
+          if (ch === '"') inString = false;
+          j++;
+        }
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === open) depth++;
+      else if (ch === close) {
+        depth--;
+        if (depth === 0) {
+          try {
+            return { value: JSON.parse(src.slice(i, j + 1)), end: j + 1 };
+          } catch {
+            return null;
+          }
+        }
+      }
+      j++;
+    }
+    return null;
+  }
+  const rest = src.slice(i);
+  const m = /^(?:true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=[\s,)}\]#]|$)/.exec(rest);
+  if (!m) return null;
+  try {
+    return { value: JSON.parse(m[0]), end: i + m[0].length };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 解析上游 #2396+ DGL 源码顶层 `var { key = <JSON literal> }` 块。
+ * 上游 `generation_program.cpp` 用 JSON 序列化写每个变量值，因此扫描器可安全
+ * 处理含 `}` / `=` / 转义引号的多行字符串与数组，不被正则误截断。
+ */
+export function parseDglVarBlock(source: string): Record<string, unknown> {
+  const vars: Record<string, unknown> = {};
+  if (!source) return vars;
+  const header = /(?:^|\n)[ \t]*var[ \t]*\{/m.exec(source);
+  if (!header) return vars;
+  let i = header.index + header[0].length;
+  while (i < source.length) {
+    i = skipDglTrivia(source, i);
+    if (i >= source.length || source[i] === "}") break;
+    const ident = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(i));
+    if (!ident) {
+      const nl = source.indexOf("\n", i);
+      i = nl < 0 ? source.length : nl + 1;
+      continue;
+    }
+    const key = ident[0];
+    i = skipDglTrivia(source, i + key.length);
+    if (source[i] !== "=") {
+      const nl = source.indexOf("\n", i);
+      i = nl < 0 ? source.length : nl + 1;
+      continue;
+    }
+    const parsed = scanJsonLiteral(source, i + 1);
+    if (parsed) {
+      vars[key] = parsed.value;
+      i = parsed.end;
+    } else {
+      const nl = source.indexOf("\n", i + 1);
+      i = nl < 0 ? source.length : nl + 1;
+    }
+  }
+  return vars;
+}
+
+/** 扫描 DGL 源码中指定函数调用里的具名常量参数（`key = <JSON literal>`）。 */
+function parseDglNamedCallArgs(source: string, callName: string): Record<string, unknown>[] {
+  const results: Record<string, unknown>[] = [];
+  let cursor = 0;
+  const token = `${callName}(`;
+  while (cursor < source.length) {
+    const idx = source.indexOf(token, cursor);
+    if (idx < 0) break;
+    const prev = idx > 0 ? source[idx - 1] : "";
+    if (prev && /[A-Za-z0-9_:]/.test(prev)) {
+      cursor = idx + token.length;
+      continue;
+    }
+    // 找平衡的调用右括号，同时跳过字符串与嵌套括号。
+    let i = idx + token.length;
+    let depth = 1;
+    let inString = false;
+    const args: Record<string, unknown> = {};
+    while (i < source.length && depth > 0) {
+      if (inString) {
+        if (source[i] === "\\") i += 2;
+        else {
+          if (source[i] === '"') inString = false;
+          i++;
+        }
+        continue;
+      }
+      if (depth === 1) {
+        i = skipDglTrivia(source, i);
+        if (i >= source.length || source[i] === ")") {
+          i++;
+          break;
+        }
+        if (source[i] === ",") {
+          i++;
+          continue;
+        }
+        const kw = /^([A-Za-z_][A-Za-z0-9_]*)[ \t]*=(?!=)/.exec(source.slice(i));
+        if (kw) {
+          const valStart = i + kw[0].length;
+          const literal = scanJsonLiteral(source, valStart);
+          if (literal) {
+            args[kw[1]] = literal.value;
+            i = literal.end;
+            continue;
+          }
+          // 非常量实参（如嵌套调用或变量引用）：跳到同层逗号或右括号。
+          i = valStart;
+          continue;
+        }
+      }
+      const ch = source[i];
+      if (ch === '"') inString = true;
+      else if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") depth--;
+      i++;
+    }
+    results.push(args);
+    cursor = i;
+  }
+  return results;
+}
+
+function hiresUpscalerFromDgl(
+  source: string,
+  mode: string | undefined,
+  antialias: boolean | undefined,
+  modelPath: string | undefined,
+): string | undefined {
+  if (modelPath) return fileStem(modelPath);
+  if (!mode) return undefined;
+  const pixelSpace = /\bhires_pixels\s*=/.test(source);
+  if (mode === "lanczos") return "Lanczos";
+  if (mode === "nearest") return pixelSpace ? "Nearest" : "Latent (nearest)";
+  if (mode === "nearest_exact") return "Latent (nearest-exact)";
+  if (mode === "bicubic") {
+    return antialias ? "Latent (bicubic antialiased)" : "Latent (bicubic)";
+  }
+  if (mode === "bilinear") {
+    return antialias ? "Latent (antialiased)" : "Latent";
+  }
+  return undefined;
+}
+
+/**
+ * 上游 #2396+ DGL 源码（PNG `iTXt` `dgl` / WebP XMP `<sdcpp:dgl>` / JPEG COM `dgl`
+ * / HTTP `generation_info` 字符串）→ `GenParams`。
+ *
+ * `var { ... }` 提供主参数；调用点（`encode_prompt` / `make_sigmas` / `predictor` /
+ * `sample` / `tiling` / `cache` / `controlnet::apply` / `load_lora`+`apply_lora`）
+ * 补齐其余未进 `var` 块的设置，实现与前 DGL 元数据等价的「从历史图恢复参数」。
+ */
+export function dglGenerationToGenParams(
+  source: string,
+  availableLoras?: { name: string; path: string }[],
+): Partial<GenParams> {
+  const vars = parseDglVarBlock(source);
+  const encodeCalls = parseDglNamedCallArgs(source, "encode_prompt");
+  const sigmaCalls = parseDglNamedCallArgs(source, "make_sigmas");
+  const predictorCalls = parseDglNamedCallArgs(source, "predictor");
+  const sampleCalls = [
+    ...parseDglNamedCallArgs(source, "sample"),
+    ...parseDglNamedCallArgs(source, "sefi::sample"),
+  ];
+  const controlCalls = parseDglNamedCallArgs(source, "controlnet::apply");
+  const tilingCalls = parseDglNamedCallArgs(source, "tiling");
+  const cacheCalls = parseDglNamedCallArgs(source, "cache");
+  const upscalerCalls = parseDglNamedCallArgs(source, "load_upscaler");
+
+  const firstNum = (calls: Record<string, unknown>[], key: string): number | undefined => {
+    for (const c of calls) {
+      const v = metaNum(c[key]);
+      if (v !== undefined) return v;
+    }
+    return undefined;
+  };
+  const firstStr = (calls: Record<string, unknown>[], key: string): string | undefined => {
+    for (const c of calls) {
+      const v = metaStr(c[key]);
+      if (v !== undefined) return v;
+    }
+    return undefined;
+  };
+
+  const totalSteps = metaNum(vars.steps);
+  const highNoiseSteps = metaNum(vars.high_noise_steps);
+  // 双专家 Wan2.2 显式配置 high_noise_steps >= 0 时，上游把 var.steps 写成
+  // low_steps + high_steps（generation_video.cpp:73），恢复时拆回两段步数。
+  const sampleSteps =
+    totalSteps != null &&
+    highNoiseSteps != null &&
+    highNoiseSteps >= 0 &&
+    totalSteps >= highNoiseSteps
+      ? totalSteps - highNoiseSteps
+      : totalSteps;
+
+  const extraArgs = firstStr(sampleCalls, "extra_args") ?? firstStr(sigmaCalls, "extra_args");
+  const flowShift =
+    firstNum(sigmaCalls, "flow_shift") ?? firstNum(predictorCalls, "video_sigma_shift");
+  const distilledGuidance = firstNum(predictorCalls, "guidance");
+  const clipSkip = firstNum(encodeCalls, "clip_skip");
+  const vaceStrength = firstNum(predictorCalls, "vace_strength");
+  const controlType = controlTypeFromMetadata(firstStr(controlCalls, "type"));
+  const layers = metaNum(vars.layers);
+
+  const sampleParams: SampleParams = {
+    sample_steps: sampleSteps,
+    sample_method: metaStr(vars.method),
+    scheduler: metaStr(vars.scheduler),
+    eta: metaNum(vars.eta),
+    flow_shift: flowShift,
+    custom_sigmas: metaNumArr(vars.custom_sigmas),
+    ...parseExtraSampleArgs(extraArgs),
+    guidance: {
+      txt_cfg: metaNum(vars.cfg_scale),
+      img_cfg: metaNum(vars.image_cfg_scale),
+      distilled_guidance: distilledGuidance,
+    },
+  };
+
+  const hasSampleFields =
+    sampleParams.sample_steps != null ||
+    sampleParams.sample_method != null ||
+    sampleParams.scheduler != null ||
+    sampleParams.eta != null ||
+    sampleParams.flow_shift != null ||
+    sampleParams.custom_sigmas != null ||
+    sampleParams.extra_sample_args != null ||
+    sampleParams.guidance.txt_cfg != null ||
+    sampleParams.guidance.img_cfg != null ||
+    sampleParams.guidance.distilled_guidance != null;
+
+  const out: Partial<GenParams> = {
+    prompt: metaStr(vars.source_prompt) ?? metaStr(vars.prompt),
+    negative_prompt: metaStr(vars.source_negative_prompt) ?? metaStr(vars.negative_prompt),
+    width: metaNum(vars.width),
+    height: metaNum(vars.height),
+    seed: generationInfoSeed(vars),
+    sample_params: hasSampleFields ? sampleParams : undefined,
+    video_frames: metaNum(vars.frames),
+    fps: metaNum(vars.fps),
+    moe_boundary: metaNum(vars.moe_boundary),
+    vace_strength: vaceStrength,
+    clip_skip: clipSkip,
+    strength: metaNum(vars.strength),
+    control_strength: metaNum(vars.control_strength),
+    control_type: controlType,
+    // generation_image.cpp:210：DGL 的 var.layers 等于 qwen_image_layers + 1。
+    qwen_image_layers: layers != null ? Math.max(0, Math.trunc(layers) - 1) : undefined,
+  };
+
+  if (highNoiseSteps != null) {
+    out.high_noise_sample_params = {
+      sample_steps: highNoiseSteps,
+      guidance: {},
+    };
+  }
+
+  if (
+    vars.hires_target_width != null ||
+    vars.hires_target_height != null ||
+    vars.hires_steps != null ||
+    vars.hires_mode != null
+  ) {
+    const hiresSteps = metaNum(vars.hires_steps);
+    const hiresSchedSteps = metaNum(vars.hires_scheduler_steps);
+    const derivedDenoise =
+      hiresSteps != null && hiresSchedSteps != null && hiresSteps > 0 && hiresSchedSteps > 0
+        ? Math.min(1, Math.round((hiresSteps / hiresSchedSteps) * 10000) / 10000)
+        : undefined;
+    out.hires = {
+      enabled: true,
+      upscaler: hiresUpscalerFromDgl(
+        source,
+        metaStr(vars.hires_mode),
+        metaBool(vars.hires_antialias),
+        metaStr(vars.hires_model_path),
+      ),
+      target_width: metaNum(vars.hires_target_width),
+      target_height: metaNum(vars.hires_target_height),
+      steps: hiresSteps,
+      denoising_strength: derivedDenoise,
+      custom_sigmas: metaNumArr(vars.hires_custom_sigmas),
+      upscale_tile_size: firstNum(upscalerCalls, "tile_size"),
+    };
+  }
+
+  if (tilingCalls.length) {
+    const t = tilingCalls[0];
+    out.vae_tiling_params = {
+      enabled: metaBool(t.enabled) ?? true,
+      temporal_tiling: metaBool(t.temporal_tiling),
+      tile_size_w: metaNum(t.tile_size_w),
+      tile_size_h: metaNum(t.tile_size_h),
+      target_overlap: metaNum(t.target_overlap),
+      rel_size_w: metaNum(t.rel_size_w),
+      rel_size_h: metaNum(t.rel_size_h),
+      extra_tiling_args: metaStr(t.extra_args),
+    };
+  }
+
+  if (cacheCalls.length) {
+    const mapped = mapGenerationCache(cacheCalls[0]);
+    out.cache_mode = mapped.mode;
+    if (Object.keys(mapped.draft).length) out.cache_options = mapped.draft;
+    out.scm_mask = mapped.scmMask;
+    out.scm_policy_dynamic = mapped.scmPolicyDynamic;
+  }
+
+  if (availableLoras?.length) {
+    const loaded = new Map<string, { path: string; isHighNoise: boolean }>();
+    const loadRe = /\b((?:high_)?lora_\d+)\s*=\s*load_lora\(\s*("(?:\\.|[^"\\])*")/g;
+    for (const m of source.matchAll(loadRe)) {
+      try {
+        const path = JSON.parse(m[2]) as string;
+        if (path) loaded.set(m[1], { path, isHighNoise: m[1].startsWith("high_") });
+      } catch {
+        /* ignore malformed path literal */
+      }
+    }
+    if (loaded.size) {
+      const weights = new Map<string, number>();
+      const applyRe =
+        /apply_lora\([^)\n]*?,\s*((?:high_)?lora_\d+)\s*,\s*weight\s*=\s*(-?\d+(?:\.\d+)?)/g;
+      for (const m of source.matchAll(applyRe)) {
+        const w = Number(m[2]);
+        if (Number.isFinite(w) && !weights.has(m[1])) weights.set(m[1], w);
+      }
+      const loras: LoraEntry[] = [];
+      for (const [varName, info] of loaded) {
+        const found = matchAvailableLora(availableLoras, info.path);
+        if (found) {
+          loras.push({
+            path: found.path,
+            multiplier: weights.get(varName) ?? 1,
+            is_high_noise: info.isHighNoise || undefined,
+          });
+        }
+      }
+      if (loras.length) out.lora = loras;
+    }
+  }
+
+  return out;
+}
+
+/** 把 sd-server 嵌入图片的元数据映射为 GenParams：
+ *  - `sdcpp.dgl/v1`（上游 #2396+，PNG `iTXt` / WebP XMP `<sdcpp:dgl>` / JPEG COM `dgl`）
+ *  - `sdcpp.generation/v1`（上游 #2206–32d516c）
+ *  - `sdcpp.image.params/v1`（更早旧图）
+ * 三代格式按 schema 分流。元数据中的 LoRA 只有文件名/相对路径，需用
+ * `availableLoras` 匹配回完整路径，匹配不到的跳过。 */
 export function sdcppMetadataToGenParams(
   meta: Record<string, unknown>,
   availableLoras?: { name: string; path: string }[],
 ): Partial<GenParams> {
+  if (meta.schema === "sdcpp.dgl/v1" && typeof meta.dgl === "string") {
+    return dglGenerationToGenParams(meta.dgl, availableLoras);
+  }
   if (meta.schema === "sdcpp.generation/v1") {
     return generationV1ToGenParams(meta, availableLoras);
   }
@@ -1758,6 +2484,22 @@ export interface BuildRequestBodyOptions {
   vaeTilingProtocol?: VaeTilingProtocol;
   /** 当前模式实际支持的预览枚举；空数组禁用预览。 */
   previewModes?: string[];
+  /**
+   * 所选内核是否为上游 #2396+ DGL 架构（由 `isDglBackend(caps)` 判定）。
+   * DGL 内核对若干已迁入 DGL 的原生字段（SLG / shifted_timestep / ip_adapter /
+   * image_preprocess / ref_image_args / increase_ref_index / 高噪段采样器与 CFG）
+   * 直接返回 HTTP 400，启用此项后请求体不再发送这些字段。
+   */
+  dglBackend?: boolean;
+  /** 当前模型家族 ID（用于裁剪模型专属字段如 `qwen_image_layers`，避免非分层模型在 #2396+ 报 400）。 */
+  family?: string;
+  /** 以下细粒度能力开关缺省按 `!dglBackend` 判定，便于调用方与单测按需覆写。 */
+  supportsSlg?: boolean;
+  supportsShiftedTimestep?: boolean;
+  supportsImagePreprocess?: boolean;
+  supportsRefImageOverrides?: boolean;
+  supportsIpAdapter?: boolean;
+  supportsFullHighNoise?: boolean;
 }
 
 export function buildRequestBody(
@@ -1766,6 +2508,14 @@ export function buildRequestBody(
   images: GenImages,
   options: BuildRequestBodyOptions = {},
 ): Record<string, unknown> {
+  const dgl = options.dglBackend === true;
+  const allowSlg = options.supportsSlg ?? !dgl;
+  const allowShiftedTimestep = options.supportsShiftedTimestep ?? !dgl;
+  const allowImagePreprocess = options.supportsImagePreprocess ?? !dgl;
+  const allowRefOverrides = options.supportsRefImageOverrides ?? !dgl;
+  const allowIpAdapter = options.supportsIpAdapter ?? !dgl;
+  const allowFullHighNoise = options.supportsFullHighNoise ?? !dgl;
+
   const sp = params.sample_params;
   // capabilities 把"未设置"序列化为 "default"（routes_sdcpp.cpp
   // capability_*_name）；请求体里省略字段等价于让服务端用模型默认，
@@ -1800,27 +2550,43 @@ export function buildRequestBody(
 
   if (params.clip_skip != null && params.clip_skip !== -1) b.clip_skip = params.clip_skip;
   if (params.strength != null) b.strength = params.strength;
-  // 上游 #2028：img_gen 与 vid_gen 都接受 image_preprocess（规则串数组）。
-  // 编辑态保留空行与空白，避免受控文本框吞掉 Enter；仅在请求边界清理。
-  const imagePreprocess = imagePreprocessDraftLines(params.image_preprocess)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (imagePreprocess.length) b.image_preprocess = imagePreprocess;
+  // 上游 #2028：img_gen 与 vid_gen 都接受 image_preprocess（规则串数组）；
+  // #2396+ DGL 架构改为直接拒绝（400），仅前 DGL 内核发送。
+  if (allowImagePreprocess) {
+    const imagePreprocess = imagePreprocessDraftLines(params.image_preprocess)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (imagePreprocess.length) b.image_preprocess = imagePreprocess;
+  }
 
   if (mode === "img_gen") {
     b.batch_count = params.batch_count || 1;
-    if (params.qwen_image_layers != null) b.qwen_image_layers = params.qwen_image_layers;
-    // 缩放开关新旧双发：旧内核只认布尔键，新内核（#2028 起）只认
-    // ref_image_args，未知键在两边都只被忽略、不会报错。
-    b.auto_resize_ref_image = params.auto_resize_ref_image !== false;
-    const refImageArgs = buildRefImageArgs(params, options.refImagePreset);
-    if (refImageArgs) b.ref_image_args = refImageArgs;
-    b.increase_ref_index = !!params.increase_ref_index;
+    // 上游 #2396 `generation_image.cpp:188`：非 Qwen Image Layered 模型收到
+    // `qwen_image_layers` 直接报 SD_STATUS_UNSUPPORTED（400）。切模型后 localStorage
+    // 可能残留旧值，按 family 过滤。
+    if (
+      params.qwen_image_layers != null &&
+      (!options.family || options.family === "qwen-image-layered")
+    ) {
+      b.qwen_image_layers = params.qwen_image_layers;
+    }
+    if (allowRefOverrides) {
+      // 缩放开关新旧双发：旧内核只认布尔键，#2028–32d516c 内核只认 ref_image_args。
+      // #2396+ DGL 内核对非空 ref_image_args / increase_ref_index=true 直接 400，整段跳过。
+      b.auto_resize_ref_image = params.auto_resize_ref_image !== false;
+      const refImageArgs = buildRefImageArgs(params, options.refImagePreset);
+      if (refImageArgs) b.ref_image_args = refImageArgs;
+      b.increase_ref_index = !!params.increase_ref_index;
+    }
     b.control_strength = params.control_strength ?? 0.9;
     // 上游 #2284：SDXL ControlNet Union 必需的控制类型；其它 ControlNet
     // 忽略该键。空串不发（等价于未设置），非法枚举由控件侧拦截。
     if (params.control_type) b.control_type = params.control_type;
-    b.ip_adapter_strength = params.ip_adapter_strength ?? 1.0;
+    // 上游 #2396 `options.cpp:481`：ip_adapter_strength 属于 DGL 专属参数，
+    // 在原生 img_gen 里发送会直接 400。
+    if (allowIpAdapter) {
+      b.ip_adapter_strength = params.ip_adapter_strength ?? 1.0;
+    }
     b.embed_image_metadata = params.embed_image_metadata !== false;
   }
   if (mode === "vid_gen") {
@@ -1833,21 +2599,31 @@ export function buildRequestBody(
     b.embed_image_metadata = params.embed_image_metadata !== false;
     if (params.moe_boundary != null) b.moe_boundary = params.moe_boundary;
     if (params.vace_strength != null) b.vace_strength = params.vace_strength;
-    // 上游 #2177 起 ref_image_args 也作用于 vid_gen：MiniMax-H3 Ref2VA 用
-    // `ref_image_size=match|max` 控制参考图长边（match 按画布面积，max 用
-    // 2048 px 短边）。界面只在视频侧设置该键，其它键原样透传。
-    const videoRefArgs = (params.ref_image_args || "").trim();
-    if (videoRefArgs) b.ref_image_args = videoRefArgs;
+    // 上游 #2177 起 ref_image_args 也作用于 vid_gen（MiniMax-H3 的 ref_image_size），
+    // #2396+ 改为 DGL 专属参数（非空即 400），仅前 DGL 内核发送。
+    if (allowRefOverrides) {
+      const videoRefArgs = (params.ref_image_args || "").trim();
+      if (videoRefArgs) b.ref_image_args = videoRefArgs;
+    }
   }
 
   if (images.initImage) b.init_image = images.initImage;
   if (mode === "img_gen" && images.maskImage) b.mask_image = images.maskImage;
   if (mode === "img_gen" && images.controlImage) b.control_image = images.controlImage;
-  if (mode === "img_gen" && images.ipAdapterImage) b.ip_adapter_image = images.ipAdapterImage;
+  if (mode === "img_gen" && allowIpAdapter && images.ipAdapterImage) {
+    b.ip_adapter_image = images.ipAdapterImage;
+  }
   if (mode === "vid_gen" && images.endImage) b.end_image = images.endImage;
   // 参考图同时服务于 img_gen（Kontext/PiD 等）与声明支持的 vid 家族
   // （MiniMax-H3 Ref2VA）。调用方按家族能力裁剪后再传入，此处不按 mode 硬过滤。
   if (images.refImages?.length) b.ref_images = images.refImages;
+  // 上游 #2341：提示词内联图片（`<image:ID>`），img_gen 与 vid_gen 均支持。
+  if (images.promptImages) {
+    const validEntries = Object.entries(images.promptImages).filter(
+      ([id, src]) => !!id && !id.includes(">") && !!src,
+    );
+    if (validEntries.length) b.prompt_images = Object.fromEntries(validEntries);
+  }
   // VACE 条件帧：顺序即条件帧顺序，上游按请求顺序保留。
   if (mode === "vid_gen" && images.controlFrames?.length) b.control_frames = images.controlFrames;
   // 上游 #2194：Ref2VA 参考视频（帧数组的数组，JSON 通道固定按 24fps 解释）
@@ -1860,26 +2636,30 @@ export function buildRequestBody(
 
   if (sp?.eta != null) sampleParams.eta = sp.eta;
   if (sp?.flow_shift != null) sampleParams.flow_shift = sp.flow_shift;
-  if (sp?.shifted_timestep != null) sampleParams.shifted_timestep = sp.shifted_timestep;
+  if (allowShiftedTimestep && sp?.shifted_timestep != null) {
+    sampleParams.shifted_timestep = sp.shifted_timestep;
+  }
   if (sp?.custom_sigmas?.length) sampleParams.custom_sigmas = sp.custom_sigmas;
   if (sp?.guidance?.img_cfg != null)
     (sampleParams.guidance as Record<string, unknown>).img_cfg = sp.guidance.img_cfg;
-  const slg = sp?.guidance?.slg;
-  if (slg && slg.scale > 0) {
-    // 只发用户真正设置过的子项：`layers` 缺省时**省略该键**，让服务端沿用
-    // `--skip-layers`（capabilities 的默认值里带着启动参数的真实取值，硬塞
-    // [7,8,9] 会把它顶掉）。空数组在上游等于关闭 SLG（diffusion_engine.cpp:2490），
-    // 所以也绝不能发 `layers: []`。
-    const slgBody: Record<string, unknown> = { scale: slg.scale };
-    if (slg.layers?.length) slgBody.layers = slg.layers;
-    if (slg.layer_start != null) slgBody.layer_start = slg.layer_start;
-    if (slg.layer_end != null) slgBody.layer_end = slg.layer_end;
-    (sampleParams.guidance as Record<string, unknown>).slg = slgBody;
-  } else {
-    // 显式发 scale:0 关闭：请求体是在服务端 default_gen_params 之上合并
-    // （routes_sdcpp.cpp），省略字段会沿用服务端默认——外部 server 若默认
-    // 开启 SLG，省略无法关闭（对抗性审查）。
-    (sampleParams.guidance as Record<string, unknown>).slg = { scale: 0 };
+  if (allowSlg) {
+    const slg = sp?.guidance?.slg;
+    if (slg && slg.scale > 0) {
+      // 只发用户真正设置过的子项：`layers` 缺省时**省略该键**，让服务端沿用
+      // `--skip-layers`（capabilities 的默认值里带着启动参数的真实取值，硬塞
+      // [7,8,9] 会把它顶掉）。空数组在上游等于关闭 SLG（diffusion_engine.cpp:2490），
+      // 所以也绝不能发 `layers: []`。
+      const slgBody: Record<string, unknown> = { scale: slg.scale };
+      if (slg.layers?.length) slgBody.layers = slg.layers;
+      if (slg.layer_start != null) slgBody.layer_start = slg.layer_start;
+      if (slg.layer_end != null) slgBody.layer_end = slg.layer_end;
+      (sampleParams.guidance as Record<string, unknown>).slg = slgBody;
+    } else {
+      // 前 DGL 内核显式发 scale:0 关闭，覆盖外部 server 默认开启的 SLG；
+      // #2396+ DGL 内核对任何 `sample.guidance.slg.*`（含 scale:0）直接 400，
+      // 由外层 allowSlg 分支整块省略。
+      (sampleParams.guidance as Record<string, unknown>).slg = { scale: 0 };
+    }
   }
 
   const vl = (params.lora || []).filter((l) => l.path);
@@ -1920,7 +2700,7 @@ export function buildRequestBody(
     b.cache_mode = params.cache_mode;
     // cache_option：结构化草稿优先（固定键序、按模式裁剪），否则沿用原始串
     // （旧设置 / PNG 元数据恢复）。见 docs/audit/95-f18-semantics.md §2。
-    const cacheOption = resolveCacheOption(params);
+    const cacheOption = resolveCacheOption(params, { dglBackend: dgl });
     if (cacheOption) b.cache_option = cacheOption;
     // scm_mask：**非法内容一律不下发**。上游解析器无 try/catch 且跑在 worker
     // 线程，坏掩码会让 sd-server terminate（见 validateScmMask 注释）。
@@ -1943,36 +2723,47 @@ export function buildRequestBody(
 
   if (mode === "vid_gen" && params.high_noise_sample_params) {
     const h = params.high_noise_sample_params;
-    const hn: Record<string, unknown> = {
-      sample_method: noDefault(h.sample_method),
-      sample_steps: h.sample_steps,
-      scheduler: noDefault(h.scheduler),
-      guidance: {
-        txt_cfg: h.guidance?.txt_cfg,
-        distilled_guidance: h.guidance?.distilled_guidance,
-      },
-    };
-    if (h.eta != null) hn.eta = h.eta;
-    if (h.flow_shift != null) hn.flow_shift = h.flow_shift;
-    // 上游 parse_sample_params_json 对高噪段同样解析 shifted_timestep
-    // （capabilities 的 high_noise_sample_params 默认值里也带这个键）。
-    if (h.shifted_timestep != null) hn.shifted_timestep = h.shifted_timestep;
-    if (h.guidance?.img_cfg != null)
-      (hn.guidance as Record<string, unknown>).img_cfg = h.guidance.img_cfg;
-    // 高噪段 SLG 只在真的开启时发送（审查 95 §5.3）。此前恒发 `{scale:0}`，
-    // 会把服务端启动参数 `--high-noise-slg-scale` 每条请求都打回关闭；
-    // 「要关掉服务端默认」只能靠启动参数表达，不能靠恒发 0 去猜。
-    const hnSlg = h.guidance?.slg;
-    if (hnSlg && hnSlg.scale > 0) {
-      const hnSlgBody: Record<string, unknown> = { scale: hnSlg.scale };
-      if (hnSlg.layers?.length) hnSlgBody.layers = hnSlg.layers;
-      if (hnSlg.layer_start != null) hnSlgBody.layer_start = hnSlg.layer_start;
-      if (hnSlg.layer_end != null) hnSlgBody.layer_end = hnSlg.layer_end;
-      (hn.guidance as Record<string, unknown>).slg = hnSlgBody;
+    if (!allowFullHighNoise) {
+      // 上游 #2396+（options.cpp:476）：除 `high_noise_sample.steps`（-1=按
+      // moe_boundary 自动分段，≥0=显式高噪段步数）外，其余高噪段采样字段全部
+      // 属于 DGL 专属参数，下发即 400。
+      if (h.sample_steps != null && Number.isFinite(h.sample_steps)) {
+        b.high_noise_sample_params = { sample_steps: Math.trunc(h.sample_steps) };
+      }
+    } else {
+      const hn: Record<string, unknown> = {
+        sample_method: noDefault(h.sample_method),
+        sample_steps: h.sample_steps,
+        scheduler: noDefault(h.scheduler),
+        guidance: {
+          txt_cfg: h.guidance?.txt_cfg,
+          distilled_guidance: h.guidance?.distilled_guidance,
+        },
+      };
+      if (h.eta != null) hn.eta = h.eta;
+      if (h.flow_shift != null) hn.flow_shift = h.flow_shift;
+      // 上游 parse_sample_params_json 对高噪段同样解析 shifted_timestep
+      // （capabilities 的 high_noise_sample_params 默认值里也带这个键）。
+      if (allowShiftedTimestep && h.shifted_timestep != null) {
+        hn.shifted_timestep = h.shifted_timestep;
+      }
+      if (h.guidance?.img_cfg != null)
+        (hn.guidance as Record<string, unknown>).img_cfg = h.guidance.img_cfg;
+      // 高噪段 SLG 只在真的开启时发送（审查 95 §5.3）。此前恒发 `{scale:0}`，
+      // 会把服务端启动参数 `--high-noise-slg-scale` 每条请求都打回关闭；
+      // 「要关掉服务端默认」只能靠启动参数表达，不能靠恒发 0 去猜。
+      const hnSlg = allowSlg ? h.guidance?.slg : undefined;
+      if (hnSlg && hnSlg.scale > 0) {
+        const hnSlgBody: Record<string, unknown> = { scale: hnSlg.scale };
+        if (hnSlg.layers?.length) hnSlgBody.layers = hnSlg.layers;
+        if (hnSlg.layer_start != null) hnSlgBody.layer_start = hnSlg.layer_start;
+        if (hnSlg.layer_end != null) hnSlgBody.layer_end = hnSlg.layer_end;
+        (hn.guidance as Record<string, unknown>).slg = hnSlgBody;
+      }
+      const hnExtraArgs = buildExtraSampleArgs(h);
+      if (hnExtraArgs) hn.extra_sample_args = hnExtraArgs;
+      b.high_noise_sample_params = hn;
     }
-    const hnExtraArgs = buildExtraSampleArgs(h);
-    if (hnExtraArgs) hn.extra_sample_args = hnExtraArgs;
-    b.high_noise_sample_params = hn;
   }
 
   return b;

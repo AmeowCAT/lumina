@@ -1294,7 +1294,8 @@ export function Dashboard() {
               ]}
             />
             <div className="field-hint field-hint-flush mt-0.5">
-              作为 --ref-image-args preset=… 在模型启动时传给 sd-server；通常保持自动即可
+              作为 --ref-image-args preset=… 传给前 DGL 内核（&lt;= 32d516c）；DGL
+              架构内核（#2396+） 已移除该启动参数，请保持“自动检测（推荐）”。
             </div>
             {(detectedFamily === "krea2" || detectedFamily === "krea2-turbo") && (
               <div className="field-hint field-hint-flush mt-1">

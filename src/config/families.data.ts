@@ -321,18 +321,18 @@ export const VIDEO_FRAME_MAX: Record<string, number> = {
 };
 
 /**
- * 视频帧数的对齐步长。上游 `align_video_frames` 会把请求帧数归一化为
- * **不超过该值的最大 `step·n + 1`**，且步长依模型版本而定
- * （src/stable-diffusion.cpp `video_frames_to_latent_frames`）：
+ * 视频帧数的对齐步长。上游 `aligned_frames`（`src/model/vae/geometry.hpp`）会按
+ * `step·n + 1` 归一化请求帧数，步长依模型版本而定：
  *   - LTX-AV：8
  *   - Wan / LingBot-Video / Hunyuan-Video：4
  *   - 其余（含 AnimateDiff）：不对齐，原样使用
  *
- * 例外：MiniMax-H3 不走 `step·n+1`，而是 `17k+5` 网格**向上**取整、
- * 最小 5（`max(frames,5)` 后递增到 `%17==5`），在 alignVideoFrames 里特判，
- * 不放进本表（本表公式与取整方向都不适用）。
+ * 取整方向随内核代际变化：上游 #2396+（DGL 架构）改为**向上**取整
+ * （34 → 37、32 → 33、LTX 40 → 41）；前 DGL 内核（<= 32d516c）为**向下**取整
+ * （34 → 33、32 → 29）。
  *
- * 注意 api.md 只笼统写了 "4n+1"，与源码不符，此处以源码为准。
+ * 例外：MiniMax-H3 / HyperFlow H3 在两代内核里均为 `17k+5` 网格**向上**取整、
+ * 最小 5，在 `alignVideoFrames` 里特判，不放进本表。
  */
 export const VIDEO_FRAME_ALIGN: Record<string, number> = {
   "wan-t2v": 4,
@@ -418,6 +418,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       "control_frames",
       "vae_tiling",
       "hires",
+      "prompt_images",
     ],
     sizePresetsByMode: {
       img_gen: [
@@ -684,20 +685,30 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       },
     },
   },
-  // MOSS-Image Base / SFT（上游 #2148）：5B DiT + FLUX.2 VAE + Qwen3.5-9B。
+  // MOSS-Image Base / SFT（上游 #2148 / #2203）：5B DiT + FLUX.2 VAE + Qwen3.5-9B。
   // Qwen3.5 的词表与内嵌 Qwen 不同，必须另配外部 tokenizer.json。
+  // 上游 #2203 起支持编辑 LoRA（HQ 编辑配合 SFT + armV5-moss-edit-lora + ref_images）
+  // 与独立 Qwen3.5 视觉投影（--llm_vision mmproj-BF16.gguf，亦供 #2341 内联提示图使用）。
   "moss-image": {
     name: "MOSS-Image (Base / SFT)",
-    hint: "Diffusion + FLUX.2 VAE + Qwen3.5-9B；需外部 tokenizer（宽高需 16 对齐）",
+    hint: "Diffusion + FLUX.2 VAE + Qwen3.5-9B + 可选视觉投影；需外部 tokenizer（宽高需 16 对齐）",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
       F("vae", "VAE (FLUX.2)", "vae", "vae"),
       F("llm", "LLM (Qwen3.5-9B)", "llm", "llm"),
+      F(
+        "llm_vision",
+        "LLM Vision (mmproj，编辑 / 内联图用，可选)",
+        "llm_vision",
+        "llm_vision",
+        false,
+        "Qwen3.5-9B 视觉投影（如 mmproj-BF16.gguf），用于 HQ 参考图编辑与 <image:ID> 提示内联图片",
+      ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     generationHint:
-      "宽高需为 16 的倍数；必须为该模型的 Qwen3.5 文本编码器单独指定 tokenizer.json，缺了会在建文本编码器时直接报错。Base 与 SFT 共用同一套组件，默认 CFG 3.0，时间偏移可用 --flow-shift 覆盖。",
+      "宽高需为 16 的倍数；必须为 Qwen3.5 文本编码器单独指定 tokenizer.json。Base 与 SFT 共用同一套组件，默认 CFG 3.0，离散调度默认 flow shift 5（可用 Flow Shift 覆盖）。做图像编辑时加载 HQ 编辑 LoRA（如 armV5-moss-edit-lora，配合 SFT）并传入参考图；配置 --llm_vision（mmproj-BF16.gguf）后支持将参考图送入 Qwen3.5 以及在提示词中使用 <image:ID> 内联图片。",
     genDefaults: {
       seed: -1,
       width: 1024,
@@ -731,7 +742,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "ip-adapter",
         "ip_adapter",
         false,
-        "图像提示权重，如 ip-adapter_sdxl_vit-h；Plus 变体由上游按权重自动识别（#1839）",
+        "图像提示权重，如 ip-adapter_sdxl_vit-h；Plus 变体由上游按权重自动识别（#1839）。仅前 DGL 内核（<= 32d516c）支持，#2396+ DGL 架构已迁至 DGL 脚本",
       ),
     ],
     fixedArgs: {},
@@ -756,7 +767,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "motion-module",
         "motion_module",
         false,
-        "支持 AnimateDiff SD 1.5 v2/v3；加载后服务端会开放视频生成模式",
+        "支持 AnimateDiff SD 1.5 v2/v3；仅前 DGL 内核（<= 32d516c）开放原生视频模式，#2396+ DGL 架构已迁至 DGL 脚本",
       ),
       F(
         "clip_vision",
@@ -772,7 +783,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "ip-adapter",
         "ip_adapter",
         false,
-        "图像提示权重，如 ip-adapter_sd15；Plus 变体由上游按权重自动识别（#1839）",
+        "图像提示权重，如 ip-adapter_sd15；Plus 变体由上游按权重自动识别（#1839）。仅前 DGL 内核（<= 32d516c）支持，#2396+ DGL 架构已迁至 DGL 脚本",
       ),
     ],
     fixedArgs: {},
@@ -1014,7 +1025,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // 交由上游默认值，不重复硬编码；缺省 --audio-vae 仍可出片但无音轨。
   "minimax-h3-fl2va": {
     name: "MiniMax-H3 (FL2VA)",
-    hint: "音视频联合生成：Diffusion + 视频 VAE + 音频 VAE + Qwen3-VL 32B",
+    hint: "音视频联合生成：Diffusion + 视频 VAE + 音频 VAE + Qwen3-VL 32B / P-H3 4B",
     mode: "vid",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
@@ -1027,8 +1038,23 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         false,
         "缺省仍可生成视频，但成品没有解码出的音轨",
       ),
-      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F(
+        "llm",
+        "LLM (Qwen3-VL 32B / P-H3 4B)",
+        "llm",
+        "llm",
+        true,
+        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+      ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+      F(
+        "embeddings",
+        "文本连接器 (可选)",
+        "embeddings-connectors",
+        "embeddings",
+        false,
+        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+      ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     genDefaults: {
@@ -1122,24 +1148,53 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
       F("vae", "视频 VAE", "vae", "vae"),
       F("audio_vae", "音频 VAE (可选)", "audio-vae", "audio_vae", false),
-      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F(
+        "llm",
+        "LLM (Qwen3-VL 32B / P-H3 4B)",
+        "llm",
+        "llm",
+        true,
+        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+      ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+      F(
+        "embeddings",
+        "文本连接器 (可选)",
+        "embeddings-connectors",
+        "embeddings",
+        false,
+        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+      ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
   },
-  // MiniMax-H3-Image（上游 #2324，docs/minimax_h3_image.md）：文生图 + 参考图
-  // 编辑共用一个 checkpoint。文本编码器复用 H3 视频的 Qwen3-VL-32B，VAE 必须
-  // 用图像专用版（视频 VAE / P-H3 VAE 都不兼容）。6 步专用调度以数值数组
-  // 下发（请求体 custom_sigmas 不认 CLI 预设名），调度长度即步数。
+  // MiniMax-H3-Image（上游 #2324 / #2337 / #2340，docs/models/minimax_h3_image.md）：
+  // 文生图 + 参考图编辑共用一个 checkpoint。文本编码器支持 Qwen3-VL-32B 或
+  // P-H3 Qwen3-VL-4B（配可选 --embeddings-connectors），VAE 必须用图像专用版。
   "minimax-h3-image": {
     name: "MiniMax-H3-Image",
-    hint: "文生图 + 参考图编辑：Diffusion + 图像专用 VAE + Qwen3-VL 32B（可复用 H3 视频的编码器）",
+    hint: "文生图 + 参考图编辑：Diffusion + 图像专用 VAE + Qwen3-VL 32B / P-H3 4B",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
       F("vae", "图像 VAE", "vae", "vae"),
-      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F(
+        "llm",
+        "LLM (Qwen3-VL 32B / P-H3 4B)",
+        "llm",
+        "llm",
+        true,
+        "支持 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340）",
+      ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision", false),
+      F(
+        "embeddings",
+        "文本连接器 (可选)",
+        "embeddings-connectors",
+        "embeddings",
+        false,
+        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+      ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     genDefaults: {
@@ -1165,12 +1220,19 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
   // （8.5MP）极吃显存，按 docs 口径采用并在提示里建议小画布起步。
   "p-h3-image": {
     name: "P-H3-Image",
-    hint: "文生图 + 参考图编辑：Diffusion + 单帧 VAE + Qwen3-VL-4B + 文本连接器",
+    hint: "文生图 + 参考图编辑：Diffusion + 单帧 VAE + Qwen3-VL 4B / 32B + 可选文本连接器",
     mode: "img",
     fields: [
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
       F("vae", "图像 VAE", "vae", "vae"),
-      F("llm", "LLM (Qwen3-VL 4B)", "llm", "llm"),
+      F(
+        "llm",
+        "LLM (Qwen3-VL 4B / 32B)",
+        "llm",
+        "llm",
+        true,
+        "支持 P-H3 Qwen3-VL 4B 或 H3 原版 Qwen3-VL 32B（上游 #2337/#2340 统一文本编码器选择）",
+      ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision", false),
       F(
         "embeddings",
@@ -1178,7 +1240,7 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
         "embeddings-connectors",
         "embeddings",
         false,
-        "官方 PrunaAI 包已内置连接器；复用裸 Qwen3-VL-4B 时必传 p-h3-image_text_connector.safetensors",
+        "官方 PrunaAI 包已内置连接器、或改用 Qwen3-VL 32B 时可留空；复用裸 Qwen3-VL-4B 时必传 p-h3-image_text_connector.safetensors",
       ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
@@ -1211,8 +1273,23 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
       F("vae", "视频 VAE", "vae", "vae"),
       F("audio_vae", "音频 VAE (可选)", "audio-vae", "audio_vae", false),
-      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F(
+        "llm",
+        "LLM (Qwen3-VL 32B / P-H3 4B)",
+        "llm",
+        "llm",
+        true,
+        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+      ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+      F(
+        "embeddings",
+        "文本连接器 (可选)",
+        "embeddings-connectors",
+        "embeddings",
+        false,
+        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+      ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     genDefaults: {
@@ -1261,8 +1338,23 @@ export const FAMILY_CONFIG: Record<string, FamilyConfig> = {
       F("diffusion-model", "Diffusion 模型", "diffusion-model", "model"),
       F("vae", "视频 VAE", "vae", "vae"),
       F("audio_vae", "音频 VAE (可选)", "audio-vae", "audio_vae", false),
-      F("llm", "LLM (Qwen3-VL 32B)", "llm", "llm"),
+      F(
+        "llm",
+        "LLM (Qwen3-VL 32B / P-H3 4B)",
+        "llm",
+        "llm",
+        true,
+        "支持原版 Qwen3-VL 32B 或轻量的 P-H3 Qwen3-VL 4B（上游 #2337/#2340 统一文本编码器选择）",
+      ),
       F("llm_vision", "LLM Vision (可选)", "llm_vision", "llm_vision"),
+      F(
+        "embeddings",
+        "文本连接器 (可选)",
+        "embeddings-connectors",
+        "embeddings",
+        false,
+        "改用裸 Qwen3-VL 4B（P-H3 编码器）时提供 p-h3-image_text_connector.safetensors；用 32B 或内置连接器的编码器时留空",
+      ),
     ],
     fixedArgs: { "flash-attn": "off,diffusion=on" },
     genDefaults: {

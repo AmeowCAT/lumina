@@ -92,9 +92,9 @@ describe("sampler / scheduler token coverage", () => {
 });
 
 // 对齐步长依模型版本而定（src/stable-diffusion.cpp video_frames_to_latent_frames）。
-// api.md 笼统写作 "4n+1"，但 LTX-AV 实为 8，AnimateDiff 根本不对齐。
+// 上游 #2396 起 Wan/LTX 统一改为向上对齐（ceil），旧内核（<= 32d516c）为向下对齐（floor）。
 describe("alignVideoFrames", () => {
-  it("aligns Wan / LingBot / Hunyuan to 4n+1", () => {
+  it("aligns Wan / LingBot / Hunyuan upward to 4n+1 by default and downward for legacy kernels", () => {
     for (const family of [
       "wan-t2v",
       "wan-i2v",
@@ -104,19 +104,24 @@ describe("alignVideoFrames", () => {
       "hunyuan-video",
     ]) {
       expect(alignVideoFrames(family, 33)).toBe(33);
-      expect(alignVideoFrames(family, 34)).toBe(33);
-      expect(alignVideoFrames(family, 32)).toBe(29);
+      expect(alignVideoFrames(family, 34)).toBe(37);
+      expect(alignVideoFrames(family, 32)).toBe(33);
+      // 旧内核（<= 32d516c）显式 floor 分支保持向下对齐。
+      expect(alignVideoFrames(family, 34, "floor")).toBe(33);
+      expect(alignVideoFrames(family, 32, "floor")).toBe(29);
     }
   });
 
-  it("aligns LTX to 8n+1, not 4n+1", () => {
+  it("aligns LTX upward to 8n+1 by default and downward for legacy kernels", () => {
     // LTX-2.5 与 2.3 共用视频 VAE 架构（上游 #1893），latent 对齐同为 8n+1。
     for (const family of ["ltx", "ltx25"]) {
       expect(alignVideoFrames(family, 33)).toBe(33);
-      expect(alignVideoFrames(family, 34)).toBe(33);
-      // 4n+1 会得到 37；8n+1 必须回落到 33。
-      expect(alignVideoFrames(family, 40)).toBe(33);
+      expect(alignVideoFrames(family, 34)).toBe(41);
+      // 4n+1 会得到 37；8n+1 向上对齐必须落到 41，向下对齐落到 33。
+      expect(alignVideoFrames(family, 40)).toBe(41);
       expect(alignVideoFrames(family, 41)).toBe(41);
+      expect(alignVideoFrames(family, 34, "floor")).toBe(33);
+      expect(alignVideoFrames(family, 40, "floor")).toBe(33);
     }
   });
 
@@ -1448,5 +1453,70 @@ describe("engine knobs (threads / params-backend / rpc-servers)", () => {
       expect(args).not.toHaveProperty("params-backend");
       expect(args).not.toHaveProperty("rpc-servers");
     }
+  });
+});
+
+describe("upstream 2026-11-23 family updates (#2203 / #2337 / #2340 / #2341)", () => {
+  it("accepts optional llm_vision for MOSS-Image edit LoRAs without requiring it", () => {
+    const base = {
+      family: "moss-image",
+      modelPath: "/models/moss-image-sft.safetensors",
+      components: {
+        vae: "/models/flux2-vae.safetensors",
+        llm: "/models/Qwen3.5-9B-BF16.gguf",
+      },
+      runtime: { ...runtime, tokenizer: "/models/qwen35_tokenizer.json" },
+    };
+    const withoutVision = buildLaunchConfig(base);
+    expect(withoutVision.missing).toEqual([]);
+    expect(withoutVision.args).not.toHaveProperty("llm_vision");
+
+    const withVision = buildLaunchConfig({
+      ...base,
+      components: {
+        ...base.components,
+        llm_vision: "/models/Qwen3.5-9B-mmproj-BF16.gguf",
+      },
+    });
+    expect(withVision.missing).toEqual([]);
+    expect(withVision.args.llm_vision).toBe("/models/Qwen3.5-9B-mmproj-BF16.gguf");
+  });
+
+  it("exposes optional embeddings-connectors across all 6 H3 families for unified TE selection", () => {
+    for (const family of [
+      "minimax-h3-fl2va",
+      "minimax-h3-ref2va",
+      "minimax-h3-image",
+      "p-h3-image",
+      "hyperflow-h3-flash",
+      "hyperflow-h3-flash-ref2va",
+    ]) {
+      const hasSlot = FAMILY_CONFIG[family].fields.some(
+        (slot) => !slot.required && slot.arg === "embeddings-connectors",
+      );
+      expect(hasSlot, `${family} should offer optional embeddings-connectors`).toBe(true);
+    }
+  });
+
+  it("disables and strips prompt_images for SenseNova U1.5 (#2341)", () => {
+    const config = FAMILY_CONFIG["sensenova-u1"];
+    const limited = applyFamilyFeatureLimits(
+      { prompt_images: true, init_image: true } as Features,
+      config,
+    );
+    expect(limited.prompt_images).toBe(false);
+
+    const images: GenImages = {
+      initImage: null,
+      maskImage: null,
+      controlImage: null,
+      ipAdapterImage: null,
+      endImage: null,
+      refImages: [],
+      controlFrames: [],
+      promptImages: { cat: "data:image/png;base64,AAA" },
+    };
+    const filtered = filterFamilyInputs(images, config);
+    expect(filtered.promptImages).toEqual({});
   });
 });

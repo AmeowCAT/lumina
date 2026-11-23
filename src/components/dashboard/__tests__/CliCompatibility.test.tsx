@@ -63,4 +63,18 @@ describe("CLI compatibility inspection", () => {
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "检测内核兼容性" })).not.toBeDisabled();
   });
+
+  // 上游 #2396：声明 --dgl-dir 时提示当前内核为 DGL 架构，已迁移参数自动停用。
+  it("identifies DGL-era kernels when --dgl-dir is advertised", async () => {
+    mocks.inspectServer.mockResolvedValue({
+      ...modern,
+      version: "0d71f96",
+      options: [...modern.options, "--dgl-dir"],
+    });
+    render(<CliCompatibility exePath="/dgl/sd-server" port={1234} />);
+    fireEvent.click(screen.getByRole("button", { name: "检测内核兼容性" }));
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("DGL 架构内核");
+    expect(status).toHaveTextContent("DGL 脚本");
+  });
 });

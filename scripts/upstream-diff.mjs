@@ -71,17 +71,15 @@ const uniq = (xs) => [...new Set(xs)].sort();
  * @type {Record<string, string>}
  */
 const KNOWN_UNSUPPORTED = {
-  // 上游 #2164 起 `/sdcpp/v1` 确实会消费这三个字段：配置了启动参数
-  // `--ad-model` 时，每个 img_gen 结束后按 ad_prompt / ad_negative_prompt /
-  // extra_ad_args 做检测 + 局部重绘。界面本轮没有该功能的控件（启动参数里
-  // 写了 --ad-model 会由 cli.rs 给出警告），所以仍登记为「有意不接」，但理由
-  // 必须写清楚——旧版「/sdcpp/v1 不消费」的说法已被上游推翻。
+  // 上游 #2164–32d516c 期间 `/sdcpp/v1` 会消费 ADetailer 字段（配合启动参数 `--ad-model`）；
+  // #2396+（DGL 架构）已将其迁入 DGL 脚本，原生 img_gen 收到即拒（400）且移除了对应启动参数。
+  // 界面未提供 ADetailer 控件（两代内核由 cli.rs 分别给出警告或明确报错），故不发。
   ad_model:
-    "请求体里的 ad_model 不用于选检测器（只认启动参数 --ad-model）；界面未提供 ADetailer 控件，故不发",
+    "前 DGL 内核（#2164–32d516c）只认启动参数 --ad-model；#2396+ 已迁至 DGL 脚本，原生接口拒绝，故不发",
   ad_prompt:
-    "上游 #2164 起由服务端消费（配合启动参数 --ad-model）；界面未提供 ADetailer 控件，故不发",
-  ad_negative_prompt: "同上：上游 #2164 起由服务端消费；界面未提供 ADetailer 控件，故不发",
-  extra_ad_args: "同上：上游 #2164 起由服务端消费；界面未提供 ADetailer 控件，故不发",
+    "前 DGL 内核（#2164–32d516c）配合 --ad-model 消费；#2396+ 已迁至 DGL 脚本，原生接口拒绝，故不发",
+  ad_negative_prompt: "同上：#2396+ 已迁至 DGL 脚本，原生接口拒绝，故不发",
+  extra_ad_args: "同上：#2396+ 已迁至 DGL 脚本，原生接口拒绝，故不发",
   upscale_repeats:
     "img_gen 的二次放大重复次数，界面未暴露；内核默认 1（与 /upscale 接口的 repeats 不是同一字段）",
 };
@@ -93,8 +91,8 @@ const extractArgs = (text) =>
   uniq([...text.matchAll(/"(--[a-z0-9][a-z0-9-]*)"/g)].map((m) => m[1]));
 /**
  * 请求体字段不止 `load_if_exists` 一条通道：图片/音频/视频数组走
- * `parse_*_array_json_field`（上游 #2194 的 ref_videos/ref_audios/
- * ref_video_audios 就是这样漏报的，2026-11 同步 §6）。
+ * `parse_*_array_json_field`（#2194），提示内联图片走 `j.contains("prompt_images")` +
+ * `parse_prompt_images_json`（#2341），全部纳入提取避免漏报。
  * @param {string} text
  * @returns {string[]}
  */
@@ -103,6 +101,7 @@ const extractJsonKeys = (text) =>
     [
       ...text.matchAll(/load_if_exists\(\s*"([a-z0-9_]+)"/g),
       ...text.matchAll(/parse_(?:image|audio|video)_array_json_field\(\s*j,\s*"([a-z0-9_]+)"/g),
+      ...text.matchAll(/j\.contains\(\s*"([a-z0-9_]+)"\s*\)\s*&&\s*!parse_prompt_images_json/g),
     ].map((m) => m[1]),
   );
 /**
@@ -236,6 +235,10 @@ async function semanticDrift(since, ref) {
     findings.push(
       "sd-server 在 img_gen 后开始执行 ADetailer：启动参数 --ad-model 从死键变成「每次生成都跑检测 + 局部重绘」。",
     );
+  } else if (oldAdetailer && !newAdetailer) {
+    findings.push(
+      "sd-server 移除了原生 img_gen 的自动 ADetailer（迁至 DGL 脚本，上游 #2396）：--ad-model 启动参数在 DGL 内核上应直接报明确错误。",
+    );
   }
   // 2026-11 同步新增的两条语义检查（§6）：结构化进度与元数据 schema 换代。
   if (!oldApi.includes("progress.stage") && newApi.includes("progress.stage")) {
@@ -248,10 +251,29 @@ async function semanticDrift(since, ref) {
       "元数据 schema 换成 sdcpp.generation/v1、结果项携带 generation_info（实际 seed，上游 #2206）：sdcppMetadataToGenParams 必须按 schema 分流，结果卡回显实际种子。",
     );
   }
+  // 2026-11-23 同步新增的语义检查（DGL 架构换代、prompt_images、upscale tile_size）。
+  if (!oldApi.includes("/sdcpp/v1/dgl") && newApi.includes("/sdcpp/v1/dgl")) {
+    findings.push(
+      "上游引入 DGL 架构（#2396）：/capabilities defaults 含 null、generation_info 改为 DGL 源码字符串、文件元数据改为 PNG iTXt/WebP sdcpp:dgl/JPEG COM，原生接口对 DGL 专属字段返回 400。",
+    );
+  }
+  if (!oldApi.includes("prompt_images") && newApi.includes("prompt_images")) {
+    findings.push(
+      "原生 img_gen / vid_gen 新增 prompt_images（<image:ID> 提示内联图片，上游 #2341）：界面应提供 ID 绑定与校验。",
+    );
+  }
+  if (
+    !oldRoutes.includes("tile_size must be at least 32") &&
+    newRoutes.includes("tile_size must be at least 32")
+  ) {
+    findings.push(
+      "POST /sdcpp/v1/upscale 对 1..31 的 tile_size 从静默抬升改为直接返回 HTTP 400：放大对话框必须在提交前拦住 1–31。",
+    );
+  }
   return report(
     "参数/字段之外的语义变化",
     findings,
-    "逐个确认对应界面落点；新增检查项见 docs/UPSTREAM-SYNC-2026-10-24.md §6。",
+    "逐个确认对应界面落点；新增检查项见 docs/UPSTREAM-SYNC-2026-11-23.md。",
   );
 }
 

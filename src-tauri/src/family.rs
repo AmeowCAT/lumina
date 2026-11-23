@@ -1709,4 +1709,29 @@ mod tests {
             "llm"
         );
     }
+
+    /// 上游 #2203：MOSS-Image 编辑 LoRA 搭配 Qwen3.5-9B mmproj（--llm_vision）
+    /// 与 armV5-moss-edit-lora.safetensors；前者必须落在 llm_vision（不被 qwen
+    /// 吞成 llm），后者落在 lora。
+    #[test]
+    fn classifies_moss_image_edit_lora_and_qwen35_mmproj() {
+        assert_eq!(
+            classify_file(
+                "Qwen3.5-9B-mmproj-BF16.gguf",
+                "Qwen3.5-9B-mmproj-BF16",
+                "text_encoders",
+                900.0
+            ),
+            "llm_vision"
+        );
+        assert_eq!(
+            classify_file(
+                "armV5-moss-edit-lora.safetensors",
+                "armV5-moss-edit-lora",
+                "loras",
+                350.0
+            ),
+            "lora"
+        );
+    }
 }

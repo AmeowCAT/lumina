@@ -103,6 +103,12 @@ export function UpscaleDialog({
   const resolvedFormat = formatOptions.some((o) => o.value === format)
     ? format
     : formatOptions[0].value;
+  // 上游 #2396（routes_sdcpp.cpp:527）：tile_size 在 1–31 之间改为直接返回 HTTP 400
+  // （"tile_size must be at least 32"），不再静默抬到 32；0 表示省略键、用内核默认。
+  const tileSizeError =
+    tileSize > 0 && tileSize < 32
+      ? "分块尺寸为 0 表示沿用内核默认，手动指定时必须 ≥ 32（新版内核会拒绝 1–31）"
+      : undefined;
 
   return createPortal(
     <div className="fixed inset-0 z-[520] flex items-center justify-center p-4">
@@ -185,9 +191,7 @@ export function UpscaleDialog({
           <div className="form-row">
             <label className="form-label" htmlFor="upscale-tile">
               分块尺寸
-              <span className="form-sublabel">
-                0 = 用内核 --upscale-tile-size；小于 32 的值会被内核抬到 32
-              </span>
+              <span className="form-sublabel">0 = 用内核 --upscale-tile-size；手动指定须 ≥ 32</span>
             </label>
             <NumberInput
               id="upscale-tile"
@@ -198,6 +202,11 @@ export function UpscaleDialog({
               step={32}
             />
           </div>
+          {tileSizeError && (
+            <div className="field-hint field-hint-flush mt-1" role="alert">
+              {tileSizeError}
+            </div>
+          )}
           <div className="field-hint field-hint-flush mt-1">
             结果每轴不超过 {maxWidth || 8192}×{maxHeight || 8192} 像素（含重复次数），
             超出会被内核在放大前拒绝。
@@ -220,7 +229,7 @@ export function UpscaleDialog({
             <button
               type="button"
               className="btn btn-sm"
-              disabled={busy || !source}
+              disabled={busy || !source || !!tileSizeError}
               onClick={() =>
                 onSubmit({
                   upscaler,

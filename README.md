@@ -92,12 +92,12 @@ src-tauri/target/release/lumina.exe
 - **端口被占用**：Lumina 不会去杀不认识的进程。要么释放端口，要么在控制台改一个。如果那个端口上本来就是一个能应答的 `sd-server`，它会被直接接管，不会再起一个。`--listen-port` / `--listen-ip` 写在附加启动参数里会被拒绝，界面所有请求都靠这个端口代理。
 - **升级内核后 VAE 分块设置失灵**：新版内核（上游 #2059）把 `tile_size_x/y` 改名为 `tile_size_w/h`，单位也从 latent 改成图像像素。旧图或旧设置里的数值不会自动换算（猜错 VAE 缩放因子会得到错误分块），参数面板会逐轴列出仍在设置里的旧字段，并按像素尺寸重新填写，确认后点"清除旧值"即可。另外相对尺寸（`rel_size_w/h`）在上游优先于绝对尺寸，所以改动分块宽/高时会自动清掉对应轴的相对值，面板也会在相对值生效时给出提示。Lumina 按所选内核实际声明的字段名发送，因此同一份设置在不同版本的内核上不会串味。
 - **启动就退出**：先看日志面板最后几行（或用「复制」按钮整段取走；同样的内容也写在 `lumina/logs/lumina.log` 里，GUI 崩溃后仍可查）。组件路径、`--max-vram` 写法、`--backend` 设备名这三类问题界面会提前拦，剩下的基本是权重本身不被上游识别，属于上游范畴。
-- **显存不足**：打开 CPU 卸载、启用 VAE 分块、换 TAE 解码、降低尺寸与帧数、用量化权重。上游的[性能指南](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/performance.md)和[后端选择](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/backend.md)讲得更细。
+- **显存不足**：打开 CPU 卸载、启用 VAE 分块、换 TAE 解码、降低尺寸与帧数、用量化权重。上游的[性能指南](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/guides/performance.md)和[后端选择](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/guides/backend.md)讲得更细。
 - **INT8 权重没有变快**：int8_convrot 的加速只在满足条件的后端上生效（CUDA 计算能力 7.5+、AMD 的 CDNA / RDNA3（含 3.5）/ RDNA4、支持打包 INT8 点积的 Vulkan 构建与设备），其余组合会把矩阵乘回退到 CPU，明显更慢；专用卷积旋转路径还要求分组大小 256。INT8 safetensors 直接当模型选中即可，不需要在"量化"里另选 `q8_0`——那是给 FP16 权重做运行时量化的。
 
 ## 与上游的关系
 
-推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`32d516c`](https://github.com/leejet/stable-diffusion.cpp/commit/32d516c0197ed5ca31305b8575e14eb1451fad33)（2026-11-11）。相对上一个对齐版本 `95ff762` 的 88 个提交里，有 17 个改到了 `examples/server/**` 或 `examples/common/**`，影响界面的有六组：**嵌入元数据 schema 换代**（#2206，`sdcpp.image.params/v1` → `sdcpp.generation/v1`，键位全变、seed 变十进制字符串，参数恢复已按 schema 双兼容；结果项同时携带 `generation_info`，随机种子任务现在能回显每张图的**实际种子**并随「应用此配置」带回）；**结构化进度**（#2303，任务 JSON 新增 `progress` 对象，任务行显示阶段/段内步数，不再只靠解析日志，旧内核自动回落）；**Ref2VA 参考媒体**（#2194，参考视频按 24fps 抽帧、参考音频/视频音轨只收 WAV，服务端通道已开放，界面补齐输入与互斥校验）；**control_type**（#2284 / #2187，SDXL ControlNet Union 必需的控制类型选择器，其它 ControlNet 忽略）；**新家族**（MiniMax-H3-Image #2324、P-H3-Image #2272、HyperFlow H3 Flash #2299 两支，家族数 62 → 66，专用 sigmas 调度以数值数组下发）；**H3 latent hires**（#2249，二段采样解锁，与首尾帧互斥已在提交前拦截）。另有队列治理参数 `--max-pending-jobs` / `--completed-ttl-seconds`（#2316，附加启动参数预检，完成任务默认 600s 后清理、过期查询 410 已兼容）。SeedVR2 / RelayVSR（#2300 / #2285）走 CLI-only 的 `vid_upscale` 模式，服务端无通道，**不接**；recipe 体系继续演进（`size_multiple` / `video_constraints` / 幂等加载），Lumina 仍按自己的扫描器与家族体系工作，不接（判断与落点见 [`docs/UPSTREAM-SYNC-2026-11-11.md`](docs/UPSTREAM-SYNC-2026-11-11.md)）。所以：
+推理、模型支持、显存表现全部来自 `stable-diffusion.cpp`，这个仓库只做界面和进程管理。当前对齐上游 `master` @ [`0d71f96`](https://github.com/leejet/stable-diffusion.cpp/commit/0d71f963af9c94941f4a67e8ea145935651dd756)（2026-11-23）。相对上一个对齐版本 `32d516c` 的 29 个提交里，核心是 **Diffusion Graph Language（DGL）架构换代（#2396）** 与四组功能演进，Lumina 全部按内核能力动态判定、保持对前 DGL 内核（`<= 32d516c`）与 DGL 内核（`#2396+`）的双代兼容：**DGL 原生协议兼容**（#2396 / #2365，自动过滤 `/capabilities` 里的 `null` 默认值，在 DGL 内核上省略已迁出至 DGL 的 `slg` / `shifted_timestep` / `ip_adapter_*` / `image_preprocess` / `ref_image_args` / `increase_ref_index` / 非 `sample_steps` 高噪段参数及非分层模型的 `qwen_image_layers`，避免 HTTP 400；独立放大 `/upscale` 拦截 `1–31` 非法分块；进度新增 `executing/dgl`）；**三代元数据与 `generation_info` 解析**（#2396 将文件元数据改为 PNG `iTXt` `dgl`、WebP XMP `<sdcpp:dgl>` 与 JPEG COM `dgl`，HTTP `generation_info` 改为 DGL 源码字符串——Rust 端补齐 PNG `iTXt` / WebP `sdcpp:dgl` / JPEG COM 解析，前端新增 `sdcpp.dgl/v1` 映射器，结果卡实际种子与历史图参数恢复继续覆盖新旧三代图片）；**CLI 预检双代适配**（支持 `--dgl-dir` 校验，在 DGL 内核上对已移除的 32 个旧启动参数给出明确清理指引）；**提示词内联图片**（#2341，原生 `img_gen`/`vid_gen` 接入 `prompt_images` 与 `<image:ID>` 管理、插入与提交前校验）；**视频帧对齐与家族完善**（#2396 起 Wan/Hunyuan/LingBot/LTX 帧数改为向上对齐，按内核代际显示提示；H3 全部 6 族统一支持 Qwen3-VL 32B / P-H3 4B 与可选文本连接器 #2337/#2340；MOSS-Image 补齐 `--llm_vision` 视觉投影槽位与 HQ 编辑 LoRA 说明 #2203）。图形化 DGL 脚本编辑器 / `/sdcpp/v1/dgl/*` 暂未内置，列为后续独立规划（分析与落点见 [`docs/UPSTREAM-SYNC-2026-11-23.md`](docs/UPSTREAM-SYNC-2026-11-23.md)）。所以：
 
 - 界面、启动流程、参数映射有问题 → 提到[本仓库 Issues](https://github.com/AmeowCAT/lumina/issues)
 - 出图质量、加载失败、显存不足、模型不被识别 → 提到[上游仓库](https://github.com/leejet/stable-diffusion.cpp/issues)
@@ -117,13 +117,16 @@ Flux.1、Kontext、Flux.2-dev、Flux.2-klein（含 Base）、Flux.3 Image Klein�
 - PuLID 与 PhotoMaker 只在 `sd-cli` 通道可用：它们的身份参数（`--pulid-id-embedding`、`--pm-id-images-dir` 等）是**单次生成参数**，上游 `/sdcpp/v1` 没有开放，权重能加载但身份不会注入且几乎无日志，所以界面不提供这两个组件位。
 - MiniMax-H3 Ref2VA 的参考图 / 参考视频 / 参考音频均可经 HTTP 传入（上游 #2194）：参考视频在界面里按 **24fps 抽帧**（服务端 JSON 通道固定按 24fps 解释，单个上限 481 帧），音频只收 **WAV**，视频音轨按顺序与参考视频配对且数量不得更多。三者**任一即可**（与内核 `has_references` 判据一致），但参考条件与首尾帧互斥。
 - SeedVR2 / RelayVSR 超分权重（上游 #2300 / #2285）**不能经界面使用**：它们走 `-M vid_upscale` 模式，只有 `sd-cli` 通道，sd-server 没有对应 HTTP 接口。扫描器会把它们当普通模型列出，但选它们启动会失败；需要时请用上游命令行。
-- AnimateDiff 的运动模块原生训练在 16 帧，位置编码最多 32 帧，超出后画面趋于静止。
-- ADetailer 自上游 #2164 起在服务端可用：启动参数写了 `--ad-model` 后，内核会对**每次**图片生成的结果自动检测并局部重绘（请求体可覆盖 `ad_prompt` / `ad_negative_prompt` / `extra_ad_args`，但检测器只认启动参数）。界面暂未提供该功能的控件，写在「附加启动参数」里的 `--ad-model` 会在启动前给出提示；不需要时请移除。
-- 独立放大（`POST /sdcpp/v1/upscale`）已接在结果图的 ✨ 按钮上，但它只认 RGB 放大器（ESRGAN 与 MoSR 的权重都可以，内置滤镜与 latent 放大器不能用于该接口）、不保留 alpha，运行时还持有生成上下文锁，会与正在进行的生成互斥。
+- **DGL 架构内核（上游 #2396+）的原生接口边界**：新版内核将 AnimateDiff（`--motion-module`）、IP-Adapter（`--ip-adapter`）、ADetailer（`--ad-model`）、SLG、`shifted_timestep`、`image_preprocess`、`ref_image_args` / `increase_ref_index` 以及高噪段独立采样器/CFG（仅保留 `high_noise_steps` + `moe_boundary`）全部迁入 DGL 脚本，并在原生接口里直接拒绝这些字段。Lumina 会自动识别内核代际：连接 DGL 内核时隐藏并停止发送上述字段（控制台「参考图处理」需保持「自动检测」），连接前 DGL 内核（`<= 32d516c`）时继续保留全部旧控件。内置 DGL 脚本编辑器 / `/sdcpp/v1/dgl/*` 尚未接入，需要自定义 DGL 工作流时请使用上游 `sd-cli -M dgl` 或 WebUI。
+- 提示词内联图片（`prompt_images` + `<image:ID>`，上游 #2341）仅适用于带视觉权重的 Qwen2.5-VL / Qwen3-VL / Qwen3.5 文本编码器（需配 `--llm_vision` 或内置视觉塔），单次最多 32 张唯一图片；SenseNova U1.5 不支持。
+- AnimateDiff 的运动模块原生训练在 16 帧，位置编码最多 32 帧，超出后画面趋于静止（仅前 DGL 内核 `<= 32d516c` 原生开放）。
+- ADetailer 在 `#2164–32d516c` 内核上由 `--ad-model` 触发每次生成后自动检测并局部重绘（界面暂无控件，预检会提示）；在 `#2396+` 内核上已移除该启动参数并迁入 DGL 脚本，预检会直接拦截引导移除。
+- 独立放大（`POST /sdcpp/v1/upscale`）已接在结果图的 ✨ 按钮上，但它只认 RGB 放大器（ESRGAN 与 MoSR 的权重都可以，内置滤镜与 latent 放大器不能用于该接口）、不保留 alpha，运行时还持有生成上下文锁，会与正在进行的生成互斥；分块尺寸填 `0` 使用内核默认，手动指定时须 `≥ 32`（#2396+ 对 `1–31` 直接返回 400）。
 - 生成预览（上游 #2093）的步数按**当前采样段**计：批次换图、高噪段、二次放大都会另起一段并把步数清零，角标不是整项任务的完成度。
 - Z-Image L2P 在像素空间工作，没有 VAE 组件可选，也不能用参考图（上游 runner 直接拒绝）；它的权重文件名通常看不出线索，扫描不出家族时在控制台手动指定即可。
 - Iris-3B 同样在像素空间生成，没有 VAE 组件可选；提示词上限 300 token（含模板后缀），超出部分会被截断而不是报错。
-- MOSS-Image 必须另配官方 tokenizer.json（Qwen3.5 词表，与 Qwen3 那份不通用），缺了会在建文本编码器时报错。
+- MOSS-Image 必须另配官方 tokenizer.json（Qwen3.5 词表，与 Qwen3 那份不通用），缺了会在建文本编码器时报错；使用 HQ 编辑 LoRA（`armV5-moss-edit-lora` + 参考图）或提示内联图片时需另配 Qwen3.5 视觉投影（`--llm_vision`，如 `mmproj-BF16.gguf`）。
+- MiniMax-H3 / HyperFlow H3 / P-H3-Image 全部 6 族自上游 #2337/#2340 起支持统一文本编码器选择：可选 Qwen3-VL 32B 或更轻量的 P-H3 Qwen3-VL 4B（复用裸 4B 时通过「文本连接器」传入 `p-h3-image_text_connector.safetensors`）。
 - LLaDA-Image（含 Turbo）同样必须另配外部 `tokenizer.json`（LLaDA2 词表，PiD / Lens 的那几份不通用），缺了会在初始化文本编码器时失败；编辑路径要求宽高可被 32 整除。
 - SenseNova U1.5 目前只支持 non-thinking 文生图：不支持参考图编辑、视觉理解与思考模式，宽高需按 32 对齐，推荐 2048×2048 / Euler 50 步 / CFG 4 / Flow Shift 3。
 - CI 只跑类型检查、单元测试、构建与 `cargo fmt/clippy/test`，发布包仍是本地构建的（无代码签名、无自动更新）。
@@ -168,7 +171,7 @@ src-tauri/src/
 ├── family.rs      # 家族与组件识别（唯一实现）
 ├── sdcpp.rs       # /sdcpp/v1 HTTP 代理
 ├── settings.rs    # 设置读写、迁移、损坏文件备份
-├── png_info.rs    # PNG / WebP 元数据解析
+├── png_info.rs    # PNG / WebP / JPEG 元数据解析（含 DGL iTXt / XMP / COM）
 └── save.rs        # 落盘与输出目录边界校验
 ```
 
